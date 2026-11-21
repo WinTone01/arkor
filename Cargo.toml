@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+arkor-core = { path = "crates/arkor-core" }
+arkor-stores = { path = "crates/arkor-stores" }
+arkor-launch = { path = "crates/arkor-launch" }
+gpui = "=0.2.2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+anyhow = "1"
+dirs = "6"
+
+# gpui 0.2.2 -> zed-async-tar -> xattr 0.2.3 does not build with libc >= 0.2.190
+# (ENOATTR removed on Linux). Drop this once gpui stops depending on xattr 0.2.
+[patch.crates-io]
+xattr = { path = "patches/xattr" }

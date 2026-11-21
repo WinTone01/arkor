@@ -1,0 +1,10 @@
+[package]
+name = "arkor-stores"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arkor-core.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
