@@ -101,7 +101,20 @@ impl Library {
             .child(div().w(px(280.)).child(search))
             .child(sorts)
             .child(div().flex_1())
-            .child(self.grid_size_chips(cx));
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(style::icon("layout-grid", 14., pal::faint()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(pal::muted())
+                            .child(self.tr("Cover size", "Kapak boyutu")),
+                    )
+                    .child(self.grid_size_chips(cx)),
+            );
         if self.filter.show_hidden || self.library.games.iter().any(|g| g.hidden) {
             top = top.child(
                 widgets::chip(

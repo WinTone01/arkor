@@ -9,13 +9,34 @@ use arkor_launch::launchers::{self, LAUNCHERS};
 use arkor_launch::start::{self, PrefixTool};
 use arkor_stores::Detected;
 use arkor_stores::prefix::{self, Candidate};
-use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*};
+use gpui::prelude::FluentBuilder;
+use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*, px};
 
 use super::Library;
 use super::widgets::{self, theme::*};
 
+/// Sections of the Add game page, most used first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AddTab {
+    #[default]
+    Found,
+    Manual,
+    Prefix,
+    Launcher,
+}
+
+impl AddTab {
+    const ALL: [AddTab; 4] = [
+        AddTab::Found,
+        AddTab::Manual,
+        AddTab::Prefix,
+        AddTab::Launcher,
+    ];
+}
+
 #[derive(Default)]
 pub(super) struct AddState {
+    pub(super) tab: AddTab,
     kind_linux: bool,
     exe: Option<PathBuf>,
     prefix: Option<PathBuf>,
@@ -199,9 +220,10 @@ impl Library {
             cx,
             |_, _| {},
         );
+        use super::style::{self, pal};
         let state = &self.add;
 
-        // 1. By hand
+        // By hand
         let kind_chip = |ix: usize, linux: bool, text: &'static str, cx: &mut Context<Self>| {
             widgets::chip(("add-kind", ix), text, state.kind_linux == linux).on_click(cx.listener(
                 move |this, _, _, cx| {
@@ -214,19 +236,30 @@ impl Library {
             .exe
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| self.tr("No file chosen", "Dosya seçilmedi").into());
+            .unwrap_or_else(|| {
+                self.tr("No file chosen yet", "Henüz dosya seçilmedi")
+                    .into()
+            });
         let prefix_text = match &state.prefix {
             Some(p) => p.display().to_string(),
             None => self
                 .tr(
-                    "New prefix just for this game (default)",
-                    "Sadece bu oyun için yeni prefix (varsayılan)",
+                    "A new prefix just for this game (default)",
+                    "Sadece bu oyun için yeni bir prefix (varsayılan)",
                 )
                 .into(),
         };
         let mut manual = widgets::section(self.tr("Add by hand", "Elle ekle"))
-            .child(name)
-            .child(
+            .child(widgets::label(self.tr(
+                "Pick the game's executable; everything else is optional.",
+                "Oyunun çalıştırılabilir dosyasını seç; gerisi isteğe bağlı.",
+            )))
+            .child(widgets::setting_row(
+                self.tr("1. Type", "1. Tür"),
+                self.tr(
+                    "Windows games run through Proton.",
+                    "Windows oyunları Proton ile çalışır.",
+                ),
                 div()
                     .flex()
                     .gap_2()
@@ -237,81 +270,100 @@ impl Library {
                         cx,
                     ))
                     .child(kind_chip(1, true, self.tr("Linux game", "Linux oyunu"), cx)),
-            )
-            .child(widgets::label(
-                self.tr("Executable", "Çalıştırılabilir dosya"),
             ))
-            .child(
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("2. Executable", "2. Çalıştırılabilir dosya"),
+                exe_text,
+                style::button("add-exe", self.tr("Choose…", "Seç…"), state.exe.is_none())
+                    .child(style::icon(
+                        "folder-open",
+                        13.,
+                        if state.exe.is_none() {
+                            pal::on_accent()
+                        } else {
+                            pal::muted()
+                        },
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let title = this.tr(
+                            "Choose the game's executable",
+                            "Oyunun çalıştırılabilir dosyasını seç",
+                        );
+                        this.prompt_path(false, title, cx, |this, path, _| {
+                            this.add.exe = Some(path)
+                        });
+                    })),
+            ));
+        if !state.kind_linux {
+            manual = manual.child(widgets::divider()).child(widgets::setting_row(
+                self.tr("Wine prefix", "Wine prefix"),
+                prefix_text,
                 div()
                     .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().truncate().text_sm().child(exe_text))
+                    .gap_2()
                     .child(
-                        widgets::chip("add-exe", self.tr("Choose…", "Seç…"), false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                let title = this.tr(
-                                    "Choose the game's executable",
-                                    "Oyunun çalıştırılabilir dosyasını seç",
-                                );
-                                this.prompt_path(false, title, cx, |this, path, _| {
-                                    this.add.exe = Some(path)
-                                });
-                            }),
-                        ),
-                    ),
-            );
-        if !state.kind_linux {
-            manual = manual
-                .child(widgets::label(self.tr("Wine prefix", "Wine prefix")))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(div().flex_1().truncate().text_sm().child(prefix_text))
-                        .child(
-                            widgets::chip(
-                                "add-prefix",
-                                self.tr("Use existing…", "Mevcut olanı kullan…"),
+                        style::button(
+                            "add-prefix",
+                            self.tr("Use existing…", "Mevcut olanı kullan…"),
+                            false,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let title = this.tr("Choose a Wine prefix", "Bir Wine prefix seç");
+                            this.prompt_path(true, title, cx, |this, path, _| {
+                                this.add.prefix = Some(prefix::resolve(&path).unwrap_or(path))
+                            });
+                        })),
+                    )
+                    .when(state.prefix.is_some(), |d| {
+                        d.child(
+                            style::button(
+                                "add-prefix-default",
+                                self.tr("Default", "Varsayılan"),
                                 false,
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
-                                let title = this.tr("Choose a Wine prefix", "Bir Wine prefix seç");
-                                this.prompt_path(true, title, cx, |this, path, _| {
-                                    this.add.prefix = Some(prefix::resolve(&path).unwrap_or(path))
-                                });
+                                this.add.prefix = None;
+                                cx.notify();
                             })),
                         )
-                        .when(state.prefix.is_some(), |d| {
-                            d.child(
-                                widgets::chip(
-                                    "add-prefix-default",
-                                    self.tr("Default", "Varsayılan"),
-                                    false,
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.add.prefix = None;
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                        }),
-                );
+                    }),
+            ));
         }
-        manual = manual.child(args);
-        if state.exe.is_some() {
-            manual = manual.child(
-                div().flex().child(
-                    widgets::primary_button(
-                        "add-confirm",
-                        self.tr("Add to library", "Kütüphaneye ekle"),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.add_manual(cx))),
+        manual = manual
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Name", "Ad"),
+                self.tr(
+                    "Taken from the file when empty.",
+                    "Boş bırakılırsa dosyadan alınır.",
                 ),
-            );
-        }
+                div().w(px(300.)).child(name),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Arguments", "Argümanlar"),
+                self.tr(
+                    "Passed to the game, optional.",
+                    "Oyuna verilir, isteğe bağlı.",
+                ),
+                div().w(px(300.)).child(args),
+            ))
+            .child(div().flex().pt_1().child(if state.exe.is_some() {
+                widgets::primary_button(
+                    "add-confirm",
+                    self.tr("Add to library", "Kütüphaneye ekle"),
+                )
+                .child(style::icon("plus", 14., pal::on_accent()))
+                .on_click(cx.listener(|this, _, _, cx| this.add_manual(cx)))
+            } else {
+                widgets::primary_button(
+                    "add-confirm",
+                    self.tr("Choose the executable first", "Önce dosyayı seç"),
+                )
+                .opacity(0.45)
+                .cursor_default()
+            }));
 
         // 2. Found in other launchers
         let mut found = widgets::section(self.tr("Found on this computer", "Bu bilgisayarda bulunanlar")).child(widgets::label(self.tr(
@@ -322,12 +374,14 @@ impl Library {
             found = found.child(widgets::label(self.tr("Looking…", "Aranıyor…")));
         }
         let mut any = false;
+        let mut found_count = 0usize;
         for (ix, d) in state.detected.iter().flatten().enumerate() {
             let origin = d.game.id.to_string();
             if self.library.has_origin(&origin) {
                 continue;
             }
             any = true;
+            found_count += 1;
             let source = format!("{} · {}", d.game.id.store.as_str(), d.game.id.id);
             let row = div()
                 .flex()
@@ -350,11 +404,11 @@ impl Library {
                 Ok(new) => {
                     let new = new.clone();
                     row.child(
-                        widgets::chip(("found-add", ix), self.tr("Add", "Ekle"), false).on_click(
-                            cx.listener(move |this, _, _, cx| {
+                        style::button(("found-add", ix), self.tr("Add", "Ekle"), false)
+                            .child(style::icon("plus", 13., pal::muted()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 this.add_to_library(new.clone(), cx);
-                            }),
-                        ),
+                            })),
                     )
                 }
                 Err(why) => row.child(
@@ -483,19 +537,54 @@ impl Library {
             )))
             .child(launchers_row);
 
-        let mut page = div().child(Self::header(
-            self.tr("Add game", "Oyun ekle"),
-            self.tr(
-                "Arkor only lists the games you add.",
-                "Arkor sadece senin eklediğin oyunları listeler.",
+        let tab = self.add.tab;
+        let mut entries = vec![
+            style::NavEntry::new(
+                "radar",
+                self.tr("Found on this computer", "Bu bilgisayarda bulunanlar"),
             ),
-        ));
-        if let Some(e) = &self.add.error {
-            page = page.child(div().text_sm().text_color(ACCENT()).child(e.clone()));
+            style::NavEntry::new("file-plus", self.tr("Add by hand", "Elle ekle")),
+            style::NavEntry::new("wine", self.tr("From a Wine prefix", "Wine prefix'ten")),
+            style::NavEntry::new("download", self.tr("Install a launcher", "Başlatıcı kur")),
+        ];
+        if found_count > 0 {
+            entries[0].badge = Some(found_count.to_string());
         }
-        page.child(manual)
-            .child(found)
-            .child(import)
-            .child(launchers_card)
+        let nav = style::side_nav(
+            "add-tab",
+            entries,
+            AddTab::ALL.iter().position(|t| *t == tab),
+            cx,
+            |this, i, cx| {
+                this.add.tab = AddTab::ALL[i];
+                this.add.error = None;
+                cx.notify();
+            },
+        );
+        let mut content = div().flex().flex_col().gap_4();
+        if let Some(e) = &self.add.error {
+            content = content.child(div().text_sm().text_color(pal::warning()).child(e.clone()));
+        }
+        content = content.child(match tab {
+            AddTab::Found => found,
+            AddTab::Manual => manual,
+            AddTab::Prefix => import,
+            AddTab::Launcher => launchers_card,
+        });
+        div()
+            .child(
+                div().flex().child(
+                    style::back_link("add-back", self.tr("Library", "Kütüphane"))
+                        .on_click(cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Library, cx))),
+                ),
+            )
+            .child(Self::header(
+                self.tr("Add game", "Oyun ekle"),
+                self.tr(
+                    "Arkor only lists the games you add. Pick one it found, or add one yourself.",
+                    "Arkor sadece senin eklediğin oyunları listeler. Bulduklarından birini seç ya da kendin ekle.",
+                ),
+            ))
+            .child(style::with_side_nav(nav, content))
     }
 }

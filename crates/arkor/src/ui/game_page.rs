@@ -440,36 +440,70 @@ impl Library {
         let t = self.t();
         // MangoHud mode.
         let mode = self.profile.mangohud.mode;
-        let mode_chip = |ix: usize, m: HudMode, text: &'static str, cx: &mut Context<Self>| {
-            widgets::chip(("hud-mode", ix), text, mode == m)
+        let global_on = self.global.mangohud.enabled;
+        let card = |ix: usize,
+                    m: HudMode,
+                    icon: &'static str,
+                    title: &'static str,
+                    hint: &'static str,
+                    cx: &mut Context<Self>| {
+            widgets::choice_card(("hud-mode", ix), icon, title, hint, mode == m)
                 .on_click(cx.listener(move |this, _, _, cx| this.set_hud_mode(m, cx)))
         };
-        let mut hud_card = widgets::section("MangoHud").child(
-            div()
-                .flex()
-                .gap_2()
-                .child(mode_chip(0, HudMode::Global, t.mode_global, cx))
-                .child(mode_chip(1, HudMode::Custom, t.mode_custom, cx))
-                .child(mode_chip(2, HudMode::Off, t.mode_off, cx)),
-        );
-        hud_card = match mode {
-            HudMode::Global => hud_card.child(
+        let mut hud_card = widgets::section("MangoHud")
+            .child(widgets::label(self.tr(
+                "The overlay with FPS, temperatures and load over the game.",
+                "Oyunun üstünde FPS, sıcaklık ve yük gösteren katman.",
+            )))
+            .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(widgets::label(if self.global.mangohud.enabled {
-                        t.mode_global_on_note
-                    } else {
-                        t.mode_global_off_note
-                    }))
-                    .child(widgets::chip("goto-global", t.edit_global, false).on_click(
-                        cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Overlay, cx)),
+                    .flex_wrap()
+                    .gap_2()
+                    .child(card(
+                        0,
+                        HudMode::Global,
+                        "copy",
+                        t.mode_global,
+                        if global_on {
+                            t.mode_global_on_note
+                        } else {
+                            t.mode_global_off_note
+                        },
+                        cx,
+                    ))
+                    .child(card(
+                        1,
+                        HudMode::Custom,
+                        "pencil",
+                        t.mode_custom,
+                        t.mode_custom_note,
+                        cx,
+                    ))
+                    .child(card(
+                        2,
+                        HudMode::Off,
+                        "eye-off",
+                        t.mode_off,
+                        t.mode_off_note,
+                        cx,
                     )),
-            ),
-            HudMode::Custom => hud_card.child(widgets::label(t.mode_custom_note)),
-            HudMode::Off => hud_card.child(widgets::label(t.mode_off_note)),
-        };
+            );
+        if mode == HudMode::Global {
+            hud_card = hud_card.child(
+                div().flex().child(
+                    super::style::button("goto-global", t.edit_global, false)
+                        .child(super::style::icon(
+                            "arrow-right",
+                            13.,
+                            super::style::pal::muted(),
+                        ))
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Overlay, cx)),
+                        ),
+                ),
+            );
+        }
         let custom_editor = match (mode, self.profile.mangohud.settings.clone()) {
             (HudMode::Custom, Some(hud)) => Some(self.render_hud_editor(&hud, cx)),
             _ => None,

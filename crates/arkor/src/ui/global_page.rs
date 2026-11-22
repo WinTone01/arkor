@@ -16,15 +16,17 @@ pub(super) enum SettingsTab {
     Defaults,
     Integrations,
     Backups,
+    Shortcuts,
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 5] = [
+    pub(super) const ALL: [SettingsTab; 6] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Defaults,
         SettingsTab::Integrations,
         SettingsTab::Backups,
+        SettingsTab::Shortcuts,
     ];
 }
 
@@ -126,16 +128,16 @@ impl Library {
         if self.global_hud_tab {
             return div()
                 .child(Self::header(
-                    self.tr("Overlay", "Overlay"),
+                    self.tr("MangoHud overlay", "MangoHud overlay"),
                     self.tr(
-                        "MangoHud layout for every game set to “Use global”. A game can also have its own layout (its Overlay & visuals tab).",
-                        "“Global'i kullan” seçili her oyunun MangoHud düzeni. Bir oyunun kendi düzeni de olabilir (Overlay ve görüntü sekmesi).",
+                        "The shared layout: every game set to “Use the shared layout” shows this. A game can also have its own (game page → Overlay & visuals).",
+                        "Ortak düzen: “Ortak düzeni kullan” seçili her oyun bunu gösterir. Bir oyunun kendi düzeni de olabilir (oyun sayfası → Overlay ve görüntü).",
                     ),
                 ))
                 .child(
                     widgets::switch_row(
                         "global-hud",
-                        "MangoHud",
+                        self.tr("Show MangoHud in games", "Oyunlarda MangoHud'u göster"),
                         t.hud_default_hint,
                         self.global.mangohud.enabled,
                     )
@@ -187,14 +189,163 @@ impl Library {
 
         use super::style;
         let tab = self.settings_tab;
-        let labels = [
-            ("settings", self.tr("General", "Genel")),
-            ("palette", self.tr("Appearance", "Görünüm")),
-            ("gamepad-2", self.tr("Game defaults", "Oyun varsayılanları")),
-            ("plug", self.tr("Integrations", "Entegrasyonlar")),
-            ("archive", self.tr("Backups", "Yedekleme")),
+        let entries = vec![
+            style::NavEntry::new("settings", self.tr("General", "Genel")),
+            style::NavEntry::new("palette", self.tr("Appearance", "Görünüm")),
+            style::NavEntry::new("gamepad-2", self.tr("Game defaults", "Oyun varsayılanları")),
+            style::NavEntry::new("plug", self.tr("Integrations", "Entegrasyonlar")),
+            style::NavEntry::new("archive", self.tr("Backups", "Yedekleme")),
+            style::NavEntry::new(
+                "keyboard",
+                self.tr("Keyboard shortcuts", "Klavye kısayolları"),
+            ),
         ];
-        let page = div()
+        let nav = style::side_nav(
+            "settings-tab",
+            entries,
+            Some(tab as usize),
+            cx,
+            |this, i, cx| {
+                this.settings_tab = SettingsTab::ALL[i];
+                cx.notify();
+            },
+        );
+        let switch = |id: &'static str, on: bool, cx: &mut Context<Self>, f: fn(&mut Self)| {
+            widgets::switch(on)
+                .id(id)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    f(this);
+                    this.save();
+                    cx.notify();
+                }))
+        };
+        let content = match tab {
+            SettingsTab::General => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(
+                    widgets::section(self.tr("Language", "Dil")).child(widgets::setting_row(
+                        t.language,
+                        self.tr("Every page and message of Arkor.", "Arkor'un tüm sayfaları ve mesajları."),
+                        languages,
+                    )),
+                )
+                .child(
+                    widgets::section(self.tr("Window and start-up", "Pencere ve açılış"))
+                        .child(widgets::setting_row(
+                            self.tr("System tray icon", "Sistem tepsisi simgesi"),
+                            self.tr("Closing the window keeps Arkor in the tray (applies on next start).", "Pencereyi kapatınca Arkor tepside kalır (sonraki açılışta geçerli)."),
+                            switch("tray", self.global.tray, cx, |this| this.global.tray = !this.global.tray),
+                        ))
+                        .child(widgets::divider())
+                        .child(widgets::setting_row(
+                            self.tr("Start with the system", "Sistemle başlat"),
+                            self.tr("Starts minimized to the tray.", "Tepside küçültülmüş başlar."),
+                            widgets::switch(self.global.autostart)
+                                .id("autostart")
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.global.autostart = !this.global.autostart;
+                                    let result = super::tray::set_autostart(this.global.autostart);
+                                    this.save();
+                                    if result.is_err() {
+                                        this.report(result);
+                                    }
+                                    cx.notify();
+                                })),
+                        ))
+                        .child(widgets::divider())
+                        .child(widgets::setting_row(
+                            self.tr("Splash window while starting", "Başlarken açılış penceresi"),
+                            self.tr("A small window for a few seconds.", "Birkaç saniyelik küçük bir pencere."),
+                            switch("splash", self.global.splash, cx, |this| this.global.splash = !this.global.splash),
+                        ))
+                        .child(widgets::divider())
+                        .child(widgets::setting_row(
+                            self.tr("Close Arkor when a game starts", "Oyun açılınca Arkor'u kapat"),
+                            self.tr("The game keeps running.", "Oyun çalışmaya devam eder."),
+                            switch("close-on-launch", self.global.close_on_launch, cx, |this| {
+                                this.global.close_on_launch = !this.global.close_on_launch
+                            }),
+                        )),
+                ),
+            SettingsTab::Appearance => self.render_appearance(_window, cx),
+            SettingsTab::Defaults => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(
+                    widgets::section(self.tr("Wine prefixes", "Wine prefix'leri")).child(
+                        widgets::setting_row(
+                            self.tr("Prefix folder", "Prefix klasörü"),
+                            format!(
+                                "{} {}",
+                                self.tr("New Windows games get their own prefix in:", "Yeni Windows oyunları kendi prefix'lerini şurada alır:"),
+                                prefixes.display()
+                            ),
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    style::button("prefixes-choose", self.tr("Change…", "Değiştir…"), false)
+                                        .child(style::icon("folder-open", 13., super::style::pal::muted()))
+                                        .on_click(cx.listener(|this, _, _, cx| this.choose_prefixes_dir(cx))),
+                                )
+                                .when(custom_prefixes, |d| {
+                                    d.child(
+                                        style::button("prefixes-default", self.tr("Use default", "Varsayılanı kullan"), false)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.global.prefixes_dir = None;
+                                                this.save();
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        ),
+                    ),
+                )
+                .child(
+                    widgets::section(self.tr("Environment variables (all games)", "Ortam değişkenleri (tüm oyunlar)"))
+                        .child(widgets::label(self.tr(
+                            "Added to every game. A game's own variables override these.",
+                            "Her oyuna eklenir. Oyunun kendi değişkenleri bunları ezer.",
+                        )))
+                        .child(env),
+                ),
+            SettingsTab::Integrations => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(
+                    widgets::section(self.tr("Cover art (SteamGridDB)", "Kapak resimleri (SteamGridDB)"))
+                        .child(widgets::label(self.tr(
+                            "Free key from steamgriddb.com → Preferences → API; used by the SteamGridDB button on game pages.",
+                            "steamgriddb.com → Preferences → API'den ücretsiz anahtar; oyun sayfalarındaki SteamGridDB düğmesi kullanır.",
+                        )))
+                        .child(sgdb),
+                )
+                .child(
+                    widgets::section("Discord")
+                        .child(widgets::setting_row(
+                            self.tr("Show what you play on Discord", "Ne oynadığını Discord'da göster"),
+                            self.tr("Needs the Discord app running.", "Discord uygulamasının açık olması gerekir."),
+                            switch("discord", self.global.discord.enabled, cx, |this| {
+                                this.global.discord.enabled = !this.global.discord.enabled
+                            }),
+                        ))
+                        .child(widgets::divider())
+                        .child(widgets::label(self.tr(
+                            "Application ID (create an application at discord.com/developers; its name is what Discord shows):",
+                            "Uygulama kimliği (discord.com/developers'ta bir uygulama oluştur; Discord onun adını gösterir):",
+                        )))
+                        .child(discord_id),
+                ),
+            SettingsTab::Backups => self.render_backup(cx),
+            SettingsTab::Shortcuts => self.render_shortcut_list(),
+        };
+        div()
             .child(Self::header(
                 self.tr("Settings", "Ayarlar"),
                 self.tr(
@@ -202,141 +353,7 @@ impl Library {
                     "Arkor'un nasıl davrandığı ve göründüğü, ve kendi ayarı olmayan her oyunun ne aldığı.",
                 ),
             ))
-            .child(style::tab_strip("settings-tab", &labels, tab as usize, cx, |this, i, cx| {
-                this.settings_tab = SettingsTab::ALL[i];
-                cx.notify();
-            }));
-        match tab {
-            SettingsTab::General => page
-                .child(widgets::section(t.language).child(languages))
-                .child(self.render_shortcut_list())
-                .child(
-                    widgets::section(self.tr("Window and start-up", "Pencere ve açılış"))
-                    .child(
-                        widgets::switch_row(
-                            "tray",
-                            self.tr("System tray icon", "Sistem tepsisi simgesi"),
-                            self.tr("Closing the window keeps Arkor in the tray (applies on next start)", "Pencereyi kapatınca Arkor tepside kalır (sonraki açılışta geçerli)"),
-                            self.global.tray,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.global.tray = !this.global.tray;
-                            this.save();
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        widgets::switch_row(
-                            "autostart",
-                            self.tr("Start with the system", "Sistemle başlat"),
-                            self.tr("Starts minimized to the tray", "Tepside küçültülmüş başlar"),
-                            self.global.autostart,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.global.autostart = !this.global.autostart;
-                            let result = super::tray::set_autostart(this.global.autostart);
-                            this.save();
-                            if result.is_err() {
-                                this.report(result);
-                            }
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        widgets::switch_row(
-                            "splash",
-                            self.tr("Splash window while starting", "Başlarken açılış penceresi"),
-                            self.tr("A small window for a few seconds", "Birkaç saniyelik küçük bir pencere"),
-                            self.global.splash,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.global.splash = !this.global.splash;
-                            this.save();
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        widgets::switch_row(
-                            "close-on-launch",
-                            self.tr("Close Arkor when a game starts", "Oyun açılınca Arkor'u kapat"),
-                            self.tr("The game keeps running", "Oyun çalışmaya devam eder"),
-                            self.global.close_on_launch,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.global.close_on_launch = !this.global.close_on_launch;
-                            this.save();
-                            cx.notify();
-                        })),
-                    ),
-                ),
-            SettingsTab::Appearance => page.child(self.render_appearance(_window, cx)),
-            SettingsTab::Defaults => page
-                .child(
-                    widgets::section(self.tr("Wine prefixes", "Wine prefix'leri"))
-                    .child(widgets::label(self.tr(
-                        "New Windows games get their own prefix in this folder:",
-                        "Yeni Windows oyunları bu klasörde kendi prefix'lerini alır:",
-                    )))
-                    .child(div().text_sm().child(prefixes.display().to_string()))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                widgets::chip("prefixes-choose", self.tr("Change…", "Değiştir…"), false)
-                                    .on_click(cx.listener(|this, _, _, cx| this.choose_prefixes_dir(cx))),
-                            )
-                            .when(custom_prefixes, |d| {
-                                d.child(widgets::chip("prefixes-default", self.tr("Use default", "Varsayılanı kullan"), false).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.global.prefixes_dir = None;
-                                        this.save();
-                                        cx.notify();
-                                    }),
-                                ))
-                            }),
-                    ),
-                )
-            .child(
-                widgets::section(self.tr("Environment variables (all games)", "Ortam değişkenleri (tüm oyunlar)"))
-                    .child(widgets::label(self.tr(
-                        "A game's own variables override these.",
-                        "Oyunun kendi değişkenleri bunları ezer.",
-                    )))
-                    .child(env),
-            ),
-            SettingsTab::Integrations => page
-            .child(
-                widgets::section(self.tr("Cover art", "Kapak resimleri"))
-                    .child(widgets::label(self.tr(
-                        "Free key from steamgriddb.com → Preferences → API; used by the SteamGridDB button on game pages.",
-                        "steamgriddb.com → Preferences → API'den ücretsiz anahtar; oyun sayfalarındaki SteamGridDB düğmesi kullanır.",
-                    )))
-                    .child(sgdb),
-            )
-            .child(
-                widgets::section("Discord")
-                    .child(
-                        widgets::switch_row(
-                            "discord",
-                            self.tr("Show what you play on Discord", "Ne oynadığını Discord'da göster"),
-                            self.tr("Needs the Discord app running", "Discord uygulamasının açık olması gerekir"),
-                            self.global.discord.enabled,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.global.discord.enabled = !this.global.discord.enabled;
-                            this.save();
-                            cx.notify();
-                        })),
-                    )
-                    .child(widgets::label(self.tr(
-                        "Application ID (create an application at discord.com/developers; its name is what Discord shows):",
-                        "Uygulama kimliği (discord.com/developers'ta bir uygulama oluştur; Discord onun adını gösterir):",
-                    )))
-                    .child(discord_id),
-            ),
-            SettingsTab::Backups => page.child(self.render_backup(cx)),
-        }
+            .child(style::with_side_nav(nav, content))
     }
 
     /// Applies the theme and accent from the settings (System follows the window's appearance).
@@ -783,7 +800,7 @@ impl Library {
             );
         }
 
-        widgets::section(self.tr("Appearance", "Görünüm"))
+        let theme_card = widgets::section(self.tr("Theme and colours", "Tema ve renkler"))
             .gap_5()
             .child(row(
                 self.tr("Theme", "Tema"),
@@ -816,54 +833,66 @@ impl Library {
                     "Panellerin arkasında çizilir. ✦ = hareketli.",
                 ),
                 backdrops.into_any_element(),
-            ))
-            .child(row(
-                self.tr("Text size", "Yazı boyutu"),
-                self.tr(
-                    "Every text and spacing in the window follows it.",
-                    "Penceredeki tüm yazılar ve boşluklar buna göre ölçeklenir.",
-                ),
-                sizes.into_any_element(),
-            ))
-            .child(row(
-                self.tr("Library cover size", "Kütüphane kapak boyutu"),
-                self.tr(
-                    "Small, medium or large covers on the Library page.",
-                    "Kütüphane sayfasında küçük, orta ya da büyük kapaklar.",
-                ),
-                self.grid_size_chips(cx).into_any_element(),
-            ))
-            .child(
-                widgets::switch_row(
-                    "reduce-motion",
+            ));
+        let toggle = |id: &'static str,
+                      on: bool,
+                      cx: &mut Context<Self>,
+                      f: fn(&mut arkor_core::profile::Appearance)| {
+            widgets::switch(on)
+                .id(id)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.edit_look(cx, f);
+                    if id == "sounds" && this.global.appearance.sounds {
+                        super::sounds::play(super::sounds::Sound::Done);
+                    }
+                }))
+        };
+        let layout_card =
+            widgets::section(self.tr("Text, size and motion", "Yazı, boyut ve hareket"))
+                .child(widgets::setting_row(
+                    self.tr("Text size", "Yazı boyutu"),
+                    self.tr(
+                        "Every text and spacing in the window follows it.",
+                        "Penceredeki tüm yazılar ve boşluklar buna göre ölçeklenir.",
+                    ),
+                    sizes,
+                ))
+                .child(widgets::divider())
+                .child(widgets::setting_row(
+                    self.tr("Library cover size", "Kütüphane kapak boyutu"),
+                    self.tr(
+                        "Small, medium or large covers on the Library page.",
+                        "Kütüphane sayfasında küçük, orta ya da büyük kapaklar.",
+                    ),
+                    self.grid_size_chips(cx),
+                ))
+                .child(widgets::divider())
+                .child(widgets::setting_row(
                     self.tr("Reduce motion", "Hareketi azalt"),
                     self.tr(
                         "Animated backgrounds stand still.",
                         "Hareketli arka planlar durağan kalır.",
                     ),
-                    a.reduce_motion,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.edit_look(cx, |l| l.reduce_motion = !l.reduce_motion)
-                })),
-            )
-            .child(
-                widgets::switch_row(
-                    "sounds",
+                    toggle("reduce-motion", a.reduce_motion, cx, |l| {
+                        l.reduce_motion = !l.reduce_motion
+                    }),
+                ))
+                .child(widgets::divider())
+                .child(widgets::setting_row(
                     self.tr("Sounds", "Sesler"),
                     self.tr(
-                        "When a game starts or stops, a download finishes, or something fails",
-                        "Oyun başlayınca ya da kapanınca, indirme bitince ya da bir hata olunca",
+                        "When a game starts or stops, a download finishes, or something fails.",
+                        "Oyun başlayınca ya da kapanınca, indirme bitince ya da bir hata olunca.",
                     ),
-                    a.sounds,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.edit_look(cx, |l| l.sounds = !l.sounds);
-                    if this.global.appearance.sounds {
-                        super::sounds::play(super::sounds::Sound::Done);
-                    }
-                })),
-            )
+                    toggle("sounds", a.sounds, cx, |l| l.sounds = !l.sounds),
+                ));
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(theme_card)
+            .child(layout_card)
     }
 }
 
@@ -921,38 +950,51 @@ impl Library {
                 },
             ))
         };
-        let mut card = widgets::section(self.tr("Backup", "Yedekleme"))
+        use super::style::{self, pal};
+        let now_card = widgets::section(self.tr("Back up now", "Şimdi yedekle"))
             .child(widgets::label(self.tr(
                 "Settings, library, profiles, play time and covers in one .tar.gz. Prefixes Arkor created can be included.",
                 "Ayarlar, kütüphane, profiller, oynama süreleri ve kapaklar tek bir .tar.gz dosyasında. Arkor'un oluşturduğu prefix'ler de eklenebilir.",
             )))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().truncate().text_sm().child(b.dest_dir().display().to_string()))
-                    .child(widgets::chip("backup-dest", self.tr("Change…", "Değiştir…"), false).on_click(cx.listener(|this, _, _, cx| {
+            .child(widgets::setting_row(
+                self.tr("Backup folder", "Yedek klasörü"),
+                b.dest_dir().display().to_string(),
+                style::button("backup-dest", self.tr("Change…", "Değiştir…"), false)
+                    .child(style::icon("folder-open", 13., pal::muted()))
+                    .on_click(cx.listener(|this, _, _, cx| {
                         let title = this.tr("Choose the backup folder", "Yedek klasörünü seç");
                         this.prompt_path(true, title, cx, |this, path, _| {
                             this.global.backup.dest = Some(path);
                             this.save();
                         });
-                    }))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(widgets::primary_button("backup-now", self.tr("Back up now", "Şimdi yedekle")).on_click(cx.listener(|this, _, _, cx| this.backup_now(cx))))
-                    .child(widgets::chip("backup-prefixes", self.tr("Include Arkor's prefixes", "Arkor'un prefix'lerini dahil et"), self.backup_prefixes).on_click(cx.listener(|this, _, _, cx| {
+                    })),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Include Arkor's prefixes", "Arkor'un prefix'lerini dahil et"),
+                self.tr("Game installs inside them make the file large.", "İçlerindeki oyun kurulumları dosyayı büyütür."),
+                widgets::switch(self.backup_prefixes)
+                    .id("backup-prefixes")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
                         this.backup_prefixes = !this.backup_prefixes;
                         cx.notify();
-                    }))),
-            )
-            .child(widgets::label(self.tr("Automatic backup (when Arkor starts)", "Otomatik yedek (Arkor açılırken)")))
+                    })),
+            ))
             .child(
+                div().flex().pt_1().child(
+                    widgets::primary_button("backup-now", self.tr("Back up now", "Şimdi yedekle"))
+                        .child(style::icon("archive", 14., pal::on_accent()))
+                        .on_click(cx.listener(|this, _, _, cx| this.backup_now(cx))),
+                ),
+            );
+        let mut auto = widgets::section(self.tr("Automatic backup", "Otomatik yedek")).child(
+            widgets::setting_row(
+                self.tr("How often", "Ne sıklıkla"),
+                self.tr(
+                    "Checked when Arkor starts.",
+                    "Arkor açılırken kontrol edilir.",
+                ),
                 div()
                     .flex()
                     .flex_wrap()
@@ -961,24 +1003,32 @@ impl Library {
                     .child(every(1, 1, self.tr("Daily", "Günlük"), cx))
                     .child(every(2, 7, self.tr("Weekly", "Haftalık"), cx))
                     .child(every(3, 30, self.tr("Monthly", "Aylık"), cx)),
-            );
+            ),
+        );
         if b.every_days > 0 {
-            card = card.child(widgets::stepper(
+            auto = auto.child(widgets::divider()).child(widgets::setting_row(
                 self.tr("Keep", "Sakla"),
-                b.keep.to_string(),
-                widgets::step_button("keep-", "−").on_click(cx.listener(|this, _, _, cx| {
-                    this.global.backup.keep = this.global.backup.keep.saturating_sub(1).max(1);
-                    this.save();
-                    cx.notify();
-                })),
-                widgets::step_button("keep+", "+").on_click(cx.listener(|this, _, _, cx| {
-                    this.global.backup.keep = (this.global.backup.keep + 1).min(50);
-                    this.save();
-                    cx.notify();
-                })),
+                self.tr(
+                    "Older automatic backups are deleted.",
+                    "Daha eski otomatik yedekler silinir.",
+                ),
+                widgets::stepper_control(
+                    b.keep.to_string(),
+                    widgets::step_button("keep-", "−").on_click(cx.listener(|this, _, _, cx| {
+                        this.global.backup.keep = this.global.backup.keep.saturating_sub(1).max(1);
+                        this.save();
+                        cx.notify();
+                    })),
+                    widgets::step_button("keep+", "+").on_click(cx.listener(|this, _, _, cx| {
+                        this.global.backup.keep = (this.global.backup.keep + 1).min(50);
+                        this.save();
+                        cx.notify();
+                    })),
+                ),
             ));
         }
-        match self.restore_pending.clone() {
+        let card = widgets::section(self.tr("Restore", "Geri yükle"));
+        let restore = match self.restore_pending.clone() {
             None => card.child(
                 div().flex().child(
                     widgets::chip("backup-restore", self.tr("Restore…", "Geri yükle…"), false)
@@ -1025,6 +1075,13 @@ impl Library {
                                 })),
                         ),
                 ),
-        }
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(now_card)
+            .child(auto)
+            .child(restore)
     }
 }

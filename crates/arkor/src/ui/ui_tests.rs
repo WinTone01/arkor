@@ -146,3 +146,62 @@ fn game_page_search_and_tabs_render() {
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |l, _| l.feature_query.clone()), "dlss");
 }
+
+#[test]
+fn settings_overlay_and_hud_tabs_render() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("settings#shortcuts"));
+        lib
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |l, _| l.settings_tab),
+        global_page::SettingsTab::Shortcuts
+    );
+    // Every Settings section renders.
+    for tab in global_page::SettingsTab::ALL {
+        view.update(cx, |l, cx| {
+            l.settings_tab = tab;
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+    // The overlay page opens on the tab named in the link, and every tab renders.
+    view.update(cx, |l, _| l.open(Some("overlay#metrics")));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |l, _| (l.selection, l.hud_tab)),
+        (Some(Selection::Global), hud_editor::HudTab::Metrics)
+    );
+    for tab in hud_editor::HudTab::ALL {
+        view.update(cx, |l, cx| {
+            l.hud_tab = tab;
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+    // A game's own MangoHud layout uses the same editor.
+    view.update(cx, |l, cx| {
+        l.open(Some("local:test-game#visuals"));
+        l.set_hud_mode(HudMode::Custom, cx);
+    });
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |l, _| l.profile.mangohud.settings.is_some()));
+    // Esc from the game page goes back to the library.
+    cx.simulate_keystrokes("escape");
+    assert!(matches!(
+        view.read_with(cx, |l, _| l.selection),
+        Some(Selection::Grid)
+    ));
+}

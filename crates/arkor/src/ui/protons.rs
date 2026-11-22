@@ -10,9 +10,19 @@ use arkor_stores::prefix::human_size;
 use gpui::{Context, Div, div, prelude::*};
 
 use super::Library;
-use super::widgets::{self, theme::*};
+use super::widgets;
+
+/// Sections of the Proton page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum ProtonTab {
+    #[default]
+    Installed,
+    Download,
+    AntiCheat,
+}
 
 pub(super) struct ProtonsState {
+    pub(super) tab: ProtonTab,
     anticheat_busy: bool,
     variant: Variant,
     releases: HashMap<&'static str, Result<Vec<Release>, String>>,
@@ -23,6 +33,7 @@ pub(super) struct ProtonsState {
 impl Default for ProtonsState {
     fn default() -> Self {
         Self {
+            tab: ProtonTab::Installed,
             anticheat_busy: false,
             variant: Variant::Ge,
             releases: HashMap::new(),
@@ -109,39 +120,47 @@ impl Library {
         for (ix, (name, path)) in installed.iter().enumerate() {
             let removable = user_root.as_ref().is_some_and(|r| path.starts_with(r));
             let p = path.clone();
-            installed_card =
-                installed_card.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(super::style::pal::raised().opacity(0.45))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .min_w_0()
-                                .child(div().child(name.clone()))
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .child(widgets::label(path.display().to_string())),
-                                ),
+            installed_card = installed_card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(super::style::pal::raised().opacity(0.45))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(div().child(name.clone()))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .child(widgets::label(path.display().to_string())),
+                            ),
+                    )
+                    .child(if removable {
+                        super::style::button(
+                            ("proton-remove", ix),
+                            self.tr("Remove", "Kaldır"),
+                            false,
                         )
-                        .child(if removable {
-                            widgets::chip(("proton-remove", ix), self.tr("Remove", "Kaldır"), false)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_proton(p.clone(), cx)
-                                }))
-                                .into_any_element()
-                        } else {
-                            widgets::label(source_label(path, self)).into_any_element()
-                        }),
-                );
+                        .child(super::style::icon(
+                            "trash-2",
+                            13.,
+                            super::style::pal::danger(),
+                        ))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.remove_proton(p.clone(), cx)),
+                        )
+                        .into_any_element()
+                    } else {
+                        widgets::label(source_label(path, self)).into_any_element()
+                    }),
+            );
         }
 
         let mut tabs = div().flex().flex_wrap().gap_2();
@@ -155,7 +174,11 @@ impl Library {
                 )),
             );
         }
-        let mut available = widgets::section(self.tr("Download", "İndir")).child(tabs).child(widgets::label(self.tr(
+        let mut available = widgets::section(self.tr("Download", "İndir")).child(widgets::setting_row(
+            self.tr("Build", "Derleme"),
+            self.tr("GE-Proton suits most games; CachyOS is tuned for newer CPUs.", "GE-Proton çoğu oyuna uyar; CachyOS yeni işlemciler için ayarlıdır."),
+            tabs,
+        )).child(widgets::label(self.tr(
             "Installed into ~/.local/share/Steam/compatibilitytools.d, so Steam can use them too. Checked against the release checksum.",
             "~/.local/share/Steam/compatibilitytools.d içine kurulur, böylece Steam de kullanabilir. Sürümün sağlama toplamıyla doğrulanır.",
         )));
@@ -190,11 +213,20 @@ impl Library {
                     } else if self.protons.installing.is_some() {
                         div().into_any_element()
                     } else {
-                        widgets::chip(("proton-install", ix), self.tr("Install", "Kur"), false)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.install_proton(release.clone(), cx)
-                            }))
-                            .into_any_element()
+                        super::style::button(
+                            ("proton-install", ix),
+                            self.tr("Install", "Kur"),
+                            false,
+                        )
+                        .child(super::style::icon(
+                            "download",
+                            13.,
+                            super::style::pal::muted(),
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.install_proton(release.clone(), cx)
+                        }))
+                        .into_any_element()
                     };
                     available = available.child(
                         div()
@@ -248,31 +280,56 @@ impl Library {
             anticheat = anticheat.child(div().flex().child(if self.protons.anticheat_busy {
                 widgets::label(self.tr("Downloading…", "İndiriliyor…")).into_any_element()
             } else {
-                widgets::chip(
+                super::style::button(
                     "anticheat-dl",
                     self.tr(
                         "Download (from Faugus components)",
                         "İndir (Faugus bileşenlerinden)",
                     ),
-                    false,
+                    true,
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.download_anticheat(cx)))
                 .into_any_element()
             }));
         }
 
+        use super::style;
+        let tab = self.protons.tab;
+        let mut entries = vec![
+            style::NavEntry::new("hard-drive", self.tr("Installed", "Kurulu")),
+            style::NavEntry::new("download", self.tr("Download", "İndir")),
+            style::NavEntry::new("shield", self.tr("Anti-cheat", "Anti-cheat")),
+        ];
+        entries[0].badge = Some(installed.len().to_string()).filter(|n| n != "0");
+        let tabs = [
+            ProtonTab::Installed,
+            ProtonTab::Download,
+            ProtonTab::AntiCheat,
+        ];
+        let nav = style::side_nav(
+            "proton-tab",
+            entries,
+            tabs.iter().position(|t| *t == tab),
+            cx,
+            move |this, i, cx| {
+                this.protons.tab = tabs[i];
+                cx.notify();
+            },
+        );
+        let content = match tab {
+            ProtonTab::Installed => installed_card,
+            ProtonTab::Download => available,
+            ProtonTab::AntiCheat => anticheat,
+        };
         div()
             .child(Self::header(
                 self.tr("Proton & Wine", "Proton ve Wine"),
                 self.tr(
-                    "Pick one per game on the game's page; Automatic uses the best installed.",
-                    "Oyun sayfasında oyun başına seçilir; Otomatik en iyi kurulu sürümü kullanır.",
+                    "Builds Windows games run with. Pick one per game on the game's page; Automatic uses the best installed.",
+                    "Windows oyunlarının çalıştığı derlemeler. Oyun sayfasında oyun başına seçilir; Otomatik en iyi kurulu sürümü kullanır.",
                 ),
             ))
-            .child(installed_card)
-            .child(available)
-            .child(anticheat)
-            .child(div().text_color(MUTED()))
+            .child(style::with_side_nav(nav, content))
     }
 }
 

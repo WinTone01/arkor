@@ -366,3 +366,115 @@ pub fn tag(label: impl Into<SharedString>, color: Hsla) -> Div {
 pub fn hex(c: u32) -> Hsla {
     rgb(c).into()
 }
+
+/// One entry of a `side_nav`: icon, label and an optional count shown on the right.
+pub struct NavEntry {
+    pub icon: &'static str,
+    pub label: &'static str,
+    pub badge: Option<String>,
+}
+
+impl NavEntry {
+    pub fn new(icon: &'static str, label: &'static str) -> Self {
+        Self {
+            icon,
+            label,
+            badge: None,
+        }
+    }
+}
+
+/// A vertical list of a page's sections (Settings, a game's settings, Add game). The page
+/// draws the selected section to its right, so every page with sections works the same way.
+pub fn side_nav<V: 'static>(
+    id: &'static str,
+    entries: Vec<NavEntry>,
+    selected: Option<usize>,
+    cx: &mut Context<V>,
+    on_select: impl Fn(&mut V, usize, &mut Context<V>) + Clone + 'static,
+) -> Div {
+    div()
+        .w(px(208.))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .children(entries.into_iter().enumerate().map(|(i, e)| {
+            let active = selected == Some(i);
+            let on_select = on_select.clone();
+            div()
+                .id((id, i))
+                .flex()
+                .items_center()
+                .gap_2p5()
+                .px_3()
+                .py_2()
+                .rounded(px(10.))
+                .text_sm()
+                .cursor_pointer()
+                .border_1()
+                .when(active, |s| {
+                    s.bg(pal::accent().opacity(0.12))
+                        .border_color(pal::accent().opacity(0.35))
+                        .text_color(pal::text())
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                })
+                .when(!active, |s| {
+                    s.border_color(gpui::transparent_black())
+                        .text_color(pal::muted())
+                        .hover(|h| h.text_color(pal::text()).bg(pal::text().opacity(0.05)))
+                })
+                .child(icon(
+                    e.icon,
+                    16.,
+                    if active {
+                        pal::accent_light()
+                    } else {
+                        pal::muted()
+                    },
+                ))
+                .child(div().flex_1().min_w_0().truncate().child(e.label))
+                .children(e.badge.map(|b| {
+                    div()
+                        .px_1p5()
+                        .rounded_full()
+                        .text_xs()
+                        .bg(pal::accent().opacity(0.2))
+                        .text_color(pal::accent_light())
+                        .child(b)
+                }))
+                .on_click(cx.listener(move |this, _, _, cx| on_select(this, i, cx)))
+        }))
+}
+
+/// A page with sections: `nav` on the left, the selected section's content on the right.
+pub fn with_side_nav(nav: impl IntoElement, content: impl IntoElement) -> Div {
+    div().flex().items_start().gap_5().child(nav).child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(content),
+    )
+}
+
+/// A back link, e.g. "← Library" above a sub-page.
+pub fn back_link(id: &'static str, label: impl Into<SharedString>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1p5()
+        .px_2()
+        .py_1()
+        .rounded(px(8.))
+        .text_sm()
+        .text_color(pal::muted())
+        .cursor_pointer()
+        .hover(|s| s.text_color(pal::text()).bg(pal::text().opacity(0.05)))
+        .child(icon("arrow-left", 15., pal::muted()))
+        .child(label.into())
+}

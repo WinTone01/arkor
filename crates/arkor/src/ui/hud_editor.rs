@@ -3,6 +3,7 @@
 //! applies the change to whichever HUD is being edited and saves it immediately.
 
 use arkor_core::mangohud::{FONT_SIZE_RANGE, HudSettings, Metric, Orientation, Position, Preset};
+use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, Context, Div, div, prelude::*, px, rgb, rgba};
 
 use super::Library;
@@ -91,6 +92,42 @@ const COLORS: [(&str, &str); 13] = [
     ("network_color", "E07B85"),
     ("media_player_color", "FFFFFF"),
 ];
+
+/// Tabs of the MangoHud editor (after GOverlay: layout, metrics, look, performance, extras).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum HudTab {
+    #[default]
+    Layout,
+    Metrics,
+    Look,
+    Fps,
+    Logging,
+    Advanced,
+}
+
+impl HudTab {
+    pub(super) const ALL: [HudTab; 6] = [
+        HudTab::Layout,
+        HudTab::Metrics,
+        HudTab::Look,
+        HudTab::Fps,
+        HudTab::Logging,
+        HudTab::Advanced,
+    ];
+
+    /// `arkor open overlay#<name>` names.
+    pub(super) fn from_name(name: &str) -> Option<HudTab> {
+        Some(match name {
+            "layout" => HudTab::Layout,
+            "metrics" => HudTab::Metrics,
+            "look" | "colours" | "colors" => HudTab::Look,
+            "fps" | "vsync" => HudTab::Fps,
+            "logging" => HudTab::Logging,
+            "advanced" => HudTab::Advanced,
+            _ => return None,
+        })
+    }
+}
 
 const KEYS: [(&str, &str); 6] = [
     ("toggle_hud", "Shift_R+F12"),
@@ -181,70 +218,66 @@ impl Library {
     }
 
     pub(super) fn render_hud_editor(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
-        let mut editor = div()
+        use super::style;
+        let tabs = [
+            ("layout-template", self.tr("Layout", "Yerleşim")),
+            ("list-checks", self.tr("Metrics", "Göstergeler")),
+            ("palette", self.tr("Look", "Görünüm")),
+            ("timer", self.tr("FPS & sync", "FPS ve senkron")),
+            ("file-chart-column", self.tr("Logging", "Kayıt")),
+            ("sliders-horizontal", self.tr("Advanced", "Gelişmiş")),
+        ];
+        let tab = self.hud_tab;
+        let body = match tab {
+            HudTab::Layout => self.hud_layout(hud, cx),
+            HudTab::Metrics => self.metrics(hud, cx),
+            HudTab::Look => self.hud_look(hud, cx),
+            HudTab::Fps => self.hud_limits(hud, cx),
+            HudTab::Logging => self.hud_logging(hud, cx),
+            HudTab::Advanced => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.hud_keys(cx))
+                .child(self.hud_text(cx))
+                .child(self.hud_blacklist(hud, cx)),
+        };
+        div()
             .flex()
             .flex_col()
             .gap_4()
-            .child(self.presets(hud, cx))
             .child(
-                widgets::section(self.t().position_section).child(
-                    div()
-                        .flex()
-                        .gap_6()
-                        .items_start()
-                        .child(self.preview(hud))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_4()
-                                .child(self.position_grid(hud, cx))
-                                .child(self.orientation(hud, cx)),
-                        ),
-                ),
+                style::card()
+                    .p_5()
+                    .flex()
+                    .flex_wrap()
+                    .gap_6()
+                    .child(self.preview(hud))
+                    .child(div().flex_1().min_w(px(260.)).child(self.presets(hud, cx))),
             )
-            .child(self.steppers(hud, cx))
-            .child(self.metrics(hud, cx));
-        let open = self.hud_advanced;
-        editor = editor.child(
-            div().flex().child(
-                widgets::chip(
-                    "hud-advanced",
-                    if open {
-                        self.tr("Fewer MangoHud settings", "Daha az MangoHud ayarı")
-                    } else {
-                        self.tr("More MangoHud settings…", "Daha fazla MangoHud ayarı…")
-                    },
-                    open,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.hud_advanced = !this.hud_advanced;
+            .child(style::tab_strip(
+                "hud-tab",
+                &tabs,
+                tab as usize,
+                cx,
+                |this, i, cx| {
+                    this.hud_tab = HudTab::ALL[i];
                     cx.notify();
-                })),
-            ),
-        );
-        if open {
-            editor = editor
-                .child(self.hud_look(hud, cx))
-                .child(self.hud_colors(hud, cx))
-                .child(self.hud_keys(cx))
-                .child(self.hud_limits(hud, cx))
-                .child(self.hud_text(cx))
-                .child(self.hud_logging(hud, cx))
-                .child(self.hud_blacklist(hud, cx));
-        }
-        editor
+                },
+            ))
+            .child(body)
     }
 
     fn presets(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
         let current = hud.matching_preset();
+        let deck = hud.get("preset").map(str::to_string);
         let mut row = div().flex().flex_wrap().gap_2();
         for (ix, preset) in Preset::ALL.into_iter().enumerate() {
             row = row.child(
                 widgets::chip(
                     ("preset", ix),
                     self.t().preset(preset),
-                    current == Some(preset) && hud.get("preset").is_none(),
+                    current == Some(preset) && deck.is_none(),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.edit_hud(cx, |h| {
@@ -256,7 +289,6 @@ impl Library {
         }
         row = row.child(widgets::badge(self.t().custom_badge, current.is_none()));
         // MangoHud's built-in Steam Deck presets (`preset=N`) replace the layout entirely.
-        let deck = hud.get("preset").map(str::to_string);
         let mut deck_row = div().flex().flex_wrap().gap_2();
         for n in 1..=4u8 {
             let value = n.to_string();
@@ -275,13 +307,31 @@ impl Library {
                 })),
             );
         }
-        widgets::section(self.t().presets_section)
-            .child(row)
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(self.t().presets_section),
+            )
             .child(widgets::label(self.tr(
-                "MangoHud's Steam Deck presets (override the layout below):",
-                "MangoHud'un Steam Deck preset'leri (aşağıdaki düzenin yerine geçer):",
+                "Start from a preset, then change anything in the tabs below.",
+                "Bir hazır ayarla başla, sonra aşağıdaki sekmelerde istediğini değiştir.",
+            )))
+            .child(row)
+            .child(widgets::subheading(self.tr(
+                "MangoHud's own (replace the layout)",
+                "MangoHud'un kendi hazır ayarları (düzenin yerine geçer)",
             )))
             .child(deck_row)
+            .when(deck.is_some(), |d| {
+                d.child(div().text_sm().text_color(super::style::pal::warning()).child(self.tr(
+                    "A Steam Deck preset is on: MangoHud ignores the metrics chosen here.",
+                    "Bir Steam Deck hazır ayarı açık: MangoHud burada seçilen göstergeleri yok sayar.",
+                )))
+            })
     }
 
     fn position_grid(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
@@ -310,12 +360,7 @@ impl Library {
             }
             grid = grid.child(line);
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(widgets::label(self.t().screen_position))
-            .child(grid)
+        grid
     }
 
     fn orientation(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
@@ -326,19 +371,52 @@ impl Library {
         };
         div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .child(widgets::label(self.t().orientation))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(opt(0, Orientation::Vertical, self.t().vertical, cx))
-                    .child(opt(1, Orientation::Horizontal, self.t().horizontal, cx)),
-            )
+            .gap_2()
+            .child(opt(0, Orientation::Vertical, self.t().vertical, cx))
+            .child(opt(1, Orientation::Horizontal, self.t().horizontal, cx))
     }
 
-    fn steppers(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
+    /// `-` / `+` buttons that change a raw numeric MangoHud key.
+    #[allow(clippy::too_many_arguments)]
+    fn key_stepper(
+        &self,
+        hud: &HudSettings,
+        id: &'static str,
+        key: &'static str,
+        delta: i32,
+        min: i32,
+        max: i32,
+        default: i32,
+        unit: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let value = hud
+            .get(key)
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(default);
+        let step = |glyph: &'static str, d: i32, cx: &mut Context<Self>| {
+            widgets::step_button((id, if d < 0 { 0usize } else { 1 }), glyph)
+                .when((d < 0 && value <= min) || (d > 0 && value >= max), |b| {
+                    b.opacity(0.4)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.edit_hud(cx, |h| {
+                        let v = h
+                            .get(key)
+                            .and_then(|v| v.parse::<i32>().ok())
+                            .unwrap_or(default);
+                        h.set(key, Some(&(v + d).clamp(min, max).to_string()));
+                    })
+                }))
+        };
+        widgets::stepper_control(
+            format!("{value}{unit}"),
+            step("−", -delta, cx),
+            step("+", delta, cx),
+        )
+    }
+
+    fn hud_layout(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
         let btn = |id: &'static str,
                    glyph: &'static str,
                    f: fn(&mut HudSettings),
@@ -347,38 +425,104 @@ impl Library {
                 .on_click(cx.listener(move |this, _, _, cx| this.edit_hud(cx, f)))
         };
         let t = self.t();
-        let fps = if hud.fps_limit == 0 {
-            t.unlimited.to_string()
-        } else {
-            hud.fps_limit.to_string()
-        };
         let (min_font, max_font) = FONT_SIZE_RANGE;
-        widgets::section(t.size_section).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_6()
-                .child(widgets::stepper(
-                    t.font_size,
-                    format!("{} px", hud.font_size),
-                    btn("font-", "−", |h| h.step_font_size(false), cx)
-                        .when(hud.font_size <= min_font, |d| d.opacity(0.4)),
-                    btn("font+", "+", |h| h.step_font_size(true), cx)
-                        .when(hud.font_size >= max_font, |d| d.opacity(0.4)),
-                ))
-                .child(widgets::stepper(
-                    t.bg_opacity,
-                    t.percent(hud.background_alpha),
-                    btn("alpha-", "−", |h| h.step_alpha(false), cx),
-                    btn("alpha+", "+", |h| h.step_alpha(true), cx),
-                ))
-                .child(widgets::stepper(
-                    t.fps_limit,
-                    fps,
-                    btn("fps-", "−", |h| h.step_fps_limit(false), cx),
-                    btn("fps+", "+", |h| h.step_fps_limit(true), cx),
-                )),
-        )
+        let offset_x = self.key_field("offset_x", "0", cx);
+        let offset_y = self.key_field("offset_y", "0", cx);
+        let mut flags = div().flex().flex_wrap().gap_1();
+        for (ix, (key, label)) in [
+            ("hud_compact", self.tr("Compact", "Kompakt")),
+            (
+                "horizontal_stretch",
+                self.tr("Stretch horizontally", "Yatay uzat"),
+            ),
+            (
+                "hud_no_margin",
+                self.tr("No outer margin", "Dış boşluk yok"),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            flags = flags.child(self.flag_item(ix, key, label, hud, cx));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                widgets::section(self.t().position_section)
+                    .child(widgets::setting_row(
+                        t.screen_position,
+                        self.tr(
+                            "Which corner or edge of the screen.",
+                            "Ekranın hangi köşesi ya da kenarı.",
+                        ),
+                        self.position_grid(hud, cx),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        t.orientation,
+                        self.tr(
+                            "Metrics in a column or in one line.",
+                            "Göstergeler bir sütunda ya da tek satırda.",
+                        ),
+                        self.orientation(hud, cx),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("Offset X / Y", "Ofset X / Y"),
+                        self.tr(
+                            "Extra distance from that edge, in pixels.",
+                            "O kenardan ek uzaklık, piksel.",
+                        ),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(div().w(px(90.)).child(offset_x))
+                            .child(div().w(px(90.)).child(offset_y)),
+                    )),
+            )
+            .child(
+                widgets::section(t.size_section)
+                    .child(widgets::setting_row(
+                        t.font_size,
+                        self.tr("Size of the HUD's text.", "HUD yazısının boyutu."),
+                        widgets::stepper_control(
+                            format!("{} px", hud.font_size),
+                            btn("font-", "−", |h| h.step_font_size(false), cx)
+                                .when(hud.font_size <= min_font, |d| d.opacity(0.4)),
+                            btn("font+", "+", |h| h.step_font_size(true), cx)
+                                .when(hud.font_size >= max_font, |d| d.opacity(0.4)),
+                        ),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        t.bg_opacity,
+                        self.tr("0% = no background box.", "%0 = arka plan kutusu yok."),
+                        widgets::stepper_control(
+                            t.percent(hud.background_alpha),
+                            btn("alpha-", "−", |h| h.step_alpha(false), cx),
+                            btn("alpha+", "+", |h| h.step_alpha(true), cx),
+                        ),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("Columns", "Sütun"),
+                        self.tr(
+                            "Values per line in the vertical layout.",
+                            "Dikey düzende satır başına değer.",
+                        ),
+                        self.key_stepper(hud, "columns", "table_columns", 1, 1, 6, 3, "", cx),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("Rounded corners", "Köşe yuvarlama"),
+                        "",
+                        self.key_stepper(hud, "corners", "round_corners", 2, 0, 20, 0, " px", cx),
+                    ))
+                    .child(widgets::divider())
+                    .child(flags),
+            )
     }
 
     fn metrics(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
@@ -388,13 +532,17 @@ impl Library {
             self.t().group_frame,
             self.t().group_other,
         ];
-        let mut card = widgets::section(self.t().metrics_section);
-        for (title, metrics) in titles.into_iter().zip(GROUPS) {
-            let mut row = div().flex().flex_wrap().gap_2();
+        let mut card = widgets::section(self.t().metrics_section).child(widgets::label(self.tr(
+            "Tick what the HUD shows. The preview above follows along.",
+            "HUD'un ne göstereceğini işaretle. Yukarıdaki önizleme anında güncellenir.",
+        )));
+        for (gi, (title, metrics)) in titles.into_iter().zip(GROUPS).enumerate() {
+            let on = metrics.iter().filter(|m| hud.metrics.contains(m)).count();
+            let mut grid = div().flex().flex_wrap().gap_1();
             for &m in metrics {
-                row =
-                    row.child(
-                        widgets::chip(
+                grid =
+                    grid.child(
+                        widgets::check_item(
                             ("metric", m as usize),
                             self.metric_label(m),
                             hud.metrics.contains(&m),
@@ -404,26 +552,38 @@ impl Library {
                         })),
                     );
             }
-            card = card.child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .items_start()
-                    .child(
-                        div()
-                            .w(px(110.))
-                            .pt_1()
-                            .text_sm()
-                            .text_color(TEXT())
-                            .child(title),
+            if gi == 2 {
+                let lows = hud.get("fps_metrics").is_some();
+                grid = grid.child(
+                    widgets::check_item(
+                        "hud-lows",
+                        self.tr("1% / 0.1% low FPS", "%1 / %0.1 düşük FPS"),
+                        lows,
                     )
-                    .child(row.flex_1()),
-            );
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.edit_hud(cx, |h| {
+                            h.set(
+                                "fps_metrics",
+                                if lows { None } else { Some("avg,0.01,0.001") },
+                            )
+                        })
+                    })),
+                );
+            }
+            if gi > 0 {
+                card = card.child(widgets::divider());
+            }
+            card = card
+                .child(widgets::subheading(format!(
+                    "{title} · {on}/{}",
+                    metrics.len()
+                )))
+                .child(grid);
         }
         card
     }
 
-    fn flag_chip(
+    fn flag_item(
         &self,
         ix: usize,
         key: &'static str,
@@ -431,7 +591,7 @@ impl Library {
         hud: &HudSettings,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        widgets::chip(("hud-flag", ix), label, hud.flag(key))
+        widgets::check_item(("hud-flag", ix), label, hud.flag(key))
             .on_click(cx.listener(move |this, _, _, cx| this.edit_hud(cx, |h| h.toggle_flag(key))))
     }
 
@@ -464,24 +624,8 @@ impl Library {
     }
 
     fn hud_look(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
-        let offset_x = self.key_field("offset_x", "0", cx);
-        let offset_y = self.key_field("offset_y", "0", cx);
-        let flags: [(&'static str, &'static str); 10] = [
+        let flags: [(&'static str, &'static str); 7] = [
             ("text_outline", self.tr("Text outline", "Metin kenarlığı")),
-            ("hud_compact", self.tr("Compact", "Kompakt")),
-            (
-                "horizontal_stretch",
-                self.tr("Stretch horizontally", "Yatay uzat"),
-            ),
-            (
-                "hud_no_margin",
-                self.tr("No outer margin", "Dış boşluk yok"),
-            ),
-            (
-                "no_display",
-                self.tr("Hidden until the toggle key", "Kısayol tuşuna kadar gizli"),
-            ),
-            ("temp_fahrenheit", "°F"),
             (
                 "fps_color_change",
                 self.tr("Colour FPS by value", "FPS'i değere göre renklendir"),
@@ -498,139 +642,88 @@ impl Library {
                 "engine_short_names",
                 self.tr("Short engine names", "Kısa motor adları"),
             ),
+            (
+                "temp_fahrenheit",
+                self.tr("Temperatures in °F", "Sıcaklık °F"),
+            ),
+            (
+                "no_display",
+                self.tr("Hidden until the toggle key", "Kısayol tuşuna kadar gizli"),
+            ),
         ];
-        let mut chips = div().flex().flex_wrap().gap_2();
+        let mut items = div().flex().flex_wrap().gap_1();
         for (ix, (key, label)) in flags.into_iter().enumerate() {
-            chips = chips.child(self.flag_chip(ix, key, label, hud, cx));
+            items = items.child(self.flag_item(10 + ix, key, label, hud, cx));
         }
-        let lows = hud.get("fps_metrics").is_some();
-        chips = chips.child(
-            widgets::chip(
-                "hud-lows",
-                self.tr("1% / 0.1% low FPS", "%1 / %0.1 düşük FPS"),
-                lows,
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.edit_hud(cx, |h| {
-                    h.set(
-                        "fps_metrics",
-                        if lows { None } else { Some("avg,0.01,0.001") },
-                    )
-                })
-            })),
-        );
-        let num = |hud: &HudSettings, key: &str, default: u32| {
-            hud.get(key)
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(default)
-        };
-        let corners = num(hud, "round_corners", 0);
-        let columns = num(hud, "table_columns", 3);
-        let step = |id: &'static str,
-                    glyph: &'static str,
-                    key: &'static str,
-                    delta: i32,
-                    min: i32,
-                    max: i32,
-                    default: i32,
-                    cx: &mut Context<Self>| {
-            widgets::step_button(id, glyph).on_click(cx.listener(move |this, _, _, cx| {
-                this.edit_hud(cx, |h| {
-                    let v = h
-                        .get(key)
-                        .and_then(|v| v.parse::<i32>().ok())
-                        .unwrap_or(default);
-                    h.set(key, Some(&(v + delta).clamp(min, max).to_string()));
-                })
-            }))
-        };
         let font = hud.get("font_file").map(String::from);
-        widgets::section(self.tr("Look", "Görünüm"))
-            .child(chips)
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_6()
-                    .items_end()
-                    .child(widgets::stepper(
-                        self.tr("Rounded corners", "Köşe yuvarlama"),
-                        format!("{corners} px"),
-                        step("corners-", "−", "round_corners", -2, 0, 20, 0, cx),
-                        step("corners+", "+", "round_corners", 2, 0, 20, 0, cx),
-                    ))
-                    .child(widgets::stepper(
-                        self.tr("Columns", "Sütun"),
-                        columns.to_string(),
-                        step("columns-", "−", "table_columns", -1, 1, 6, 3, cx),
-                        step("columns+", "+", "table_columns", 1, 1, 6, 3, cx),
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(widgets::label(
-                                self.tr("Offset X / Y (px)", "Ofset X / Y (px)"),
-                            ))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .child(div().w(px(90.)).child(offset_x))
-                                    .child(div().w(px(90.)).child(offset_y)),
-                            ),
+        let font_row = widgets::setting_row(
+            self.tr("Font file", "Yazı tipi dosyası"),
+            font.clone().unwrap_or_else(|| {
+                self.tr(
+                    "MangoHud's default font",
+                    "MangoHud'un varsayılan yazı tipi",
+                )
+                .into()
+            }),
+            div()
+                .flex()
+                .gap_2()
+                .child(
+                    super::style::button("hud-font", self.tr("Choose…", "Seç…"), false).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            let title =
+                                this.tr("Choose a .ttf/.otf font", "Bir .ttf/.otf yazı tipi seç");
+                            this.prompt_path(false, title, cx, |this, path, cx| {
+                                let p = path.display().to_string();
+                                this.edit_hud(cx, |h| h.set("font_file", Some(&p)));
+                            });
+                        }),
                     ),
-            )
-            .child(widgets::label(self.tr("Font file", "Yazı tipi dosyası")))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .truncate()
-                            .text_sm()
-                            .child(font.clone().unwrap_or_else(|| {
-                                self.tr(
-                                    "MangoHud's default font",
-                                    "MangoHud'un varsayılan yazı tipi",
-                                )
-                                .into()
-                            })),
-                    )
-                    .child(
-                        widgets::chip("hud-font", self.tr("Choose…", "Seç…"), false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                let title = this
-                                    .tr("Choose a .ttf/.otf font", "Bir .ttf/.otf yazı tipi seç");
-                                this.prompt_path(false, title, cx, |this, path, cx| {
-                                    let p = path.display().to_string();
-                                    this.edit_hud(cx, |h| h.set("font_file", Some(&p)));
-                                });
-                            }),
-                        ),
-                    )
-                    .when(font.is_some(), |d| {
-                        d.child(
-                            widgets::chip(
-                                "hud-font-clear",
-                                self.tr("Default", "Varsayılan"),
-                                false,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.edit_hud(cx, |h| h.set("font_file", None))
-                            })),
+                )
+                .when(font.is_some(), |d| {
+                    d.child(
+                        super::style::button(
+                            "hud-font-clear",
+                            self.tr("Default", "Varsayılan"),
+                            false,
                         )
-                    }),
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.edit_hud(cx, |h| h.set("font_file", None))
+                        })),
+                    )
+                }),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                widgets::section(self.tr("Text", "Yazı"))
+                    .child(items)
+                    .child(widgets::divider())
+                    .child(font_row),
             )
+            .child(self.hud_colors(hud, cx))
     }
 
     fn hud_colors(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
+        let names: [&'static str; 13] = [
+            self.tr("Text", "Yazı"),
+            self.tr("Background", "Arka plan"),
+            "GPU",
+            "CPU",
+            "VRAM",
+            "RAM",
+            self.tr("Engine (DXVK…)", "Motor (DXVK…)"),
+            self.tr("Frametime graph", "Frametime grafiği"),
+            "Wine",
+            self.tr("Battery", "Pil"),
+            self.tr("Disk", "Disk"),
+            self.tr("Network", "Ağ"),
+            self.tr("Media player", "Medya oynatıcı"),
+        ];
         let mut grid = div().flex().flex_wrap().gap_3();
-        for (key, default) in COLORS {
+        for ((key, default), name) in COLORS.into_iter().zip(names) {
             let input = self.key_field(key, default, cx);
             let shown = hud
                 .get(key)
@@ -639,13 +732,11 @@ impl Library {
                 .unwrap_or(0xffffff);
             grid = grid.child(
                 div()
-                    .w(px(250.))
+                    .w(px(220.))
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(widgets::label(
-                        key.trim_end_matches("_color").replace('_', " "),
-                    ))
+                    .child(widgets::label(name))
                     .child(
                         div()
                             .flex()
@@ -664,33 +755,57 @@ impl Library {
                     ),
             );
         }
-        widgets::section(self.tr("Colours (hex, e.g. 2E9762)", "Renkler (hex, ör. 2E9762)"))
-            .child(grid)
-    }
-
-    fn hud_keys(&mut self, cx: &mut Context<Self>) -> Div {
-        let mut grid = div().flex().flex_wrap().gap_3();
-        for (key, default) in KEYS {
-            let input = self.key_field(key, default, cx);
-            grid = grid.child(
-                div()
-                    .w(px(250.))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(widgets::label(key.replace('_', " ")))
-                    .child(input),
-            );
-        }
-        widgets::section(self.tr("Keyboard shortcuts", "Klavye kısayolları"))
+        widgets::section(self.tr("Colours", "Renkler"))
             .child(widgets::label(self.tr(
-                "X11 key names joined with +, e.g. Shift_R+F12.",
-                "+ ile birleştirilmiş X11 tuş adları, ör. Shift_R+F12.",
+                "Hex values such as 2E9762. Empty = MangoHud's default (shown faded).",
+                "2E9762 gibi hex değerler. Boş = MangoHud'un varsayılanı (soluk gösterilir).",
             )))
             .child(grid)
     }
 
+    fn hud_keys(&mut self, cx: &mut Context<Self>) -> Div {
+        let names: [&'static str; 6] = [
+            self.tr("Show / hide the HUD", "HUD'u göster / gizle"),
+            self.tr("Cycle the FPS limit", "FPS limitini değiştir"),
+            self.tr("Start / stop logging", "Kaydı başlat / durdur"),
+            self.tr("Reload the config", "Ayarı yeniden yükle"),
+            self.tr("Move the HUD", "HUD'u taşı"),
+            self.tr("Next preset", "Sonraki hazır ayar"),
+        ];
+        let mut card = widgets::section(self.tr("Keyboard shortcuts", "Klavye kısayolları")).child(
+            widgets::label(self.tr(
+                "In game. X11 key names joined with +, e.g. Shift_R+F12.",
+                "Oyun içinde. + ile birleştirilmiş X11 tuş adları, ör. Shift_R+F12.",
+            )),
+        );
+        for (ix, ((key, default), name)) in KEYS.into_iter().zip(names).enumerate() {
+            let input = self.key_field(key, default, cx);
+            if ix > 0 {
+                card = card.child(widgets::divider());
+            }
+            card = card.child(widgets::setting_row(
+                name,
+                "",
+                div().w(px(200.)).child(input),
+            ));
+        }
+        card
+    }
+
     fn hud_limits(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
+        let t = self.t();
+        let btn = |id: &'static str,
+                   glyph: &'static str,
+                   f: fn(&mut HudSettings),
+                   cx: &mut Context<Self>| {
+            widgets::step_button(id, glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.edit_hud(cx, f)))
+        };
+        let fps = if hud.fps_limit == 0 {
+            t.unlimited.to_string()
+        } else {
+            hud.fps_limit.to_string()
+        };
         let more = self.field(
             "hud-fps-more",
             |this| {
@@ -732,24 +847,69 @@ impl Library {
             row
         };
         let auto = self.tr("Default", "Varsayılan");
-        widgets::section(self.tr("FPS limit & sync", "FPS limiti ve senkron"))
-            .child(widgets::label(self.tr(
-                "More limits to cycle with the FPS-limit key (after the main limit above), comma-separated; 0 = unlimited:",
-                "FPS limiti tuşuyla geçilecek ek limitler (yukarıdaki ana limitten sonra), virgülle; 0 = sınırsız:",
-            )))
-            .child(more)
-            .child(widgets::label(self.tr("Limiter", "Sınırlayıcı")))
-            .child(chooser("limit-method", "fps_limit_method", &[(auto, None), ("late (smoother)", Some("late")), ("early (lower latency)", Some("early"))], hud, cx))
-            .child(widgets::label("Vulkan VSync"))
-            .child(chooser(
-                "vsync",
-                "vsync",
-                &[(auto, None), ("adaptive", Some("0")), ("off", Some("1")), ("mailbox", Some("2")), ("on", Some("3"))],
-                hud,
-                cx,
-            ))
-            .child(widgets::label("OpenGL VSync"))
-            .child(chooser("gl-vsync", "gl_vsync", &[(auto, None), ("adaptive", Some("-1")), ("off", Some("0")), ("on", Some("1"))], hud, cx))
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                widgets::section(t.fps_limit)
+                    .child(widgets::setting_row(
+                        t.fps_limit,
+                        self.tr("MangoHud caps the frame rate to this.", "MangoHud kare hızını buna sınırlar."),
+                        widgets::stepper_control(
+                            fps,
+                            btn("fps-", "−", |h| h.step_fps_limit(false), cx),
+                            btn("fps+", "+", |h| h.step_fps_limit(true), cx),
+                        ),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("More limits", "Ek limitler"),
+                        self.tr(
+                            "Cycled with the FPS-limit key after the one above; comma-separated, 0 = unlimited.",
+                            "FPS limiti tuşuyla yukarıdakinden sonra geçilir; virgülle, 0 = sınırsız.",
+                        ),
+                        div().w(px(200.)).child(more),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("Limiter", "Sınırlayıcı"),
+                        self.tr("Late is smoother, early has lower latency.", "Late daha akıcı, early daha düşük gecikmeli."),
+                        chooser(
+                            "limit-method",
+                            "fps_limit_method",
+                            &[(auto, None), ("late", Some("late")), ("early", Some("early"))],
+                            hud,
+                            cx,
+                        ),
+                    )),
+            )
+            .child(
+                widgets::section(self.tr("Vertical sync", "Dikey senkron"))
+                    .child(widgets::setting_row(
+                        "Vulkan",
+                        self.tr("Overrides the game's own VSync.", "Oyunun kendi VSync'ini ezer."),
+                        chooser(
+                            "vsync",
+                            "vsync",
+                            &[(auto, None), ("adaptive", Some("0")), ("off", Some("1")), ("mailbox", Some("2")), ("on", Some("3"))],
+                            hud,
+                            cx,
+                        ),
+                    ))
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        "OpenGL",
+                        "",
+                        chooser(
+                            "gl-vsync",
+                            "gl_vsync",
+                            &[(auto, None), ("adaptive", Some("-1")), ("off", Some("0")), ("on", Some("1"))],
+                            hud,
+                            cx,
+                        ),
+                    )),
+            )
     }
 
     fn hud_text(&mut self, cx: &mut Context<Self>) -> Div {
@@ -760,40 +920,66 @@ impl Library {
             cx,
         );
         let exec = self.key_field("exec", "cat /sys/class/power_supply/BAT0/capacity", cx);
-        widgets::section(self.tr("Text", "Metin"))
-            .child(widgets::label(self.tr(
-                "Clock format (strftime: %T, %R, %I:%M %p)",
-                "Saat biçimi (strftime: %T, %R, %I:%M %p)",
-            )))
-            .child(time_format)
-            .child(widgets::label(self.tr("Custom text", "Özel metin")))
-            .child(custom)
-            .child(widgets::label(self.tr(
-                "Command whose output is shown",
-                "Çıktısı gösterilecek komut",
-            )))
-            .child(exec)
+        widgets::section(self.tr("Extra text", "Ek metin"))
+            .child(widgets::setting_row(
+                self.tr("Clock format", "Saat biçimi"),
+                self.tr(
+                    "strftime: %T, %R, %I:%M %p (needs the Clock metric).",
+                    "strftime: %T, %R, %I:%M %p (Saat göstergesi gerekir).",
+                ),
+                div().w(px(200.)).child(time_format),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Custom text", "Özel metin"),
+                "",
+                div().w(px(280.)).child(custom),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Command output", "Komut çıktısı"),
+                self.tr(
+                    "A command whose output the HUD shows.",
+                    "Çıktısını HUD'un göstereceği bir komut.",
+                ),
+                div().w(px(280.)).child(exec),
+            ))
     }
 
     fn hud_logging(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
         let folder = self.key_field("output_folder", "~/mangohud-logs", cx);
         let duration = self.key_field("log_duration", "30", cx);
         let interval = self.key_field("log_interval", "100", cx);
-        widgets::section(self.tr("Benchmark logging", "Benchmark loglama"))
+        widgets::section(self.tr("Benchmark logging", "Benchmark kaydı"))
             .child(widgets::label(self.tr(
-                "Press the logging key in game to record frametimes to CSV (seconds; interval in ms).",
-                "Oyunda loglama tuşuna basınca frametime'lar CSV'ye kaydedilir (saniye; aralık ms).",
+                "Press the logging key in game to record frametimes to CSV; the Benchmarks page reads them.",
+                "Oyunda kayıt tuşuna basınca frametime'lar CSV'ye kaydedilir; Benchmark sayfası bunları okur.",
             )))
-            .child(widgets::label(self.tr("Log folder", "Log klasörü")))
-            .child(folder)
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(div().w(px(160.)).flex().flex_col().gap_1().child(widgets::label(self.tr("Duration", "Süre"))).child(duration))
-                    .child(div().w(px(160.)).flex().flex_col().gap_1().child(widgets::label(self.tr("Interval", "Aralık"))).child(interval)),
-            )
-            .child(div().flex().child(self.flag_chip(20, "autostart_log", self.tr("Start logging with the game", "Loglamayı oyunla başlat"), hud, cx)))
+            .child(widgets::setting_row(
+                self.tr("Log folder", "Kayıt klasörü"),
+                "",
+                div().w(px(280.)).child(folder),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Duration", "Süre"),
+                self.tr("Seconds per log.", "Kayıt başına saniye."),
+                div().w(px(120.)).child(duration),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Interval", "Aralık"),
+                self.tr("Milliseconds between samples.", "Örnekler arası milisaniye."),
+                div().w(px(120.)).child(interval),
+            ))
+            .child(widgets::divider())
+            .child(self.flag_item(
+                20,
+                "autostart_log",
+                self.tr("Start logging with the game", "Kaydı oyunla başlat"),
+                hud,
+                cx,
+            ))
     }
 
     fn hud_blacklist(&mut self, hud: &HudSettings, cx: &mut Context<Self>) -> Div {
@@ -851,6 +1037,10 @@ impl Library {
             "Programs MangoHud ignores",
             "MangoHud'un yok saydığı programlar",
         ))
+        .child(widgets::label(self.tr(
+            "Process names that never get the HUD, e.g. launchers.",
+            "HUD'u hiç almayan süreç adları, ör. başlatıcılar.",
+        )))
         .child(chips)
         .child(add)
     }

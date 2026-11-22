@@ -9,7 +9,6 @@
 use arkor_core::HudMode;
 use arkor_core::library::{GameKind, LibraryGame};
 use arkor_core::profile::LsfgMode;
-use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::style::{self, pal};
@@ -380,7 +379,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "other-layers",
         tab: GameTab::Visuals,
-        icon: "layers-3",
+        icon: "layers-2",
         name: ("Other Vulkan layers", "Diğer Vulkan katmanları"),
         keywords: "vulkan layer katman obs",
         applies: has_other_layers,
@@ -701,8 +700,8 @@ impl Library {
                         on_tags
                     } else {
                         div().text_sm().text_color(pal::faint()).child(self.tr(
-                            "Nothing extra is on for this game yet: see Quick settings below or the tabs.",
-                            "Bu oyunda henüz ek bir şey açık değil: aşağıdaki Hızlı ayarlara ya da sekmelere bak.",
+                            "Nothing extra is on for this game yet: see Quick settings below or the menu on the left.",
+                            "Bu oyunda henüz ek bir şey açık değil: aşağıdaki Hızlı ayarlara ya da soldaki menüye bak.",
                         ))
                     }),
             )
@@ -747,77 +746,60 @@ impl Library {
         let hero = self.render_hero(&entry, cx);
         let search = self.render_feature_search(cx);
 
-        // Tabs that have something for this game.
-        let mut tabs = style::card().p_1p5().flex().flex_wrap().gap_1();
-        for (ix, tab) in GameTab::ALL.into_iter().enumerate() {
-            if tab != GameTab::Overview && !applicable.iter().any(|f| f.tab == tab) {
-                continue;
-            }
-            let active = self.game_tab == tab && self.feature_query.trim().is_empty();
-            let on = applicable
-                .iter()
-                .filter(|f| f.tab == tab && f.active.is_some_and(|a| a(self)))
-                .count();
-            tabs = tabs.child(
-                div()
-                    .id(("game-tab", ix))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3p5()
-                    .py_2()
-                    .rounded(px(12.))
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .when(active, |s| {
-                        s.bg(pal::text().opacity(0.07))
-                            .text_color(pal::accent_light())
-                    })
-                    .when(!active, |s| {
-                        s.text_color(pal::muted())
-                            .hover(|h| h.text_color(pal::text()).bg(pal::text().opacity(0.04)))
-                    })
-                    .child(style::icon(
-                        tab.icon(),
-                        15.,
-                        if active {
-                            pal::accent_light()
-                        } else {
-                            pal::muted()
-                        },
-                    ))
-                    .child(tab.name(self))
-                    .when(on > 0 && tab != GameTab::Overview, |d| {
-                        d.child(
-                            div()
-                                .px_1p5()
-                                .rounded_full()
-                                .text_xs()
-                                .bg(pal::accent().opacity(0.2))
-                                .text_color(pal::accent_light())
-                                .child(on.to_string()),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.game_tab = tab;
-                        this.feature_query.clear();
-                        this.fields.inputs.remove("feature-search");
-                        cx.notify();
-                    })),
-            );
-        }
-
-        let mut page = div().flex().flex_col().gap_4().child(hero).child(
-            div().flex().flex_col().gap_3().child(tabs).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(style::icon("search", 15., pal::faint()))
-                    .child(div().flex_1().child(search)),
-            ),
-        );
+        // Tabs that have something for this game, as the page's side menu.
+        let tabs: Vec<GameTab> = GameTab::ALL
+            .into_iter()
+            .filter(|t| *t == GameTab::Overview || applicable.iter().any(|f| f.tab == *t))
+            .collect();
+        let searching = !self.feature_query.trim().is_empty();
+        let entries = tabs
+            .iter()
+            .map(|&tab| {
+                let on = applicable
+                    .iter()
+                    .filter(|f| f.tab == tab && f.active.is_some_and(|a| a(self)))
+                    .count();
+                style::NavEntry {
+                    icon: tab.icon(),
+                    label: tab.name(self),
+                    badge: (on > 0 && tab != GameTab::Overview).then(|| on.to_string()),
+                }
+            })
+            .collect();
+        let selected = (!searching)
+            .then(|| tabs.iter().position(|t| *t == self.game_tab))
+            .flatten();
+        let nav_tabs = tabs.clone();
+        let nav = div()
+            .w(px(208.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(search)
+            .child(style::side_nav(
+                "game-tab",
+                entries,
+                selected,
+                cx,
+                move |this, i, cx| {
+                    this.game_tab = nav_tabs[i];
+                    this.feature_query.clear();
+                    this.fields.inputs.remove("feature-search");
+                    cx.notify();
+                },
+            ));
+        let page = div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(div().flex().child(
+                style::back_link("game-back", self.tr("Library", "Kütüphane")).on_click(
+                    cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Library, cx)),
+                ),
+            ))
+            .child(hero);
+        let mut content = div().flex().flex_col().gap_4();
 
         let query = self.feature_query.trim().to_string();
         if !query.is_empty() {
@@ -826,7 +808,7 @@ impl Library {
                 .copied()
                 .filter(|f| self.feature_matches(f, &query))
                 .collect();
-            page = page.child(widgets::label(match hits.len() {
+            content = content.child(widgets::label(match hits.len() {
                 0 => self
                     .tr(
                         "No setting matches. Try another word, e.g. fps, proton, dlss.",
@@ -837,23 +819,36 @@ impl Library {
             }));
             for f in hits {
                 let tab_name = f.tab.name(self);
-                page = page.child(widgets::label(format!("{tab_name} ›")).text_xs());
+                content = content.child(widgets::subheading(tab_name));
                 if let Some(card) = (f.render)(self, cx) {
-                    page = page.child(card);
+                    content = content.child(card);
                 }
             }
-            return page;
+            return page.child(style::with_side_nav(nav, content));
         }
 
+        content = content.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(style::icon(self.game_tab.icon(), 18., pal::accent_light()))
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(self.game_tab.name(self)),
+                ),
+        );
         if self.game_tab == GameTab::Overview {
-            page = page.child(self.render_quick(cx));
+            content = content.child(self.render_quick(cx));
         }
         let tab = self.game_tab;
         for f in applicable.into_iter().filter(|f| f.tab == tab) {
             if let Some(card) = (f.render)(self, cx) {
-                page = page.child(card);
+                content = content.child(card);
             }
         }
-        page
+        page.child(style::with_side_nav(nav, content))
     }
 }

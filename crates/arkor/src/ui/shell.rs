@@ -44,8 +44,8 @@ pub(super) const SHORTCUTS: [(&str, &str, &str); 9] = [
     ("Ctrl+,", "Settings", "Ayarlar"),
     (
         "Esc",
-        "Back from a game's page to the library",
-        "Oyun sayfasından kütüphaneye dön",
+        "Back from a game's page or Add game to the library",
+        "Oyun sayfasından ya da Oyun ekle'den kütüphaneye dön",
     ),
     (
         "Ctrl+Tab",
@@ -89,8 +89,11 @@ pub(super) enum Nav {
 impl Library {
     fn nav_active(&self, nav: Nav) -> bool {
         match (nav, self.selection) {
-            (Nav::Library, None | Some(Selection::Grid) | Some(Selection::Game(_))) => true,
-            (Nav::Add, Some(Selection::Add)) => true,
+            // Adding a game is part of the library (its button is on the library page).
+            (
+                Nav::Library,
+                None | Some(Selection::Grid) | Some(Selection::Game(_)) | Some(Selection::Add),
+            ) => true,
             (Nav::Protons, Some(Selection::Protons)) => true,
             (Nav::Bench, Some(Selection::Bench)) => true,
             (Nav::System, Some(Selection::System)) => true,
@@ -118,7 +121,7 @@ impl Library {
             Nav::Library => self.tr("Library", "Kütüphane"),
             Nav::Add => self.tr("Add game", "Oyun ekle"),
             Nav::Protons => self.tr("Proton & Wine", "Proton ve Wine"),
-            Nav::Overlay => self.tr("Overlay", "Overlay"),
+            Nav::Overlay => self.tr("MangoHud overlay", "MangoHud overlay"),
             Nav::Bench => self.tr("Benchmarks", "Benchmark'lar"),
             Nav::System => self.tr("System", "Sistem"),
             Nav::Settings => self.tr("Settings", "Ayarlar"),
@@ -223,14 +226,10 @@ impl Library {
             )
             .child(separator())
             .child(self.nav_item(Nav::Library, "library-big", count, cx))
-            .child(self.nav_item(Nav::Add, "circle-plus", None, cx))
             .child(Self::section_label(self.tr("Tools", "Araçlar")))
             .child(self.nav_item(Nav::Protons, "wine", None, cx))
             .child(self.nav_item(Nav::Overlay, "gauge", None, cx))
-            .child(self.nav_item(Nav::Bench, "chart-line", None, cx))
-            .child(Self::section_label(self.tr("Arkor", "Arkor")))
-            .child(self.nav_item(Nav::System, "cpu", None, cx))
-            .child(self.nav_item(Nav::Settings, "settings", None, cx));
+            .child(self.nav_item(Nav::Bench, "chart-line", None, cx));
 
         let recent = self.recent_games();
         if !recent.is_empty() {
@@ -313,10 +312,14 @@ impl Library {
                 .text_color(pal::warning())
                 .child(format!("⚠ {w}"))
         }))
+        // App-level pages stay at the bottom, out of the way of the library and tools.
+        .child(separator())
+        .child(self.nav_item(Nav::System, "cpu", None, cx))
+        .child(self.nav_item(Nav::Settings, "settings", None, cx))
     }
 
     /// Where you are, e.g. "Library › Far Cry 6", and the latest status message.
-    fn render_topbar(&self) -> Div {
+    fn render_topbar(&self, cx: &mut Context<Self>) -> Div {
         let crumb = |text: SharedString, current: bool| {
             div()
                 .text_color(if current { pal::text() } else { pal::faint() })
@@ -329,7 +332,10 @@ impl Library {
                 self.nav_title(Nav::Library),
                 self.games.get(ix).map(|g| g.name.clone().into()),
             ),
-            Some(Selection::Add) => (self.nav_title(Nav::Add), None),
+            Some(Selection::Add) => (
+                self.nav_title(Nav::Library),
+                Some(self.nav_title(Nav::Add).into()),
+            ),
             Some(Selection::Protons) => (self.nav_title(Nav::Protons), None),
             Some(Selection::Bench) => (self.nav_title(Nav::Bench), None),
             Some(Selection::System) => (self.nav_title(Nav::System), None),
@@ -337,10 +343,26 @@ impl Library {
             Some(Selection::Global) => (self.nav_title(Nav::Settings), None),
             _ => (self.nav_title(Nav::Library), None),
         };
-        path = path
-            .child(crumb("Arkor".into(), false))
-            .child(style::icon("chevron-right", 14., pal::faint()))
-            .child(crumb(first.into(), second.is_none()));
+        path = path.child(crumb("Arkor".into(), false)).child(style::icon(
+            "chevron-right",
+            14.,
+            pal::faint(),
+        ));
+        // On a sub-page (a game, Add game) the first part leads back to the library.
+        path = if second.is_some() {
+            path.child(
+                div()
+                    .id("crumb-back")
+                    .cursor_pointer()
+                    .rounded(px(6.))
+                    .hover(|s| s.bg(pal::raised()))
+                    .px_1()
+                    .child(crumb(first.into(), false))
+                    .on_click(cx.listener(|this, _, _, cx| this.go(Nav::Library, cx))),
+            )
+        } else {
+            path.child(crumb(first.into(), true))
+        };
         if let Some(second) = second {
             path = path
                 .child(style::icon("chevron-right", 14., pal::faint()))
@@ -498,7 +520,7 @@ impl Render for Library {
                 cx.listener(|this, _: &GoSettings, _, cx| this.go(super::shell::Nav::Settings, cx)),
             )
             .on_action(cx.listener(|this, _: &GoBack, _, cx| {
-                if matches!(this.selection, Some(Selection::Game(_))) {
+                if matches!(this.selection, Some(Selection::Game(_) | Selection::Add)) {
                     this.go(super::shell::Nav::Library, cx);
                 }
             }))
@@ -528,7 +550,7 @@ impl Render for Library {
                             .min_w_0()
                             .h_full()
                             .gap_3()
-                            .child(self.render_topbar())
+                            .child(self.render_topbar(cx))
                             .child(
                                 style::panel()
                                     .flex_1()

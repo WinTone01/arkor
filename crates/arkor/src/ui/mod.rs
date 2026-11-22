@@ -50,7 +50,7 @@ use i18n::Strings;
 use protons::ProtonsState;
 use widgets::theme::*;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Selection {
     Grid,
     Bench,
@@ -93,8 +93,8 @@ pub struct Library {
     protons: ProtonsState,
     game_ui: GameUi,
     game_tab: GameTab,
-    /// "More MangoHud settings" expanded.
-    hud_advanced: bool,
+    /// Open tab of the MangoHud editor.
+    hud_tab: hud_editor::HudTab,
     /// Global settings page shows its MangoHud tab.
     global_hud_tab: bool,
     fields: Fields,
@@ -153,7 +153,7 @@ impl Library {
             protons: ProtonsState::default(),
             game_ui: GameUi::default(),
             game_tab: GameTab::default(),
-            hud_advanced: false,
+            hud_tab: Default::default(),
             global_hud_tab: false,
             fields: Fields::default(),
             system: Default::default(),
@@ -303,7 +303,9 @@ impl Library {
             Some((t, tab)) => (Some(t), Some(tab)),
             None => (target, None),
         };
-        self.hud_advanced = tab == Some("advanced");
+        if let Some(t) = tab.and_then(hud_editor::HudTab::from_name) {
+            self.hud_tab = t;
+        }
         self.global_hud_tab = matches!(tab, Some("advanced" | "mangohud"));
         self.game_tab = tab.and_then(GameTab::from_name).unwrap_or_default();
         // `#search=dlss` opens the game page with its settings search filled in.
@@ -319,6 +321,7 @@ impl Library {
                     Some("defaults") => SettingsTab::Defaults,
                     Some("integrations") => SettingsTab::Integrations,
                     Some("backups") => SettingsTab::Backups,
+                    Some("shortcuts" | "keys") => SettingsTab::Shortcuts,
                     _ => SettingsTab::General,
                 };
                 Selection::Global
@@ -327,7 +330,15 @@ impl Library {
                 self.global_hud_tab = true;
                 Selection::Global
             }
-            Some("add") | Some("import") => Selection::Add,
+            Some("add") | Some("import") => {
+                self.add.tab = match (target, tab) {
+                    (Some("import"), _) | (_, Some("prefix")) => add_game::AddTab::Prefix,
+                    (_, Some("manual")) => add_game::AddTab::Manual,
+                    (_, Some("launcher")) => add_game::AddTab::Launcher,
+                    _ => add_game::AddTab::Found,
+                };
+                Selection::Add
+            }
             Some("protons") => Selection::Protons,
             Some("system") => Selection::System,
             Some("library") => Selection::Grid,
