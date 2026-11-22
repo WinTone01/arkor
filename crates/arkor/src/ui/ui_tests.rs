@@ -57,7 +57,7 @@ fn keyboard_shortcuts_and_big_screen() {
     assert_eq!(state(cx).1, GameTab::Overview);
 
     cx.simulate_keystrokes("ctrl-tab");
-    assert_eq!(state(cx).1, GameTab::Launch, "Ctrl+Tab: next tab");
+    assert_eq!(state(cx).1, GameTab::Game, "Ctrl+Tab: next tab");
     cx.simulate_keystrokes("ctrl-tab");
     assert_eq!(state(cx).1, GameTab::Runtime);
     cx.simulate_keystrokes("ctrl-shift-tab ctrl-shift-tab ctrl-shift-tab");
@@ -129,22 +129,36 @@ fn game_page_search_and_tabs_render() {
         lib
     });
     cx.run_until_parked();
-    // Every tab of a Windows game renders without panicking.
-    for tab in GameTab::ALL {
-        view.update(cx, |l, cx| {
-            // What clicking a tab does.
-            l.feature_query.clear();
-            l.fields.inputs.remove("feature-search");
-            l.game_tab = tab;
-            cx.notify();
-        });
-        cx.run_until_parked();
+    // Every tab of a Windows game renders without panicking, closed panels first, then
+    // with every panel open (so each feature's card is drawn).
+    for open in [false, true] {
+        for tab in GameTab::ALL {
+            view.update(cx, |l, cx| {
+                // What clicking a tab does.
+                l.feature_query.clear();
+                l.fields.inputs.remove("feature-search");
+                l.game_tab = tab;
+                if open {
+                    for f in super::features::FEATURES {
+                        l.game_ui.expanded.insert(f.id, true);
+                    }
+                }
+                cx.notify();
+            });
+            cx.run_until_parked();
+        }
     }
     // Ctrl+F on a game page goes to its settings search.
     cx.simulate_keystrokes("ctrl-f");
     cx.simulate_input("dlss");
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |l, _| l.feature_query.clone()), "dlss");
+    // Settings → Game defaults renders too.
+    view.update(cx, |l, cx| {
+        l.open(Some("settings#defaults"));
+        cx.notify();
+    });
+    cx.run_until_parked();
 }
 
 #[test]

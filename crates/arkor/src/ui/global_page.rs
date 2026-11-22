@@ -99,7 +99,7 @@ impl Library {
         div().flex().flex_col().gap_2().child(rows).child(add)
     }
 
-    fn choose_prefixes_dir(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn choose_prefixes_dir(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -163,8 +163,6 @@ impl Library {
             );
         }
 
-        let prefixes = self.global.prefixes_dir();
-        let custom_prefixes = self.global.prefixes_dir.is_some();
         let discord_id = self.field(
             "discord-app-id",
             |this| this.global.discord.app_id.clone(),
@@ -175,7 +173,6 @@ impl Library {
                 this.save();
             },
         );
-        let env = self.env_editor(super::global_page::EnvScope::Global, cx);
         let sgdb = self.field(
             "sgdb-key",
             |this| this.global.steamgriddb_key.clone(),
@@ -272,60 +269,7 @@ impl Library {
                         )),
                 ),
             SettingsTab::Appearance => self.render_appearance(_window, cx),
-            SettingsTab::Defaults => div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .child(
-                    widgets::section(self.tr("Wine prefixes", "Wine prefix'leri")).child(
-                        widgets::setting_row(
-                            self.tr("Prefix folder", "Prefix klasörü"),
-                            format!(
-                                "{} {}",
-                                self.tr("New Windows games get their own prefix in:", "Yeni Windows oyunları kendi prefix'lerini şurada alır:"),
-                                prefixes.display()
-                            ),
-                            div()
-                                .flex()
-                                .gap_2()
-                                .child(
-                                    style::button("prefixes-choose", self.tr("Change…", "Değiştir…"), false)
-                                        .child(style::icon("folder-open", 13., super::style::pal::muted()))
-                                        .on_click(cx.listener(|this, _, _, cx| this.choose_prefixes_dir(cx))),
-                                )
-                                .when(custom_prefixes, |d| {
-                                    d.child(
-                                        style::button("prefixes-default", self.tr("Use default", "Varsayılanı kullan"), false)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.global.prefixes_dir = None;
-                                                this.save();
-                                                cx.notify();
-                                            })),
-                                    )
-                                }),
-                        ),
-                    ),
-                )
-                .child(
-                    widgets::section(self.tr("Updates", "Güncellemeler")).child(widgets::setting_row(
-                        self.tr("Update launch components automatically", "Başlatma bileşenlerini otomatik güncelle"),
-                        self.tr(
-                            "Before a game starts: umu-launcher, the anti-cheat runtimes and the game's always-newest Proton (Proton & Wine → Auto-updated).",
-                            "Oyun başlamadan önce: umu-launcher, anti-cheat runtime'ları ve oyunun hep en yeni Proton'u (Proton ve Wine → Otomatik güncellenen).",
-                        ),
-                        switch("auto-updates-settings", !self.global.no_auto_updates, cx, |this| {
-                            this.global.no_auto_updates = !this.global.no_auto_updates
-                        }),
-                    )),
-                )
-                .child(
-                    widgets::section(self.tr("Environment variables (all games)", "Ortam değişkenleri (tüm oyunlar)"))
-                        .child(widgets::label(self.tr(
-                            "Added to every game. A game's own variables override these.",
-                            "Her oyuna eklenir. Oyunun kendi değişkenleri bunları ezer.",
-                        )))
-                        .child(env),
-                ),
+            SettingsTab::Defaults => self.render_defaults(cx),
             SettingsTab::Integrations => div()
                 .flex()
                 .flex_col()

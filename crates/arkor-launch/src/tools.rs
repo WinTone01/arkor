@@ -147,12 +147,6 @@ pub fn anticheat() -> AntiCheat {
     }
 }
 
-/// Downloads both runtimes (Faugus' redistribution of them) into `components_dir`, or
-/// updates them when a newer release is out. Blocking.
-pub fn download_anticheat() -> anyhow::Result<AntiCheat> {
-    crate::components::ensure_anticheat(true)
-}
-
 /// A tool Arkor can use, whether it's present, and the Arch package that provides it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolStatus {

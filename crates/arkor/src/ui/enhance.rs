@@ -220,45 +220,13 @@ impl Library {
     }
 
     pub(super) fn render_tweaks(&mut self, cx: &mut Context<Self>) -> Div {
-        use arkor_core::tweaks::{Category, TWEAKS};
-        let lang_tr = self.global.language == arkor_core::Language::Tr;
-        let title = |c: Category| match c {
-            Category::Upscaling => self.tr("Upscaling", "Ölçekleme"),
-            Category::Display => self.tr("Display", "Ekran"),
-            Category::Latency => self.tr("Latency", "Gecikme"),
-            Category::Compatibility => self.tr("Compatibility", "Uyumluluk"),
-            Category::Gpu => "GPU",
-            Category::Input => self.tr("Input", "Giriş"),
-            Category::Other => self.tr("Other", "Diğer"),
-        };
-        let mut card = widgets::section(self.tr("Tweaks", "Ayarlar")).child(widgets::label(self.tr(
-            "One-click environment switches. Bracketed ones need that Proton build or driver.",
-            "Tek tıklık ortam değişkenleri. Köşeli parantezdekiler o Proton sürümünü ya da sürücüyü gerektirir.",
-        )));
-        for c in Category::ALL {
-            let mut row = div().flex().flex_wrap().gap_2();
-            for (ix, tw) in TWEAKS.iter().enumerate().filter(|(_, t)| t.category == c) {
-                let label = if lang_tr { tw.label_tr } else { tw.label_en };
-                let text = match tw.needs {
-                    Some(n) => format!("{label} [{n}]"),
-                    None => label.to_string(),
-                };
-                let id = tw.id;
-                row = row.child(
-                    widgets::chip(("tweak", ix), text, self.profile.tweaks.contains(id))
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_tweak(id, cx))),
-                );
-            }
-            card = card.child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .items_start()
-                    .child(div().w(gpui::px(110.)).pt_1().text_sm().child(title(c)))
-                    .child(row.flex_1()),
-            );
-        }
-        card
+        let selected = self.profile.tweaks.clone();
+        widgets::section(self.tr("Proton and driver switches", "Proton ve sürücü anahtarları"))
+            .child(widgets::label(self.tr(
+                "Each is an environment variable set at launch. In brackets: what it needs (a Proton build or driver).",
+                "Her biri başlatırken ayarlanan bir ortam değişkeni. Parantez içinde: neye ihtiyaç duyduğu (Proton derlemesi ya da sürücü).",
+            )))
+            .child(self.tweak_list("tweak", &selected, cx, |this, id, cx| this.toggle_tweak(id, cx)))
     }
 
     pub(super) fn render_gamescope(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1064,70 +1032,36 @@ impl Library {
         }
         let t = self.t();
         let current = self.profile.proton.clone();
-        let mut chips = div().flex().flex_wrap().gap_2().child(
-            widgets::chip("proton-auto", t.proton_auto, current.is_none())
-                .on_click(cx.listener(|this, _, _, cx| this.set_proton(None, cx))),
-        );
-        use arkor_launch::components::Latest;
-        let chosen_latest = current.as_deref().and_then(Latest::from_value);
-        let mut latest_row = div().flex().flex_wrap().gap_2();
-        for (ix, l) in Latest::ALL.into_iter().enumerate() {
-            let name = l.dir_name();
-            latest_row = latest_row.child(
-                widgets::chip(("proton-latest", ix), name, chosen_latest == Some(l))
-                    .child(super::style::icon(
-                        "refresh-cw",
-                        12.,
-                        super::style::pal::muted(),
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_proton(Some(name.to_string()), cx)
-                    })),
-            );
-        }
-        let mut installed_row = div().flex().flex_wrap().gap_2();
-        let mut any_installed = false;
-        for (ix, (name, _)) in self.tools.protons.iter().enumerate() {
-            // The "Latest" folders are offered above.
-            if Latest::from_value(name).is_some() {
-                continue;
-            }
-            any_installed = true;
-            let value = name.clone();
-            installed_row = installed_row.child(
-                widgets::chip(
-                    ("proton", ix),
-                    name.clone(),
-                    current.as_deref() == Some(name),
+        let auto_note = match (&self.global.defaults.proton, &game_source_proton(self)) {
+            (_, Some(src)) => format!(
+                "{} {src}",
+                self.tr(
+                    "Automatic = what the game's launcher chose:",
+                    "Otomatik = oyunun başlatıcısının seçtiği:"
                 )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.set_proton(Some(value.clone()), cx)),
-                ),
-            );
-        }
-        chips = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(chips)
-            .child(widgets::subheading(self.tr(
-                "Auto-updated (downloaded on first use, updated before each start)",
-                "Otomatik güncellenen (ilk kullanımda indirilir, her başlatmadan önce güncellenir)",
-            )))
-            .child(latest_row)
-            .when(any_installed, |d| {
-                d.child(widgets::subheading(self.tr("Installed", "Kurulu")))
-                    .child(installed_row)
-            });
-        let note = if self.tools.protons.is_empty() {
-            t.proton_none
-        } else {
-            t.proton_auto_note
+            ),
+            (Some(d), None) => format!(
+                "{} {d}",
+                self.tr(
+                    "Automatic = the default from Settings:",
+                    "Otomatik = Ayarlar'daki varsayılan:"
+                )
+            ),
+            (None, None) => t.proton_auto_note.to_string(),
         };
         Some(
             widgets::section(t.proton_section)
-                .child(chips)
-                .child(widgets::label(note)),
+                .child(widgets::label(auto_note))
+                .child(self.proton_picker(
+                    "proton-pick",
+                    current.as_deref(),
+                    t.proton_auto,
+                    cx,
+                    |this, value, cx| this.set_proton(value, cx),
+                ))
+                .when(self.tools.protons.is_empty(), |d| {
+                    d.child(widgets::label(t.proton_none))
+                }),
         )
     }
 
@@ -2417,4 +2351,12 @@ impl Library {
         }
         card
     }
+}
+
+/// The Proton the selected game's own launcher (Heroic, Lutris…) chose, if any.
+fn game_source_proton(lib: &Library) -> Option<String> {
+    lib.entry()
+        .and_then(|g| g.source_proton.as_ref())
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
 }

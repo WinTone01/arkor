@@ -7,7 +7,7 @@ use arkor_core::library::GameKind;
 use arkor_core::{GameId, HudMode, paths};
 use arkor_launch::start::{self, PrefixTool};
 use arkor_launch::umu_db;
-use gpui::{Context, Div, div, prelude::*};
+use gpui::{Context, Div, div, prelude::*, px};
 
 use super::global_page::EnvScope;
 use super::widgets::{self, theme::*};
@@ -21,9 +21,12 @@ pub(super) struct GameUi {
     umu_hits: Option<Result<Vec<umu_db::Entry>, String>>,
     umu_loading: bool,
     tool_busy: Option<String>,
-    show_log: bool,
     /// Programs that appeared in the prefix after running an installer.
     new_exes: Vec<PathBuf>,
+    /// Settings → Game defaults: "Apply to every game" asked for confirmation.
+    pub(super) confirm_apply_all: bool,
+    /// Feature panels opened or closed by hand (others follow whether they are on).
+    pub(super) expanded: std::collections::HashMap<&'static str, bool>,
 }
 
 const RUNTIMES: [(&str, &str); 4] = [
@@ -248,9 +251,7 @@ impl Library {
         }
     }
 
-    /// Name, category, visibility, cover, duplicate and delete.
     pub(super) fn render_details_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let t = self.t();
         let entry = self.entry().cloned()?;
         let name = self.field(
             "game-name",
@@ -273,9 +274,6 @@ impl Library {
                 }
             },
         );
-        let mut entry_card = widgets::section(self.tr("Details", "Ayrıntılar"))
-            .child(widgets::label(t.name_label))
-            .child(name);
         let category = self.field(
             "game-category",
             |this| {
@@ -283,10 +281,7 @@ impl Library {
                     .and_then(|g| g.category.clone())
                     .unwrap_or_default()
             },
-            self.tr(
-                "Category, e.g. Shooters (optional)",
-                "Kategori, ör. FPS (isteğe bağlı)",
-            ),
+            self.tr("e.g. Shooters", "ör. FPS"),
             cx,
             |this, text| {
                 let value = Some(text.trim().to_string()).filter(|t| !t.is_empty());
@@ -294,34 +289,52 @@ impl Library {
                 this.apply_filter();
             },
         );
-        let hidden = entry.hidden;
-        entry_card = entry_card
-            .child(widgets::label(self.tr("Category", "Kategori")))
-            .child(category)
-            .child(
-                div().flex().child(
-                    widgets::chip(
-                        "hide-game",
-                        self.tr("Hidden in the library", "Kütüphanede gizli"),
-                        hidden,
-                    )
+        let card = widgets::section(self.tr("Name, category and cover", "Ad, kategori ve kapak"))
+            .child(widgets::setting_row(
+                self.tr("Name", "Ad"),
+                self.tr(
+                    "Shown in the library and shortcuts.",
+                    "Kütüphanede ve kısayollarda görünür.",
+                ),
+                div().w(px(300.)).child(name),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Category", "Kategori"),
+                self.tr(
+                    "Optional; the library can filter by it.",
+                    "İsteğe bağlı; kütüphane buna göre süzebilir.",
+                ),
+                div().w(px(300.)).child(category),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Hidden", "Gizli"),
+                self.tr(
+                    "Not shown in the library (Ctrl+H shows hidden games).",
+                    "Kütüphanede görünmez (Ctrl+H gizlileri gösterir).",
+                ),
+                widgets::switch(entry.hidden)
+                    .id("hide-game")
+                    .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.edit_entry(|g| g.hidden = !g.hidden);
                         this.apply_filter();
                         cx.notify();
                     })),
-                ),
-            );
-        entry_card = entry_card.child(self.render_cover_controls(&entry.id, &entry.name, cx));
-        Some(entry_card.child(self.manage_row(&entry.name, cx)))
+            ))
+            .child(widgets::divider())
+            .child(self.render_cover_controls(&entry.id, &entry.name, cx))
+            .child(widgets::divider())
+            .child(self.manage_row(&entry.name, cx));
+        Some(card)
     }
 
     /// What runs: the executable and its arguments, the prefix, or the store's id.
     pub(super) fn render_exec_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let t = self.t();
+        use super::style::{self, pal};
         let entry = self.entry().cloned()?;
-        let has_prefix = entry.needs_prefix();
-        let mut entry_card = widgets::section(self.tr("Executable", "Çalıştırılabilir dosya"));
+        let mut card = widgets::section(self.tr("Game files", "Oyun dosyaları"));
         match &entry.kind {
             GameKind::Windows | GameKind::Linux => {
                 let args = self.field(
@@ -331,64 +344,77 @@ impl Library {
                             .map(|g| join_words(&g.args))
                             .unwrap_or_default()
                     },
-                    self.tr("Arguments, e.g. -dx12", "Argümanlar, ör. -dx12"),
+                    "-dx12 -skipintro",
                     cx,
                     |this, text| {
                         let words = arkor_core::profile::shell_words(text);
                         this.edit_entry(|g| g.args = words);
                     },
                 );
-                entry_card = entry_card
-                    .child(widgets::label(
+                card = card
+                    .child(widgets::setting_row(
                         self.tr("Executable", "Çalıştırılabilir dosya"),
-                    ))
-                    .child(path_row(
                         entry.exe.display().to_string(),
-                        "pick-exe",
-                        self.tr("Change…", "Değiştir…"),
-                        cx,
-                        |this, cx| {
-                            let title = this.tr(
-                                "Choose the game's executable",
-                                "Oyunun çalıştırılabilir dosyasını seç",
-                            );
-                            this.prompt_path(false, title, cx, |this, path, _| {
-                                this.edit_entry(|g| g.exe = path)
-                            });
-                        },
+                        style::button("pick-exe", self.tr("Change…", "Değiştir…"), false)
+                            .child(style::icon("folder-open", 13., pal::muted()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let title = this.tr(
+                                    "Choose the game's executable",
+                                    "Oyunun çalıştırılabilir dosyasını seç",
+                                );
+                                this.prompt_path(false, title, cx, |this, path, _| {
+                                    this.edit_entry(|g| g.exe = path)
+                                });
+                            })),
                     ))
-                    .child(widgets::label(self.tr("Arguments", "Argümanlar")))
-                    .child(args);
-                if has_prefix {
+                    .child(widgets::divider())
+                    .child(widgets::setting_row(
+                        self.tr("Arguments", "Argümanlar"),
+                        self.tr("Passed to the game itself.", "Oyunun kendisine verilir."),
+                        div().w(px(300.)).child(args),
+                    ));
+                if entry.needs_prefix() {
                     let prefix = entry.effective_prefix(&self.global.prefixes_dir());
                     let shared = self
                         .library
                         .prefix_shared_with(&entry.id, &self.global.prefixes_dir())
                         .len();
-                    entry_card = entry_card
-                        .child(widgets::label(t.prefix_label))
-                        .child(path_row(
-                            prefix.display().to_string(),
-                            "pick-prefix",
-                            self.tr("Change…", "Değiştir…"),
-                            cx,
-                            |this, cx| {
-                                let title = this.tr("Choose a Wine prefix", "Bir Wine prefix seç");
-                                this.prompt_path(true, title, cx, |this, path, _| {
-                                    let root = arkor_stores::prefix::resolve(&path).unwrap_or(path);
-                                    this.edit_entry(|g| g.prefix = Some(root));
-                                });
-                            },
-                        ))
-                        .when(entry.prefix.is_some(), |d| {
-                            d.child(
-                                div().flex().child(
-                                    widgets::chip(
+                    let mut hint = prefix.display().to_string();
+                    if shared > 0 {
+                        hint = format!(
+                            "{hint} · {} {shared}",
+                            self.tr("also used by", "şunlar da kullanıyor:")
+                        );
+                    }
+                    card = card.child(widgets::divider()).child(widgets::setting_row(
+                        self.tr("Wine prefix", "Wine prefix"),
+                        hint,
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                style::button(
+                                    "pick-prefix",
+                                    self.tr("Change…", "Değiştir…"),
+                                    false,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        let title =
+                                            this.tr("Choose a Wine prefix", "Bir Wine prefix seç");
+                                        this.prompt_path(true, title, cx, |this, path, _| {
+                                            let root = arkor_stores::prefix::resolve(&path)
+                                                .unwrap_or(path);
+                                            this.edit_entry(|g| g.prefix = Some(root));
+                                        });
+                                    },
+                                )),
+                            )
+                            .when(entry.prefix.is_some(), |d| {
+                                d.child(
+                                    style::button(
                                         "prefix-default",
-                                        self.tr(
-                                            "Use own default prefix",
-                                            "Kendi varsayılan prefix'ini kullan",
-                                        ),
+                                        self.tr("Own default", "Kendi varsayılanı"),
                                         false,
                                     )
                                     .on_click(cx.listener(
@@ -397,42 +423,35 @@ impl Library {
                                             cx.notify();
                                         },
                                     )),
-                                ),
-                            )
-                        })
-                        .when(shared > 0, |d| {
-                            d.child(widgets::label(format!(
-                                "{} {shared}",
-                                self.tr(
-                                    "Other games using this prefix:",
-                                    "Bu prefix'i kullanan diğer oyunlar:"
                                 )
-                            )))
-                        });
-                }
-            }
-            GameKind::Steam { appid } => {
-                entry_card = entry_card.child(widgets::label(format!("Steam App ID: {appid}")));
-                if which("protontricks") {
-                    let appid = appid.clone();
-                    entry_card = entry_card.child(div().flex().child(
-                        widgets::chip("protontricks", "protontricks", false).on_click(cx.listener(
-                            move |_, _, _, _| {
-                                let _ = std::process::Command::new("protontricks")
-                                    .arg(&appid)
-                                    .arg("--gui")
-                                    .spawn();
-                            },
-                        )),
+                            }),
                     ));
                 }
             }
+            GameKind::Steam { appid } => {
+                let appid = appid.clone();
+                card = card.child(widgets::setting_row(
+                    "Steam App ID",
+                    appid.clone(),
+                    div().when(which("protontricks"), |d| {
+                        d.child(
+                            style::button("protontricks", "protontricks", false).on_click(
+                                cx.listener(move |_, _, _, _| {
+                                    let _ = std::process::Command::new("protontricks")
+                                        .arg(&appid)
+                                        .arg("--gui")
+                                        .spawn();
+                                }),
+                            ),
+                        )
+                    }),
+                ));
+            }
             GameKind::Epic { app_name } => {
-                entry_card = entry_card.child(widgets::label(format!("Epic: {app_name}")))
+                card = card.child(widgets::setting_row("Epic", app_name.clone(), div()));
             }
         }
-        let _ = t;
-        Some(entry_card)
+        Some(card)
     }
 
     /// MangoHud for this game: global, its own layout (with the editor) or off.
@@ -546,68 +565,81 @@ impl Library {
         }
     }
 
-    /// Duplicate / delete (with confirmation and the optional prefix removal).
     fn manage_row(&self, name: &str, cx: &mut Context<Self>) -> Div {
+        use super::style::{self, pal};
         if !self.game_ui.confirm_delete {
-            return div()
-                .flex()
-                .gap_2()
-                .pt_2()
-                .child(
-                    widgets::chip("duplicate", self.tr("Duplicate", "Kopyala"), false)
-                        .on_click(cx.listener(|this, _, _, cx| this.duplicate(cx))),
-                )
-                .child(
-                    widgets::chip("delete", self.tr("Delete…", "Sil…"), false).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.game_ui.confirm_delete = true;
-                            cx.notify();
-                        }),
+            return widgets::setting_row(
+                self.tr("Manage", "Yönet"),
+                self.tr(
+                    "A copy keeps all settings; deleting never touches game files.",
+                    "Kopya tüm ayarları korur; silmek oyun dosyalarına dokunmaz.",
+                ),
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        style::button("duplicate", self.tr("Duplicate", "Kopyala"), false)
+                            .child(style::icon("copy", 13., pal::muted()))
+                            .on_click(cx.listener(|this, _, _, cx| this.duplicate(cx))),
+                    )
+                    .child(
+                        style::button("delete", self.tr("Delete…", "Sil…"), false)
+                            .child(style::icon("trash-2", 13., pal::danger()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.game_ui.confirm_delete = true;
+                                cx.notify();
+                            })),
                     ),
-                );
+            );
         }
         let deletable = self.deletable_prefix();
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .pt_2()
-            .child(div().text_sm().text_color(ACCENT()).child(format!(
-                "{} “{name}”? {}",
-                self.tr("Remove", "Kaldır:"),
-                self.tr(
-                    "Game files are not touched.",
-                    "Oyun dosyalarına dokunulmaz."
-                )
+            .p_3()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(pal::danger().opacity(0.4))
+            .bg(pal::danger().opacity(0.06))
+            .child(div().font_weight(gpui::FontWeight::MEDIUM).child(format!(
+                "{} “{name}”?",
+                self.tr("Remove", "Kaldırılsın mı:")
+            )))
+            .child(widgets::label(self.tr(
+                "It leaves the library; game files are not touched.",
+                "Kütüphaneden çıkar; oyun dosyalarına dokunulmaz.",
             )))
             .when_some(deletable, |d, prefix| {
-                d.child(
-                    widgets::switch_row(
-                        "delete-prefix",
-                        self.tr("Also delete its prefix", "Prefix'ini de sil"),
+                d.child(widgets::setting_row(
+                    self.tr("Also delete its prefix", "Prefix'ini de sil"),
+                    format!(
+                        "{} · {}",
                         self.tr(
                             "Created by Arkor, used by no other game",
-                            "Arkor oluşturdu, başka oyun kullanmıyor",
+                            "Arkor oluşturdu, başka oyun kullanmıyor"
                         ),
-                        self.game_ui.delete_prefix,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.game_ui.delete_prefix = !this.game_ui.delete_prefix;
-                        cx.notify();
-                    })),
-                )
-                .child(widgets::label(prefix.display().to_string()))
+                        prefix.display()
+                    ),
+                    widgets::switch(self.game_ui.delete_prefix)
+                        .id("delete-prefix")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.game_ui.delete_prefix = !this.game_ui.delete_prefix;
+                            cx.notify();
+                        })),
+                ))
             })
             .child(
                 div()
                     .flex()
                     .gap_2()
                     .child(
-                        widgets::chip("delete-confirm", self.tr("Delete", "Sil"), true)
+                        style::button("delete-confirm", self.tr("Delete", "Sil"), true)
                             .on_click(cx.listener(|this, _, _, cx| this.delete(cx))),
                     )
                     .child(
-                        widgets::chip("delete-cancel", self.tr("Cancel", "Vazgeç"), false)
+                        style::button("delete-cancel", self.tr("Cancel", "Vazgeç"), false)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.game_ui.confirm_delete = false;
                                 cx.notify();
@@ -622,6 +654,7 @@ impl Library {
         is_steam: bool,
         cx: &mut Context<Self>,
     ) -> Div {
+        use super::style::{self, pal};
         let t = self.t();
         let options = self.field(
             "launch-options",
@@ -636,7 +669,7 @@ impl Library {
         let pre = self.field(
             "pre-launch",
             |this| this.profile.pre_launch.clone(),
-            self.tr("Command before the game", "Oyundan önce çalışacak komut"),
+            "notify-send 'Starting'",
             cx,
             |this, text| {
                 this.profile.pre_launch = text.to_string();
@@ -646,7 +679,7 @@ impl Library {
         let post = self.field(
             "post-launch",
             |this| this.profile.post_launch.clone(),
-            self.tr("Command after the game", "Oyundan sonra çalışacak komut"),
+            "notify-send 'Done'",
             cx,
             |this, text| {
                 this.profile.post_launch = text.to_string();
@@ -654,128 +687,100 @@ impl Library {
             },
         );
         let extra = self.profile.extra_app.clone();
-        let switch = |id: &'static str,
-                      title: &'static str,
-                      hint: &'static str,
-                      on: bool,
-                      f: fn(&mut arkor_core::Profile),
-                      cx: &mut Context<Self>| {
-            widgets::switch_row(id, title, hint, on).on_click(cx.listener(move |this, _, _, cx| {
-                f(&mut this.profile);
-                this.save();
-                cx.notify();
-            }))
-        };
-        let mut card = widgets::section(t.launch_section)
-            .child(switch(
-                "gamemode",
-                "GameMode",
-                t.gamemode_hint,
-                self.profile.gamemode,
-                |p| p.gamemode = !p.gamemode,
-                cx,
-            ))
-            .child(switch(
-                "no-sleep",
-                self.tr("Keep the system awake", "Sistemi uyanık tut"),
-                self.tr(
-                    "No sleep or screen blanking while playing",
-                    "Oynarken uyku ya da ekran kararması yok",
-                ),
-                self.profile.no_sleep,
-                |p| p.no_sleep = !p.no_sleep,
-                cx,
-            ))
-            .child(switch(
-                "proton-log",
-                self.tr("Write Proton logs", "Proton log'u yaz"),
-                self.tr(
-                    "For troubleshooting; makes the game slower",
-                    "Sorun gidermek için; oyunu yavaşlatır",
-                ),
-                self.profile.proton_log,
-                |p| p.proton_log = !p.proton_log,
-                cx,
-            ))
-            .child(widgets::label(
+        let mut card = widgets::section(self.tr("Launch options and commands", "Başlatma seçenekleri ve komutlar"))
+            .child(widgets::setting_row(
                 self.tr("Launch options", "Başlatma seçenekleri"),
+                self.tr(
+                    "As in Steam: KEY=VALUE words become variables; %command% is the game, words around it wrap it.",
+                    "Steam'deki gibi: ANAHTAR=DEĞER kelimeleri değişken olur; %command% oyundur, çevresindekiler onu sarar.",
+                ),
+                div().w(px(320.)).child(options),
             ))
-            .child(options)
-            .child(widgets::label(self.tr("Before launch", "Başlatmadan önce")))
-            .child(pre)
-            .child(widgets::label(self.tr("After exit", "Çıkıştan sonra")))
-            .child(post)
-            .child(widgets::label(self.tr(
-                "Extra program started with the game",
-                "Oyunla birlikte başlayan ek program",
-            )));
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Before the game", "Oyundan önce"),
+                self.tr("A shell command; the game waits for it.", "Bir kabuk komutu; oyun onu bekler."),
+                div().w(px(320.)).child(pre),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("After the game", "Oyundan sonra"),
+                self.tr("Runs when the game has closed.", "Oyun kapanınca çalışır."),
+                div().w(px(320.)).child(post),
+            ))
+            .child(widgets::divider());
         card = match &extra.path {
             Some(path) => card
-                .child(path_row(
+                .child(widgets::setting_row(
+                    self.tr("Second program", "İkinci program"),
                     path.display().to_string(),
-                    "extra-remove",
-                    self.tr("Remove", "Kaldır"),
-                    cx,
-                    |this, cx| {
-                        this.profile.extra_app.path = None;
-                        this.save();
-                        cx.notify();
-                    },
+                    style::button("extra-remove", self.tr("Remove", "Kaldır"), false)
+                        .child(style::icon("x", 13., pal::muted()))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.profile.extra_app.path = None;
+                            this.save();
+                            cx.notify();
+                        })),
                 ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_6()
-                        .items_end()
-                        .child(widgets::stepper(
-                            self.tr("Delay", "Gecikme"),
-                            format!("{} s", extra.delay_secs),
-                            widgets::step_button("extra-delay-", "−").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.profile.extra_app.delay_secs =
-                                        this.profile.extra_app.delay_secs.saturating_sub(1);
-                                    this.save();
-                                    cx.notify();
-                                },
-                            )),
-                            widgets::step_button("extra-delay+", "+").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.profile.extra_app.delay_secs =
-                                        (this.profile.extra_app.delay_secs + 1).min(300);
-                                    this.save();
-                                    cx.notify();
-                                },
-                            )),
-                        ))
-                        .child(
-                            widgets::chip(
-                                "extra-before",
-                                self.tr("Start it before the game", "Oyundan önce başlat"),
-                                extra.before_game,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.profile.extra_app.before_game =
-                                    !this.profile.extra_app.before_game;
+                .child(widgets::setting_row(
+                    self.tr("Delay", "Gecikme"),
+                    self.tr("Seconds between the two.", "İkisi arasındaki saniye."),
+                    widgets::stepper_control(
+                        format!("{} s", extra.delay_secs),
+                        widgets::step_button("extra-delay-", "−").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.profile.extra_app.delay_secs =
+                                    this.profile.extra_app.delay_secs.saturating_sub(1);
                                 this.save();
                                 cx.notify();
-                            })),
-                        ),
+                            },
+                        )),
+                        widgets::step_button("extra-delay+", "+").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.profile.extra_app.delay_secs =
+                                    (this.profile.extra_app.delay_secs + 1).min(300);
+                                this.save();
+                                cx.notify();
+                            },
+                        )),
+                    ),
+                ))
+                .child(widgets::setting_row(
+                    self.tr("Start it first", "Önce onu başlat"),
+                    self.tr(
+                        "Otherwise it starts after the game.",
+                        "Yoksa oyundan sonra başlar.",
+                    ),
+                    widgets::switch(extra.before_game)
+                        .id("extra-before")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.profile.extra_app.before_game =
+                                !this.profile.extra_app.before_game;
+                            this.save();
+                            cx.notify();
+                        })),
+                )),
+            None => card.child(widgets::setting_row(
+                self.tr("Second program", "İkinci program"),
+                self.tr(
+                    "Started with the game, e.g. a trainer or mod manager; closed with it.",
+                    "Oyunla başlar, ör. bir trainer ya da mod yöneticisi; onunla kapanır.",
                 ),
-            None => card.child(div().flex().child(
-                widgets::chip("extra-pick", self.tr("Choose…", "Seç…"), false).on_click(
-                    cx.listener(|this, _, _, cx| {
+                style::button("extra-pick", self.tr("Choose…", "Seç…"), false)
+                    .child(style::icon("folder-open", 13., pal::muted()))
+                    .on_click(cx.listener(|this, _, _, cx| {
                         let title = this.tr("Choose a program", "Bir program seç");
                         this.prompt_path(false, title, cx, |this, path, _| {
                             this.profile.extra_app.path = Some(path);
                             this.save();
                         });
-                    }),
-                ),
+                    })),
             )),
         };
         if is_steam {
             card = card
+                .child(widgets::divider())
                 .child(widgets::label(t.steam_launches_note))
                 .child(widgets::label(t.steam_launch_option))
                 .child(code_box(format!("arkor run local:{game_id} -- %command%")));
@@ -783,7 +788,51 @@ impl Library {
         card
     }
 
+    /// GameMode and keeping the system awake.
+    pub(super) fn render_gamemode(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.t();
+        let switch = |id: &'static str,
+                      on: bool,
+                      f: fn(&mut arkor_core::Profile),
+                      cx: &mut Context<Self>| {
+            widgets::switch(on)
+                .id(id)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    f(&mut this.profile);
+                    this.save();
+                    cx.notify();
+                }))
+        };
+        widgets::section(self.tr("GameMode and sleep", "GameMode ve uyku"))
+            .child(widgets::setting_row(
+                "GameMode",
+                t.gamemode_hint,
+                switch(
+                    "gamemode",
+                    self.profile.gamemode,
+                    |p| p.gamemode = !p.gamemode,
+                    cx,
+                ),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Keep the system awake", "Sistemi uyanık tut"),
+                self.tr(
+                    "No sleep or screen blanking while playing.",
+                    "Oynarken uyku ya da ekran kararması yok.",
+                ),
+                switch(
+                    "no-sleep",
+                    self.profile.no_sleep,
+                    |p| p.no_sleep = !p.no_sleep,
+                    cx,
+                ),
+            ))
+    }
+
     pub(super) fn render_protonfix(&mut self, cx: &mut Context<Self>) -> Div {
+        use super::style::{self, pal};
         let umu = self.field(
             "umu-id",
             |this| this.profile.umu_id.clone().unwrap_or_default(),
@@ -796,27 +845,32 @@ impl Library {
             },
         );
         let mut card = widgets::section(self.tr("Protonfixes", "Protonfix'ler"))
-            .child(widgets::label(self.tr(
-                "Proton applies known fixes for a game when it knows its umu id. Empty = none.",
-                "Proton, umu kimliğini bildiği oyunlara bilinen düzeltmeleri uygular. Boş = yok.",
-            )))
-            .child(umu)
-            .child(
-                div().flex().child(
-                    widgets::chip(
-                        "umu-find",
-                        self.tr("Find in umu-database", "umu-database'de ara"),
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.find_umu(cx))),
+            .child(widgets::setting_row(
+                self.tr("umu id", "umu kimliği"),
+                self.tr(
+                    "Proton applies the known fixes for this id. Empty = none. Search finds it by the game's name.",
+                    "Proton bu kimlik için bilinen düzeltmeleri uygular. Boş = yok. Arama, oyunun adıyla bulur.",
                 ),
-            );
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(div().w(px(180.)).child(umu))
+                    .child(
+                        style::button("umu-find", self.tr("Search", "Ara"), false)
+                            .child(style::icon("search", 13., pal::muted()))
+                            .on_click(cx.listener(|this, _, _, cx| this.find_umu(cx))),
+                    ),
+            ));
         if self.game_ui.umu_loading {
-            card = card.child(widgets::label(self.tr("Searching…", "Aranıyor…")));
+            card = card.child(widgets::label(
+                self.tr("Searching umu-database…", "umu-database'de aranıyor…"),
+            ));
         }
         match &self.game_ui.umu_hits {
             Some(Ok(hits)) if hits.is_empty() => {
-                card = card.child(widgets::label(self.tr("No match.", "Eşleşme yok.")))
+                card = card.child(widgets::label(
+                    self.tr("No match in umu-database.", "umu-database'de eşleşme yok."),
+                ))
             }
             Some(Ok(hits)) => {
                 let mut row = div().flex().flex_wrap().gap_2();
@@ -838,7 +892,11 @@ impl Library {
                         })),
                     );
                 }
-                card = card.child(row);
+                card = card
+                    .child(widgets::subheading(
+                        self.tr("Matches: pick one", "Eşleşmeler: birini seç"),
+                    ))
+                    .child(row);
             }
             Some(Err(e)) => card = card.child(widgets::label(format!("⚠ {e}"))),
             None => {}
@@ -871,94 +929,71 @@ impl Library {
                 ),
             );
         }
-        widgets::section("Steam Linux Runtime")
-            .child(widgets::label(self.tr(
-                "Run the game inside a Steam runtime container (through umu) for better library compatibility.",
-                "Daha iyi kütüphane uyumluluğu için oyunu bir Steam runtime konteynerinde (umu ile) çalıştır.",
-            )))
-            .child(row)
+        widgets::section("Steam Linux Runtime").child(widgets::setting_row(
+            self.tr("Container", "Konteyner"),
+            self.tr(
+                "Sniper suits most native games; older ones may need Soldier or Scout.",
+                "Sniper çoğu yerel oyuna uyar; eskileri Soldier ya da Scout isteyebilir.",
+            ),
+            row,
+        ))
     }
 
     pub(super) fn render_prefix_tools(&mut self, cx: &mut Context<Self>) -> Div {
+        use super::style::{self, pal};
         let verbs = self.field(
             "winetricks-verbs",
             |_| String::new(),
-            self.tr(
-                "winetricks verbs, e.g. vcrun2022 d3dcompiler_47",
-                "winetricks fiilleri, ör. vcrun2022 d3dcompiler_47",
-            ),
+            "vcrun2022 d3dcompiler_47",
             cx,
             |_, _| {},
         );
-        let card = widgets::section(self.tr("Prefix tools", "Prefix araçları"));
+        let mut card = widgets::section(self.tr("Wine prefix tools", "Wine prefix araçları"));
         if let Some(b) = self.game_ui.tool_busy.clone() {
-            return card.child(widgets::label(format!("{b}…")));
+            card = card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(style::icon("loader", 14., pal::accent_light()))
+                    .child(widgets::label(format!("{b}…"))),
+            );
         }
-        card.child(
+        let busy = self.game_ui.tool_busy.is_some();
+        let btn = |id: &'static str, label: &'static str, icon: &'static str| {
+            style::button(id, label, false)
+                .child(style::icon(icon, 13., pal::muted()))
+                .when(busy, |b| b.opacity(0.4))
+        };
+        card.child(widgets::setting_row(
+            self.tr("Wine settings", "Wine ayarları"),
+            self.tr(
+                "winecfg: Windows version, drives, audio, DLL overrides.",
+                "winecfg: Windows sürümü, sürücüler, ses, DLL ayarları.",
+            ),
+            btn("tool-winecfg", "winecfg", "settings").on_click(cx.listener(|this, _, _, cx| {
+                if this.game_ui.tool_busy.is_none() {
+                    this.run_tool(PrefixTool::Winecfg, "winecfg".into(), cx)
+                }
+            })),
+        ))
+        .child(widgets::divider())
+        .child(widgets::setting_row(
+            "winetricks",
+            self.tr(
+                "Install runtimes by name; empty opens the winetricks window.",
+                "Bileşenleri adıyla kur; boş bırakırsan winetricks penceresi açılır.",
+            ),
             div()
                 .flex()
-                .flex_wrap()
                 .gap_2()
+                .child(div().w(px(220.)).child(verbs))
                 .child(
-                    widgets::chip("tool-winecfg", "winecfg", false).on_click(cx.listener(
-                        |this, _, _, cx| this.run_tool(PrefixTool::Winecfg, "winecfg".into(), cx),
-                    )),
-                )
-                .child(
-                    widgets::chip(
-                        "tool-run",
-                        self.tr("Run a file in the prefix…", "Prefix'te dosya çalıştır…"),
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let title = this.tr(
-                            "Choose an .exe, .msi, .bat or .reg file",
-                            "Bir .exe, .msi, .bat ya da .reg dosyası seç",
-                        );
-                        this.prompt_path(false, title, cx, |this, path, cx| {
-                            let label = path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            this.run_tool(PrefixTool::Run(path), label, cx);
-                        });
-                    })),
-                )
-                .child(
-                    widgets::chip(
-                        "tool-open",
-                        self.tr("Open prefix folder", "Prefix klasörünü aç"),
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, _| {
-                        if let Some(g) = this.entry() {
-                            let p = g.effective_prefix(&this.global.prefixes_dir());
-                            let _ = std::process::Command::new("xdg-open").arg(p).spawn();
-                        }
-                    })),
-                )
-                .child(
-                    widgets::chip(
-                        "tool-kill",
-                        self.tr(
-                            "Stop everything in the prefix",
-                            "Prefix'teki her şeyi durdur",
-                        ),
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx))),
-                ),
-        )
-        .child(widgets::label("winetricks"))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().flex_1().child(verbs))
-                .child(
-                    widgets::chip("tool-winetricks", self.tr("Run", "Çalıştır"), false).on_click(
+                    btn("tool-winetricks", self.tr("Run", "Çalıştır"), "play").on_click(
                         cx.listener(|this, _, _, cx| {
+                            if this.game_ui.tool_busy.is_some() {
+                                return;
+                            }
                             let verbs = arkor_core::profile::shell_words(
                                 &this.field_text("winetricks-verbs", cx).unwrap_or_default(),
                             );
@@ -966,11 +1001,57 @@ impl Library {
                         }),
                     ),
                 ),
-        )
-        .child(widgets::label(self.tr(
-            "No verbs opens the winetricks window.",
-            "Fiil yazmazsan winetricks penceresi açılır.",
-        )))
+        ))
+        .child(widgets::divider())
+        .child(widgets::setting_row(
+            self.tr("Run a file in the prefix", "Prefix'te dosya çalıştır"),
+            self.tr(
+                "An installer, patch or .reg file (.exe, .msi, .bat, .reg).",
+                "Bir kurulum, yama ya da .reg dosyası (.exe, .msi, .bat, .reg).",
+            ),
+            btn("tool-run", self.tr("Choose…", "Seç…"), "folder-open").on_click(cx.listener(
+                |this, _, _, cx| {
+                    if this.game_ui.tool_busy.is_some() {
+                        return;
+                    }
+                    let title = this.tr(
+                        "Choose an .exe, .msi, .bat or .reg file",
+                        "Bir .exe, .msi, .bat ya da .reg dosyası seç",
+                    );
+                    this.prompt_path(false, title, cx, |this, path, cx| {
+                        let label = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        this.run_tool(PrefixTool::Run(path), label, cx);
+                    });
+                },
+            )),
+        ))
+        .child(widgets::divider())
+        .child(widgets::setting_row(
+            self.tr("Prefix folder", "Prefix klasörü"),
+            self.tr("Its C: drive is in drive_c.", "C: sürücüsü drive_c içinde."),
+            btn("tool-open", self.tr("Open", "Aç"), "folder-open").on_click(cx.listener(
+                |this, _, _, _| {
+                    if let Some(g) = this.entry() {
+                        let p = g.effective_prefix(&this.global.prefixes_dir());
+                        let _ = std::process::Command::new("xdg-open").arg(p).spawn();
+                    }
+                },
+            )),
+        ))
+        .child(widgets::divider())
+        .child(widgets::setting_row(
+            self.tr("Stop everything", "Her şeyi durdur"),
+            self.tr(
+                "Ends every program in the prefix (wineserver -k), e.g. a stuck launcher.",
+                "Prefix'teki her programı kapatır (wineserver -k), ör. takılan bir başlatıcı.",
+            ),
+            style::button("tool-kill", self.tr("Stop", "Durdur"), false)
+                .child(style::icon("square", 12., pal::danger()))
+                .on_click(cx.listener(|this, _, _, cx| this.stop(cx))),
+        ))
         .children((!self.game_ui.new_exes.is_empty()).then(|| self.render_new_exes(cx)))
     }
 
@@ -1037,82 +1118,111 @@ impl Library {
     }
 
     pub(super) fn render_logs(&mut self, id: &GameId, cx: &mut Context<Self>) -> Div {
-        let show_label = if self.game_ui.show_log {
-            self.tr("Hide last launch log", "Son başlatma log'unu gizle")
-        } else {
-            self.tr("Show last launch log", "Son başlatma log'unu göster")
+        use super::style::{self, pal};
+        let log = paths::launch_log(id).ok();
+        let text = log
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        let tail: Vec<&str> = {
+            let mut v: Vec<&str> = text.lines().rev().take(60).collect();
+            v.reverse();
+            v
         };
-        let mut card = widgets::section(self.tr("Logs", "Log'lar")).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_2()
-                .child(
-                    widgets::chip("log-show", show_label, self.game_ui.show_log).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.game_ui.show_log = !this.game_ui.show_log;
-                            cx.notify();
-                        }),
-                    ),
-                )
-                .child(
-                    widgets::chip(
-                        "log-open",
-                        self.tr("Open log folder", "Log klasörünü aç"),
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, _| {
-                        if let Some(dir) = this.log_dir() {
-                            let _ = std::fs::create_dir_all(&dir);
-                            let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-                        }
-                    })),
-                )
-                .child(
-                    widgets::chip(
-                        "log-clear",
-                        self.tr("Clear logs", "Log'ları temizle"),
-                        false,
-                    )
+        let when = log
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| ago(d.as_secs(), self.global.language));
+        let mut lines = div()
+            .id("log-lines")
+            .flex()
+            .flex_col()
+            .max_h(px(420.))
+            .overflow_y_scroll()
+            .p_3()
+            .rounded(px(10.))
+            .bg(pal::bg().opacity(0.6))
+            .border_1()
+            .border_color(pal::glass_spec().border)
+            .text_xs()
+            .font_family("monospace");
+        if tail.is_empty() {
+            lines = lines.child(widgets::label(self.tr(
+                "No log yet: start the game once.",
+                "Henüz kayıt yok: oyunu bir kez başlat.",
+            )));
+        }
+        for line in tail {
+            let lower = line.to_lowercase();
+            let color =
+                if lower.contains("error") || lower.contains("err:") || lower.contains("failed") {
+                    pal::danger()
+                } else if lower.contains("warn") {
+                    pal::warning()
+                } else {
+                    pal::text_soft()
+                };
+            lines = lines.child(div().text_color(color).child(line.to_string()));
+        }
+        widgets::section(self.tr("Launch log", "Başlatma kaydı"))
+            .child(widgets::setting_row(
+                self.tr("Proton's own log", "Proton'un kendi kaydı"),
+                self.tr(
+                    "Much more detail (PROTON_LOG) for hard problems; makes the game slower, so turn it off again.",
+                    "Zor sorunlar için çok daha fazla ayrıntı (PROTON_LOG); oyunu yavaşlatır, sonra kapat.",
+                ),
+                widgets::switch(self.profile.proton_log)
+                    .id("proton-log")
+                    .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let (Some(dir), Some(id)) = (this.log_dir(), this.selected_id()) {
-                            clear_logs(&dir, &id.file_stem());
-                        }
-                        this.status = Some(this.tr("Logs cleared", "Log'lar temizlendi").into());
+                        this.profile.proton_log = !this.profile.proton_log;
+                        this.save();
                         cx.notify();
                     })),
-                ),
-        );
-        if self.game_ui.show_log {
-            let text = paths::launch_log(id)
-                .ok()
-                .and_then(|p| std::fs::read_to_string(p).ok())
-                .unwrap_or_default();
-            let tail: Vec<&str> = text
-                .lines()
-                .rev()
-                .take(40)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            let mut lines = div()
-                .flex()
-                .flex_col()
-                .p_2()
-                .rounded_md()
-                .bg(super::style::pal::raised().opacity(0.45))
-                .text_xs()
-                .font_family("monospace");
-            if tail.is_empty() {
-                lines = lines.child(widgets::label(self.tr("No log yet.", "Henüz log yok.")));
-            }
-            for line in tail {
-                lines = lines.child(div().truncate().child(line.to_string()));
-            }
-            card = card.child(lines);
-        }
-        card
+            ))
+            .child(widgets::divider())
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div().flex_1().child(widgets::label(match when {
+                            Some(w) => format!("{} {w}", self.tr("Last start:", "Son başlatma:")),
+                            None => self.tr("Last 60 lines of the last start.", "Son başlatmanın son 60 satırı.").to_string(),
+                        })),
+                    )
+                    .child(
+                        style::button("log-refresh", self.tr("Refresh", "Yenile"), false)
+                            .child(style::icon("refresh-cw", 13., pal::muted()))
+                            .on_click(cx.listener(|_, _, _, cx| cx.notify())),
+                    )
+                    .child(
+                        style::button("log-open", self.tr("Open folder", "Klasörü aç"), false)
+                            .child(style::icon("folder-open", 13., pal::muted()))
+                            .on_click(cx.listener(|this, _, _, _| {
+                                if let Some(dir) = this.log_dir() {
+                                    let _ = std::fs::create_dir_all(&dir);
+                                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                                }
+                            })),
+                    )
+                    .child(
+                        style::button("log-clear", self.tr("Clear", "Temizle"), false)
+                            .child(style::icon("trash-2", 13., pal::muted()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let (Some(dir), Some(id)) = (this.log_dir(), this.selected_id()) {
+                                    clear_logs(&dir, &id.file_stem());
+                                }
+                                this.status = Some(this.tr("Logs cleared", "Kayıtlar temizlendi").into());
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(lines)
     }
 }
 
@@ -1141,24 +1251,6 @@ fn clear_logs(dir: &std::path::Path, stem: &str) {
             }
         }
     }
-}
-
-fn path_row(
-    text: String,
-    id: &'static str,
-    button: &'static str,
-    cx: &mut Context<Library>,
-    on_click: impl Fn(&mut Library, &mut Context<Library>) + 'static,
-) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .child(div().flex_1().min_w_0().truncate().text_sm().child(text))
-        .child(
-            widgets::chip(id, button, false)
-                .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx))),
-        )
 }
 
 fn code_box(text: String) -> Div {
@@ -1290,14 +1382,18 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(widgets::label(self.tr("Cover", "Kapak")))
+                    .child(div().font_weight(gpui::FontWeight::MEDIUM).child(self.tr("Cover", "Kapak")))
+                    .child(widgets::label(self.tr(
+                        "A picture file, SteamGridDB (needs its key in Settings → Integrations) or an image address.",
+                        "Bir resim dosyası, SteamGridDB (Ayarlar → Entegrasyonlar'da anahtarı gerekir) ya da bir resim adresi.",
+                    )))
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
                             .gap_2()
                             .child(
-                                widgets::chip(
+                                super::style::button(
                                     "cover-file",
                                     self.tr("Choose image…", "Resim seç…"),
                                     false,
@@ -1316,7 +1412,7 @@ impl Library {
                                     },
                                 )),
                             )
-                            .child(widgets::chip("cover-sgdb", "SteamGridDB", false).on_click(
+                            .child(super::style::button("cover-sgdb", "SteamGridDB", false).on_click(
                                 cx.listener(move |this, _, _, cx| {
                                     let (id, name, key) = (
                                         id_sgdb.clone(),
@@ -1335,7 +1431,7 @@ impl Library {
                                 }),
                             ))
                             .child(
-                                widgets::chip("cover-reset", self.tr("Reset", "Sıfırla"), false)
+                                super::style::button("cover-reset", self.tr("Reset", "Sıfırla"), false)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         arkor_launch::covers::reset(&id_reset);
                                         this.refresh_cover(&id_reset);
@@ -1382,7 +1478,7 @@ impl Library {
         };
         buttons = buttons
             .child(
-                widgets::chip(
+                super::style::button(
                     "sc-menu",
                     self.tr("Add to app menu", "Uygulama menüsüne ekle"),
                     in_menu,
@@ -1390,7 +1486,7 @@ impl Library {
                 .on_click(cx.listener(move |this, _, _, cx| shortcut(this, false, cx))),
             )
             .child(
-                widgets::chip(
+                super::style::button(
                     "sc-desktop",
                     self.tr("Add to desktop", "Masaüstüne ekle"),
                     false,
@@ -1399,7 +1495,7 @@ impl Library {
             );
         if in_menu {
             buttons = buttons.child(
-                widgets::chip(
+                super::style::button(
                     "sc-remove",
                     self.tr("Remove shortcuts", "Kısayolları kaldır"),
                     false,
@@ -1414,8 +1510,8 @@ impl Library {
         }
         if game.id.store != arkor_core::game::Store::Steam {
             buttons = buttons.child(
-                widgets::chip("sc-steam", self.tr("Add to Steam", "Steam'e ekle"), false).on_click(
-                    cx.listener(|this, _, _, cx| {
+                super::style::button("sc-steam", self.tr("Add to Steam", "Steam'e ekle"), false)
+                    .on_click(cx.listener(|this, _, _, cx| {
                         let Some(game) = this.selected_game().cloned() else {
                             return;
                         };
@@ -1438,27 +1534,40 @@ impl Library {
                             },
                         );
                         cx.notify();
-                    }),
-                ),
+                    })),
             );
         }
         let copy = command.clone();
         Some(
             widgets::section(self.tr("Shortcuts", "Kısayollar"))
-                .child(buttons)
-                .child(widgets::label(self.tr(
-                    "Launch command, for Heroic, Lutris or scripts (Arkor applies this game's settings):",
-                    "Başlatma komutu; Heroic, Lutris ya da betikler için (Arkor bu oyunun ayarlarını uygular):",
-                )))
-                .child(
-                    div().flex().items_center().gap_3().child(div().flex_1().text_sm().font_family("monospace").child(command)).child(
-                        widgets::chip("sc-copy", self.tr("Copy", "Kopyala"), false).on_click(cx.listener(move |this, _, _, cx| {
+                .child(widgets::setting_row(
+                    self.tr("Start it from outside Arkor", "Arkor dışından başlat"),
+                    if in_menu {
+                        self.tr("It is in the app menu.", "Uygulama menüsünde var.")
+                    } else {
+                        self.tr(
+                            "App menu, desktop or Steam (as a non-Steam game).",
+                            "Uygulama menüsü, masaüstü ya da Steam (Steam dışı oyun olarak).",
+                        )
+                    },
+                    buttons,
+                ))
+                .child(widgets::divider())
+                .child(widgets::setting_row(
+                    self.tr("Launch command", "Başlatma komutu"),
+                    self.tr(
+                        "For Heroic, Lutris or scripts; Arkor applies this game's settings.",
+                        "Heroic, Lutris ya da betikler için; Arkor bu oyunun ayarlarını uygular.",
+                    ),
+                    super::style::button("sc-copy", self.tr("Copy", "Kopyala"), false)
+                        .child(super::style::icon("copy", 13., super::style::pal::muted()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()));
                             this.status = Some(this.tr("Copied.", "Kopyalandı.").into());
                             cx.notify();
                         })),
-                    ),
-                ),
+                ))
+                .child(code_box(command)),
         )
     }
 }

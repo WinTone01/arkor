@@ -277,6 +277,36 @@ impl Library {
         }
 
         side = side.child(div().flex_1());
+        if let Some(step) = self.required.step.clone().filter(|_| self.required.running) {
+            side = side.child(
+                div()
+                    .id("required-progress")
+                    .mb_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(10.))
+                    .bg(pal::accent().opacity(0.1))
+                    .border_1()
+                    .border_color(pal::accent().opacity(0.3))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .child(style::icon("loader", 14., pal::accent_light()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .child(div().text_xs().text_color(pal::muted()).child(self.tr(
+                                "Installing required components",
+                                "Gerekli bileşenler kuruluyor",
+                            )))
+                            .child(div().text_sm().truncate().child(step)),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.go(Nav::Protons, cx))),
+            );
+        }
         if !self.running.is_empty() {
             let n = self.running.len();
             side = side.child(

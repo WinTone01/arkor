@@ -5,6 +5,7 @@ mod add_game;
 mod backdrop;
 mod bench_page;
 mod big_screen;
+mod defaults_page;
 mod enhance;
 mod features;
 mod fields;
@@ -115,6 +116,8 @@ pub struct Library {
     big_focus: usize,
     big_cols: usize,
     restore_pending: Option<std::path::PathBuf>,
+    /// umu-launcher, anti-cheat and a first Proton, installed in the background at start.
+    required: protons::RequiredState,
     settings_tab: global_page::SettingsTab,
     /// Move the keyboard focus back to the window on the next render.
     refocus: bool,
@@ -177,6 +180,7 @@ impl Library {
             big_focus: 0,
             big_cols: 1,
             restore_pending: None,
+            required: Default::default(),
         };
         lib.reload_games();
         lib
@@ -736,9 +740,11 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
         },
         cx,
         move |_, cx| {
-            cx.new(|_| {
+            cx.new(|cx| {
                 let mut lib = Library::new();
                 lib.open(open.as_deref());
+                // Only the real window installs components (not the headless tests).
+                lib.ensure_required(cx);
                 lib
             })
         },

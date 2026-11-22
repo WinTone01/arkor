@@ -352,6 +352,35 @@ pub struct Global {
     /// Don't look for new umu-launcher, anti-cheat and "Latest" Proton releases before a
     /// game starts (missing ones are still downloaded).
     pub no_auto_updates: bool,
+    /// What new games start with, and the Proton for games left on "Automatic".
+    pub defaults: GameDefaults,
+}
+
+/// Defaults for games (Settings → Game defaults). `proton` applies at launch to every game
+/// whose own Proton is "Automatic"; the rest is copied into a game's profile when it is
+/// added (and can be copied into every game with "Apply to all games").
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GameDefaults {
+    /// Proton build name (as in `Profile::proton`). `None` = pick automatically.
+    pub proton: Option<String>,
+    pub gamemode: bool,
+    pub no_sleep: bool,
+    /// Tweak ids switched on for new games (see `tweaks::TWEAKS`).
+    pub tweaks: std::collections::BTreeSet<String>,
+    pub launch_options: String,
+}
+
+impl GameDefaults {
+    /// Copies the defaults into a game's profile (its other settings stay).
+    pub fn apply_to(&self, profile: &mut Profile) {
+        profile.gamemode = self.gamemode;
+        profile.no_sleep = self.no_sleep;
+        profile.tweaks.extend(self.tweaks.iter().cloned());
+        if profile.launch_options.trim().is_empty() {
+            profile.launch_options = self.launch_options.clone();
+        }
+    }
 }
 
 /// Look and feel of Arkor's window.
@@ -607,6 +636,33 @@ pub(crate) fn write_toml<T: Serialize>(path: &Path, value: &T) -> anyhow::Result
 mod tests {
     use super::*;
     use crate::mangohud::Metric;
+
+    #[test]
+    fn defaults_fill_a_new_profile_without_losing_its_own_settings() {
+        let defaults = GameDefaults {
+            proton: Some("Proton-CachyOS Latest".into()),
+            gamemode: true,
+            no_sleep: true,
+            tweaks: ["wayland".to_string()].into(),
+            launch_options: "%command% -dx12".into(),
+        };
+        let mut fresh = Profile::default();
+        defaults.apply_to(&mut fresh);
+        assert!(fresh.gamemode && fresh.no_sleep);
+        assert!(fresh.tweaks.contains("wayland"));
+        assert_eq!(fresh.launch_options, "%command% -dx12");
+        // The Proton default applies at launch, not by writing it into the game.
+        assert_eq!(fresh.proton, None);
+
+        let mut own = Profile {
+            launch_options: "VAR=1 %command%".into(),
+            tweaks: ["hdr".to_string()].into(),
+            ..Default::default()
+        };
+        defaults.apply_to(&mut own);
+        assert_eq!(own.launch_options, "VAR=1 %command%");
+        assert!(own.tweaks.contains("hdr") && own.tweaks.contains("wayland"));
+    }
 
     #[test]
     fn parses_partial_profile() {

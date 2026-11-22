@@ -96,6 +96,14 @@ impl Library {
             ..AddState::default()
         };
         let id = GameId::new(Store::Local, id);
+        // New games start with the defaults from Settings → Game defaults.
+        if self.global.defaults != Default::default() {
+            let mut profile = arkor_core::Profile::load(&id).unwrap_or_default();
+            self.global.defaults.apply_to(&mut profile);
+            if let Err(e) = profile.save(&id) {
+                self.add.error = Some(format!("{e:#}"));
+            }
+        }
         self.reload_games();
         self.select_game(&id, cx);
         Some(id)

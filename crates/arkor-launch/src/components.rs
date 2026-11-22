@@ -279,6 +279,38 @@ pub fn before_launch(update: bool, latest: Option<Latest>) {
     }
 }
 
+/// Whether any Proton build is installed (a "Latest" one counts).
+pub fn any_proton() -> bool {
+    !tools::installed_protons().is_empty()
+}
+
+/// The build installed when there is no Proton at all: the default from Settings if it is
+/// a "Latest" one, else Proton-CachyOS Latest (Faugus' default).
+pub fn first_proton(default: Option<&str>) -> Latest {
+    default
+        .and_then(Latest::from_value)
+        .unwrap_or(Latest::CachyOs)
+}
+
+/// What every Windows game needs, checked when Arkor starts: umu-launcher, the anti-cheat
+/// runtimes and at least one Proton build. `step` is told what is being done. Blocking.
+pub fn ensure_required(
+    update: bool,
+    default_proton: Option<&str>,
+    step: &dyn Fn(&str),
+) -> anyhow::Result<()> {
+    step("umu-launcher");
+    ensure_umu(update)?;
+    step("EasyAntiCheat & BattlEye");
+    ensure_anticheat(update)?;
+    if !any_proton() {
+        let latest = first_proton(default_proton);
+        step(latest.dir_name());
+        ensure_latest(latest, true)?;
+    }
+    Ok(())
+}
+
 /// umu's GAMEID for a library game without its own umu id: stable per game, so each game
 /// gets its own window class (`steam_app_…`), like Faugus' `umu-faugus<crc32>`.
 pub fn umu_game_id(game_id: &str) -> String {

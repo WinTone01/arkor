@@ -151,6 +151,13 @@ fn chosen_proton(
 ) -> (Option<PathBuf>, Option<crate::components::Latest>) {
     // An unreadable profile must not lose the source launcher's Proton.
     let wanted = Profile::load(id).ok().and_then(|p| p.proton);
+    // "Automatic": the source launcher's choice, else the default from Settings.
+    let wanted = match (wanted, &from_source) {
+        (None, None) => Global::load_or_import()
+            .ok()
+            .and_then(|g| g.defaults.proton),
+        (w, _) => w,
+    };
     match wanted {
         Some(name) => {
             if let Some(latest) = crate::components::Latest::from_value(&name) {

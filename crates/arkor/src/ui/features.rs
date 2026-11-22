@@ -19,8 +19,9 @@ use super::{Library, widgets};
 pub(super) enum GameTab {
     #[default]
     Overview,
-    Launch,
+    Game,
     Runtime,
+    Launch,
     Performance,
     Upscaling,
     Visuals,
@@ -28,10 +29,11 @@ pub(super) enum GameTab {
 }
 
 impl GameTab {
-    pub(super) const ALL: [GameTab; 7] = [
+    pub(super) const ALL: [GameTab; 8] = [
         GameTab::Overview,
-        GameTab::Launch,
+        GameTab::Game,
         GameTab::Runtime,
+        GameTab::Launch,
         GameTab::Performance,
         GameTab::Upscaling,
         GameTab::Visuals,
@@ -41,6 +43,7 @@ impl GameTab {
     fn icon(self) -> &'static str {
         match self {
             GameTab::Overview => "layout-dashboard",
+            GameTab::Game => "gamepad-2",
             GameTab::Launch => "rocket",
             GameTab::Runtime => "wine",
             GameTab::Performance => "gauge",
@@ -53,8 +56,9 @@ impl GameTab {
     fn name(self, lib: &Library) -> &'static str {
         match self {
             GameTab::Overview => lib.tr("Overview", "Genel bakış"),
+            GameTab::Game => lib.tr("Game", "Oyun"),
             GameTab::Launch => lib.tr("Launch", "Başlatma"),
-            GameTab::Runtime => lib.tr("Runtime", "Çalışma ortamı"),
+            GameTab::Runtime => lib.tr("Compatibility", "Uyumluluk"),
             GameTab::Performance => lib.tr("Performance", "Performans"),
             GameTab::Upscaling => lib.tr("Upscaling & frame gen", "Ölçekleme ve kare üretimi"),
             GameTab::Visuals => lib.tr("Overlay & visuals", "Overlay ve görüntü"),
@@ -66,8 +70,9 @@ impl GameTab {
     pub(super) fn from_name(name: &str) -> Option<GameTab> {
         Some(match name {
             "overview" | "general" => GameTab::Overview,
+            "game" | "details" | "files" => GameTab::Game,
             "launch" => GameTab::Launch,
-            "runtime" | "wine" | "proton" => GameTab::Runtime,
+            "runtime" | "compatibility" | "wine" | "proton" => GameTab::Runtime,
             "performance" => GameTab::Performance,
             "upscaling" | "mods" | "framegen" => GameTab::Upscaling,
             "visuals" | "overlay" | "mangohud" => GameTab::Visuals,
@@ -84,6 +89,8 @@ pub(super) struct Feature {
     pub tab: GameTab,
     pub icon: &'static str,
     pub name: (&'static str, &'static str),
+    /// One sentence shown on the closed panel: what the feature does.
+    pub desc: (&'static str, &'static str),
     /// Extra words the settings search matches (both languages, lower case).
     pub keywords: &'static str,
     pub applies: fn(&Library, &LibraryGame) -> bool,
@@ -112,73 +119,60 @@ fn has_other_layers(lib: &Library, _: &LibraryGame) -> bool {
 }
 
 pub(super) const FEATURES: &[Feature] = &[
-    // Overview
+    // Game
     Feature {
         id: "details",
-        tab: GameTab::Overview,
+        tab: GameTab::Game,
         icon: "file-pen",
-        name: ("Details", "Ayrıntılar"),
+        name: ("Name, category and cover", "Ad, kategori ve kapak"),
+        desc: (
+            "How the game shows in the library; duplicate or delete it.",
+            "Oyunun kütüphanede nasıl göründüğü; kopyala ya da sil.",
+        ),
         keywords: "name ad category kategori hidden gizli cover kapak steamgriddb duplicate çoğalt delete sil",
         applies: always,
         active: None,
         render: |l, cx| l.render_details_card(cx),
     },
-    // Launch
     Feature {
         id: "executable",
-        tab: GameTab::Launch,
+        tab: GameTab::Game,
         icon: "file-terminal",
-        name: ("Executable", "Çalıştırılabilir dosya"),
+        name: ("Game files", "Oyun dosyaları"),
+        desc: (
+            "The executable, its arguments and the Wine prefix it runs in.",
+            "Çalıştırılabilir dosya, argümanları ve çalıştığı Wine prefix'i.",
+        ),
         keywords: "exe arguments argümanlar prefix wine protontricks app id",
         applies: always,
         active: None,
         render: |l, cx| l.render_exec_card(cx),
     },
     Feature {
-        id: "launch-options",
-        tab: GameTab::Launch,
-        icon: "terminal",
-        name: ("Launch options & hooks", "Başlatma seçenekleri ve komutlar"),
-        keywords: "%command% pre post script hook extra app trainer sleep uyku inhibit",
-        applies: always,
-        active: Some(|l| {
-            !l.profile.launch_options.trim().is_empty()
-                || !l.profile.pre_launch.is_empty()
-                || !l.profile.post_launch.is_empty()
-        }),
-        render: |l, cx| {
-            let entry = l.entry()?.clone();
-            let steam = matches!(entry.kind, GameKind::Steam { .. });
-            Some(l.render_launch(&entry.id, steam, cx))
-        },
-    },
-    Feature {
-        id: "env",
-        tab: GameTab::Launch,
-        icon: "variable",
-        name: ("Environment variables", "Ortam değişkenleri"),
-        keywords: "env ortam değişken variable key value",
-        applies: always,
-        active: Some(|l| !l.profile.env.is_empty()),
-        render: |l, cx| Some(l.render_env_card(cx)),
-    },
-    Feature {
         id: "shortcuts",
-        tab: GameTab::Launch,
+        tab: GameTab::Game,
         icon: "app-window",
         name: ("Shortcuts", "Kısayollar"),
+        desc: (
+            "Start it from the desktop, the app menu or Steam.",
+            "Masaüstünden, uygulama menüsünden ya da Steam'den başlat.",
+        ),
         keywords: "desktop masaüstü menu menü steam heroic lutris command komut",
         applies: always,
         active: None,
         render: |l, cx| l.render_shortcuts(cx),
     },
-    // Runtime
+    // Compatibility
     Feature {
         id: "proton",
         tab: GameTab::Runtime,
         icon: "wine",
         name: ("Proton version", "Proton sürümü"),
-        keywords: "proton ge cachyos wine version sürüm",
+        desc: (
+            "Which Proton build runs the game.",
+            "Oyunu hangi Proton derlemesinin çalıştıracağı.",
+        ),
+        keywords: "proton ge cachyos wine version sürüm latest",
         applies: proton_choice,
         active: Some(|l| l.profile.proton.is_some()),
         render: |l, cx| {
@@ -191,16 +185,38 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Runtime,
         icon: "wine",
         name: ("Proton", "Proton"),
+        desc: (
+            "Chosen in Steam for Steam games.",
+            "Steam oyunlarında Steam'de seçilir.",
+        ),
         keywords: "proton steam",
         applies: steam_game,
         active: None,
         render: |l, cx| Some(l.render_steam_runtime_note(cx)),
     },
     Feature {
+        id: "tweaks",
+        tab: GameTab::Runtime,
+        icon: "toggle-right",
+        name: ("Proton and driver switches", "Proton ve sürücü anahtarları"),
+        desc: (
+            "Wayland, HDR, DLSS/FSR upgrades, NTSYNC, WOW64 and more, one click each.",
+            "Wayland, HDR, DLSS/FSR yükseltme, NTSYNC, WOW64 ve fazlası, tek tıkla.",
+        ),
+        keywords: "dxvk vkd3d nvapi fsr esync fsync ntsync hdr wayland async cpu gpu shader cache wow64 reflex antilag dlss xess",
+        applies: always,
+        active: Some(|l| !l.profile.tweaks.is_empty()),
+        render: |l, cx| Some(l.render_tweaks(cx)),
+    },
+    Feature {
         id: "protonfixes",
         tab: GameTab::Runtime,
         icon: "wrench",
-        name: ("Protonfixes (umu id)", "Protonfix (umu kimliği)"),
+        name: ("Protonfixes", "Protonfix'ler"),
+        desc: (
+            "Known fixes for this game, applied by Proton when it knows its umu id.",
+            "Bu oyun için bilinen düzeltmeler; Proton umu kimliğini bilince uygular.",
+        ),
         keywords: "umu protonfix gameid fix düzeltme",
         applies: proton_choice,
         active: Some(|l| l.profile.umu_id.is_some()),
@@ -211,6 +227,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Runtime,
         icon: "box",
         name: ("Steam Linux Runtime", "Steam Linux Runtime"),
+        desc: (
+            "Run the game in a Steam runtime container for library compatibility.",
+            "Kütüphane uyumluluğu için oyunu bir Steam runtime konteynerinde çalıştır.",
+        ),
         keywords: "sniper soldier scout runtime container",
         applies: linux_game,
         active: Some(|l| l.profile.linux_runtime.is_some()),
@@ -220,28 +240,81 @@ pub(super) const FEATURES: &[Feature] = &[
         id: "prefix-tools",
         tab: GameTab::Runtime,
         icon: "folder-cog",
-        name: ("Prefix tools", "Prefix araçları"),
+        name: ("Wine prefix tools", "Wine prefix araçları"),
+        desc: (
+            "winecfg, winetricks, running an installer in the prefix, stopping it.",
+            "winecfg, winetricks, prefix'te kurulum dosyası çalıştırma, durdurma.",
+        ),
         keywords: "winecfg winetricks regedit installer kurulum run çalıştır dll kill",
         applies: wine_game,
         active: None,
         render: |l, cx| Some(l.render_prefix_tools(cx)),
     },
+    // Launch
+    Feature {
+        id: "launch-options",
+        tab: GameTab::Launch,
+        icon: "terminal",
+        name: (
+            "Launch options and commands",
+            "Başlatma seçenekleri ve komutlar",
+        ),
+        desc: (
+            "Extra words for the command line, commands before and after, a second program.",
+            "Komut satırına ek kelimeler, önce ve sonra komutlar, ikinci bir program.",
+        ),
+        keywords: "%command% pre post script hook extra app trainer sleep uyku inhibit",
+        applies: always,
+        active: Some(|l| {
+            !l.profile.launch_options.trim().is_empty()
+                || !l.profile.pre_launch.is_empty()
+                || !l.profile.post_launch.is_empty()
+                || l.profile.extra_app.path.is_some()
+        }),
+        render: |l, cx| {
+            let entry = l.entry()?.clone();
+            let steam = matches!(entry.kind, GameKind::Steam { .. });
+            Some(l.render_launch(&entry.id, steam, cx))
+        },
+    },
+    Feature {
+        id: "env",
+        tab: GameTab::Launch,
+        icon: "variable",
+        name: ("Environment variables", "Ortam değişkenleri"),
+        desc: (
+            "KEY=VALUE pairs for this game only (they override the global ones).",
+            "Sadece bu oyun için ANAHTAR=DEĞER çiftleri (globalleri ezer).",
+        ),
+        keywords: "env ortam değişken variable key value",
+        applies: always,
+        active: Some(|l| !l.profile.env.is_empty()),
+        render: |l, cx| Some(l.render_env_card(cx)),
+    },
     // Performance
     Feature {
-        id: "tweaks",
+        id: "gamemode",
         tab: GameTab::Performance,
         icon: "zap",
-        name: ("Tweaks", "İnce ayarlar"),
-        keywords: "gamemode dxvk vkd3d nvapi fsr esync fsync ntsync hdr wayland async cpu gpu shader cache",
+        name: ("GameMode and sleep", "GameMode ve uyku"),
+        desc: (
+            "CPU/GPU tuning while playing, and keeping the system awake.",
+            "Oynarken CPU/GPU ayarı ve sistemi uyanık tutma.",
+        ),
+        keywords: "gamemode feral cpu governor sleep uyku inhibit awake",
         applies: always,
-        active: Some(|l| l.profile.gamemode || !l.profile.tweaks.is_empty()),
-        render: |l, cx| Some(l.render_tweaks(cx)),
+        active: Some(|l| l.profile.gamemode || l.profile.no_sleep),
+        render: |l, cx| Some(l.render_gamemode(cx)),
     },
     Feature {
         id: "gamescope",
         tab: GameTab::Performance,
         icon: "monitor",
         name: ("Gamescope", "Gamescope"),
+        desc: (
+            "Valve's compositor: resolution, upscaling, FPS limit, HDR, fullscreen.",
+            "Valve'ın birleştiricisi: çözünürlük, ölçekleme, FPS limiti, HDR, tam ekran.",
+        ),
         keywords: "gamescope resolution çözünürlük fsr nis scaling hdr refresh fullscreen tam ekran fps limit",
         applies: always,
         active: Some(|l| l.profile.gamescope.enabled),
@@ -252,6 +325,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Performance,
         icon: "moon",
         name: ("Idle FPS limit (vkNemu)", "Boşta FPS sınırı (vkNemu)"),
+        desc: (
+            "Lowers the frame rate while the game is in the background.",
+            "Oyun arka plandayken kare hızını düşürür.",
+        ),
         keywords: "vknemu idle boşta fps limit power güç",
         applies: always,
         active: Some(|l| l.profile.layers.vknemu.enabled),
@@ -266,6 +343,10 @@ pub(super) const FEATURES: &[Feature] = &[
             "Lossless Scaling frame gen (lsfg-vk)",
             "Lossless Scaling kare üretimi (lsfg-vk)",
         ),
+        desc: (
+            "Generated frames between real ones (needs Lossless Scaling on Steam).",
+            "Gerçek kareler arasına üretilmiş kareler (Steam'de Lossless Scaling gerekir).",
+        ),
         keywords: "lsfg lossless frame generation kare üretimi multiplier çarpan flow fps",
         applies: always,
         active: Some(|l| l.profile.lsfg.mode == LsfgMode::On),
@@ -276,6 +357,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "layers-2",
         name: ("MAKO frame gen & scaling", "MAKO kare üretimi ve ölçekleme"),
+        desc: (
+            "Open-source frame generation and spatial upscaling layer.",
+            "Açık kaynak kare üretimi ve uzamsal ölçekleme katmanı.",
+        ),
         keywords: "mako frame generation kare üretimi spatial scaling ölçekleme fps",
         applies: always,
         active: Some(|l| l.profile.layers.mako.enabled || l.profile.layers.mako.scaling),
@@ -286,6 +371,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "fast-forward",
         name: ("AFMF frame gen", "AFMF kare üretimi"),
+        desc: (
+            "AMD Fluid Motion Frames for any game.",
+            "Her oyun için AMD Fluid Motion Frames.",
+        ),
         keywords: "afmf amd fluid motion frames kare üretimi fps",
         applies: always,
         active: Some(|l| l.profile.layers.afmf.enabled),
@@ -296,6 +385,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "scan-eye",
         name: ("OptiScaler", "OptiScaler"),
+        desc: (
+            "Swap the game's DLSS/FSR/XeSS for another upscaler, e.g. FSR 4.",
+            "Oyunun DLSS/FSR/XeSS'ini başka bir ölçekleyiciyle değiştir, ör. FSR 4.",
+        ),
         keywords: "optiscaler dlss fsr fsr4 xess optipatcher edge upscaler ölçekleyici",
         applies: wine_game,
         active: Some(|l| l.tools.manifest.is_some()),
@@ -306,6 +399,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "cpu",
         name: ("DLSS Enabler", "DLSS Enabler"),
+        desc: (
+            "DLSS frame generation on AMD and Intel GPUs.",
+            "AMD ve Intel GPU'larda DLSS kare üretimi.",
+        ),
         keywords: "dlss enabler frame generation amd intel",
         applies: wine_game,
         active: Some(|l| l.tools.de_manifest.is_some()),
@@ -316,6 +413,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "refresh-cw",
         name: ("Streamline / DLSS update", "Streamline / DLSS güncelleme"),
+        desc: (
+            "Replace the game's NVIDIA DLSS files with newer ones.",
+            "Oyunun NVIDIA DLSS dosyalarını yenileriyle değiştir.",
+        ),
         keywords: "streamline nvidia dlss update güncelle reflex nvngx",
         applies: wine_game,
         active: Some(|l| l.tools.sl_manifest.is_some()),
@@ -326,6 +427,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Upscaling,
         icon: "atom",
         name: ("HelixSR & DLSS-NR (AMD)", "HelixSR ve DLSS-NR (AMD)"),
+        desc: (
+            "Neural upscalers for AMD RDNA cards.",
+            "AMD RDNA kartlar için yapay zekâ ölçekleyiciler.",
+        ),
         keywords: "helixsr dlss-nr dlssnr amd rdna fsr4 neural",
         applies: wine_game,
         active: Some(|l| l.tools.dlssnr.is_some()),
@@ -337,6 +442,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Visuals,
         icon: "gauge",
         name: ("MangoHud", "MangoHud"),
+        desc: (
+            "FPS, temperatures and load drawn over the game.",
+            "Oyunun üstünde FPS, sıcaklık ve yük.",
+        ),
         keywords: "mangohud overlay fps hud frametime grafik log",
         applies: always,
         active: Some(|l| match l.profile.mangohud.mode {
@@ -351,6 +460,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Visuals,
         icon: "wand-sparkles",
         name: ("vkBasalt", "vkBasalt"),
+        desc: (
+            "Sharpening, anti-aliasing and colour effects for Vulkan games.",
+            "Vulkan oyunları için keskinleştirme, kenar yumuşatma ve renk efektleri.",
+        ),
         keywords: "vkbasalt cas sharpen keskinlik smaa fxaa lut reshade daltonize",
         applies: always,
         active: Some(|l| l.profile.vkbasalt.enabled),
@@ -361,6 +474,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Visuals,
         icon: "brush",
         name: ("ReShade", "ReShade"),
+        desc: (
+            "ReShade shaders installed in the game folder.",
+            "Oyun klasörüne kurulan ReShade shader'ları.",
+        ),
         keywords: "reshade shader efekt effects",
         applies: wine_game,
         active: Some(|l| l.tools.rs_manifest.is_some()),
@@ -371,6 +488,7 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Visuals,
         icon: "contrast",
         name: ("Colour grading (vkSumi)", "Renk ayarı (vkSumi)"),
+        desc: ("Vibrance and contrast.", "Canlılık ve kontrast."),
         keywords: "vksumi vibrance canlılık contrast kontrast colour renk",
         applies: always,
         active: Some(|l| l.profile.layers.vksumi),
@@ -381,6 +499,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Visuals,
         icon: "layers-2",
         name: ("Other Vulkan layers", "Diğer Vulkan katmanları"),
+        desc: (
+            "Other layers installed on this computer, e.g. OBS capture.",
+            "Bu bilgisayarda kurulu diğer katmanlar, ör. OBS yakalama.",
+        ),
         keywords: "vulkan layer katman obs",
         applies: has_other_layers,
         active: Some(|l| !l.profile.layers.other.is_empty()),
@@ -391,7 +513,11 @@ pub(super) const FEATURES: &[Feature] = &[
         id: "logs",
         tab: GameTab::Logs,
         icon: "scroll-text",
-        name: ("Logs", "Kayıtlar"),
+        name: ("Launch log", "Başlatma kaydı"),
+        desc: (
+            "What happened on the last start, and Proton's own log.",
+            "Son başlatmada ne olduğu ve Proton'un kendi kaydı.",
+        ),
         keywords: "log kayıt proton_log error hata",
         applies: always,
         active: None,
@@ -402,11 +528,11 @@ pub(super) const FEATURES: &[Feature] = &[
     },
 ];
 
-/// Quick toggles on the Overview tab: (feature id, toggle).
+/// Quick toggles on the Overview tab: (key, feature whose settings it opens, toggle).
 type Toggle = fn(&mut Library);
 
-const QUICK: [(&str, Toggle); 6] = [
-    ("mangohud", |l| {
+const QUICK: [(&str, &str, Toggle); 6] = [
+    ("mangohud", "mangohud", |l| {
         l.profile.mangohud.mode = match l.profile.mangohud.mode {
             HudMode::Off => {
                 if l.profile.mangohud.settings.is_some() {
@@ -426,21 +552,23 @@ const QUICK: [(&str, Toggle); 6] = [
             l.profile.mangohud.mode = HudMode::Custom;
         }
     }),
-    ("tweaks", |l| l.profile.gamemode = !l.profile.gamemode),
-    ("gamescope", |l| {
+    ("gamemode", "gamemode", |l| {
+        l.profile.gamemode = !l.profile.gamemode
+    }),
+    ("gamescope", "gamescope", |l| {
         l.profile.gamescope.enabled = !l.profile.gamescope.enabled
     }),
-    ("lsfg", |l| {
+    ("lsfg", "lsfg", |l| {
         l.profile.lsfg.mode = if l.profile.lsfg.mode == LsfgMode::On {
             LsfgMode::Default
         } else {
             LsfgMode::On
         }
     }),
-    ("vkbasalt", |l| {
+    ("vkbasalt", "vkbasalt", |l| {
         l.profile.vkbasalt.enabled = !l.profile.vkbasalt.enabled
     }),
-    ("launch-options", |l| {
+    ("no-sleep", "gamemode", |l| {
         l.profile.no_sleep = !l.profile.no_sleep
     }),
 ];
@@ -476,15 +604,15 @@ impl Library {
             .all(|w| hay.contains(w))
     }
 
-    fn quick_label(&self, id: &str) -> (&'static str, &'static str, bool) {
+    fn quick_label(&self, key: &str) -> (&'static str, &'static str, bool) {
         let p = &self.profile;
-        match id {
+        match key {
             "mangohud" => (
                 "MangoHud",
                 "gauge",
                 (feature("mangohud").active.unwrap())(self),
             ),
-            "tweaks" => ("GameMode", "zap", p.gamemode),
+            "gamemode" => ("GameMode", "zap", p.gamemode),
             "gamescope" => ("Gamescope", "monitor", p.gamescope.enabled),
             "lsfg" => ("lsfg-vk", "layers", p.lsfg.mode == LsfgMode::On),
             "vkbasalt" => ("vkBasalt", "wand-sparkles", p.vkbasalt.enabled),
@@ -492,15 +620,16 @@ impl Library {
         }
     }
 
+    /// The most used switches as tiles: the tile switches, its link opens the settings.
     fn render_quick(&mut self, cx: &mut Context<Self>) -> Div {
         let mut grid = div().flex().flex_wrap().gap_3();
-        for (ix, (id, toggle)) in QUICK.into_iter().enumerate() {
-            let (label, icon, on) = self.quick_label(id);
-            let tab = feature(id).tab;
+        for (ix, (key, feature_id, toggle)) in QUICK.into_iter().enumerate() {
+            let (label, icon, on) = self.quick_label(key);
+            let tab = feature(feature_id).tab;
             grid = grid.child(
                 div()
                     .id(("quick", ix))
-                    .w(px(196.))
+                    .w(px(230.))
                     .flex()
                     .items_center()
                     .gap_3()
@@ -524,72 +653,246 @@ impl Library {
                         this.save();
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .size(px(34.))
-                            .flex_none()
-                            .rounded(px(10.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(if on {
-                                pal::accent().opacity(0.2)
-                            } else {
-                                pal::raised()
-                            })
-                            .child(style::icon(
-                                icon,
-                                17.,
-                                if on {
-                                    pal::accent_light()
-                                } else {
-                                    pal::muted()
-                                },
-                            )),
-                    )
+                    .child(style::icon(
+                        icon,
+                        18.,
+                        if on {
+                            pal::accent_light()
+                        } else {
+                            pal::muted()
+                        },
+                    ))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_col()
+                            .gap_0p5()
                             .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
                             .child(
                                 div()
+                                    .id(("quick-more", ix))
                                     .text_xs()
-                                    .text_color(if on {
-                                        pal::accent_light()
-                                    } else {
-                                        pal::faint()
-                                    })
-                                    .child(if on {
-                                        self.tr("On", "Açık")
-                                    } else {
-                                        self.tr("Off", "Kapalı")
-                                    }),
+                                    .text_color(pal::faint())
+                                    .hover(|s| s.text_color(pal::accent_light()))
+                                    .child(self.tr("Settings ›", "Ayarlar ›"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.open_feature(tab, feature_id);
+                                        cx.notify();
+                                    })),
                             ),
                     )
-                    .child(
-                        div()
-                            .id(("quick-more", ix))
-                            .p_1()
-                            .rounded(px(6.))
-                            .hover(|s| s.bg(pal::raised()))
-                            .child(style::icon("chevron-right", 14., pal::faint()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.game_tab = tab;
-                                cx.notify();
-                            })),
-                    ),
+                    .child(widgets::switch(on)),
             );
         }
-        widgets::section(self.tr("Quick settings", "Hızlı ayarlar"))
+        widgets::section(self.tr("Quick switches", "Hızlı anahtarlar"))
             .child(widgets::label(self.tr(
-                "The most used switches. The arrow opens their full settings.",
-                "En çok kullanılan anahtarlar. Ok, tüm ayarlarını açar.",
+                "Click a tile to switch it; “Settings” opens its options.",
+                "Açıp kapatmak için kutuya tıkla; “Ayarlar” seçeneklerini açar.",
             )))
             .child(grid)
+    }
+
+    /// Goes to `tab` with `feature_id`'s panel open.
+    fn open_feature(&mut self, tab: GameTab, feature_id: &'static str) {
+        self.game_tab = tab;
+        self.feature_query.clear();
+        self.fields.inputs.remove("feature-search");
+        self.game_ui.expanded.insert(feature_id, true);
+    }
+
+    /// How the game starts, in a few lines, each leading to where it is changed.
+    fn render_summary(&mut self, entry: &LibraryGame, cx: &mut Context<Self>) -> Div {
+        let mut rows: Vec<(&'static str, String, GameTab, &'static str)> = Vec::new();
+        match &entry.kind {
+            GameKind::Windows | GameKind::Epic { .. } => {
+                let proton = match &self.profile.proton {
+                    Some(p) => p.clone(),
+                    None => match &self.global.defaults.proton {
+                        Some(d) => format!(
+                            "{} ({d})",
+                            self.tr("Automatic: the default", "Otomatik: varsayılan")
+                        ),
+                        None => self.tr("Automatic", "Otomatik").to_string(),
+                    },
+                };
+                rows.push(("Proton", proton, GameTab::Runtime, "proton"));
+                rows.push((
+                    "Wine prefix",
+                    entry
+                        .effective_prefix(&self.global.prefixes_dir())
+                        .display()
+                        .to_string(),
+                    GameTab::Game,
+                    "executable",
+                ));
+            }
+            GameKind::Steam { appid } => rows.push((
+                "Steam",
+                format!(
+                    "{} {appid}",
+                    self.tr("Started by Steam, app", "Steam başlatır, uygulama")
+                ),
+                GameTab::Game,
+                "executable",
+            )),
+            GameKind::Linux => rows.push((
+                self.tr("Runs", "Çalışma"),
+                match &self.profile.linux_runtime {
+                    Some(r) => format!("{} {r}", self.tr("Inside", "İçinde:")),
+                    None => self
+                        .tr("Directly (native Linux)", "Doğrudan (yerel Linux)")
+                        .to_string(),
+                },
+                GameTab::Runtime,
+                "linux-runtime",
+            )),
+        }
+        let launch = self.profile.launch_options.trim().to_string();
+        rows.push((
+            self.tr("Launch options", "Başlatma seçenekleri"),
+            if launch.is_empty() {
+                self.tr("None", "Yok").to_string()
+            } else {
+                launch
+            },
+            GameTab::Launch,
+            "launch-options",
+        ));
+        let mut card = widgets::section(self.tr("How it starts", "Nasıl başlar"));
+        for (ix, (name, value, tab, fid)) in rows.into_iter().enumerate() {
+            if ix > 0 {
+                card = card.child(widgets::divider());
+            }
+            card = card.child(widgets::setting_row(
+                name,
+                value,
+                style::button(("summary-change", ix), self.tr("Change", "Değiştir"), false)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_feature(tab, fid);
+                        cx.notify();
+                    })),
+            ));
+        }
+        card
+    }
+
+    /// A feature as a panel: closed it is one line (what it does, whether it is on);
+    /// open it is the feature's card with a button to close it again.
+    fn feature_panel(
+        &mut self,
+        f: &'static Feature,
+        default_open: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let on = f.active.map(|a| a(self));
+        let open = self
+            .game_ui
+            .expanded
+            .get(f.id)
+            .copied()
+            .unwrap_or(default_open || on == Some(true));
+        let id = f.id;
+        if open {
+            let card = (f.render)(self, cx)?;
+            return Some(
+                div()
+                    .relative()
+                    .child(card)
+                    .child(
+                        div()
+                            .id(("panel-close", id.len() * 131 + id.as_bytes()[0] as usize))
+                            .absolute()
+                            .top_4()
+                            .right_4()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(8.))
+                            .text_xs()
+                            .text_color(pal::muted())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(pal::raised()).text_color(pal::text()))
+                            .child(self.tr("Close", "Kapat"))
+                            .child(style::icon("chevron-up", 14., pal::muted()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.game_ui.expanded.insert(id, false);
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
+        Some(
+            style::card()
+                .id(("panel-open", id.len() * 131 + id.as_bytes()[0] as usize))
+                .px_5()
+                .py_4()
+                .flex()
+                .items_center()
+                .gap_4()
+                .cursor_pointer()
+                .hover(|s| s.border_color(pal::accent().opacity(0.5)))
+                .child(
+                    div()
+                        .size(px(36.))
+                        .flex_none()
+                        .rounded(px(10.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(if on == Some(true) {
+                            pal::accent().opacity(0.18)
+                        } else {
+                            pal::raised()
+                        })
+                        .child(style::icon(
+                            f.icon,
+                            18.,
+                            if on == Some(true) {
+                                pal::accent_light()
+                            } else {
+                                pal::muted()
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(self.feature_name(f)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(pal::muted())
+                                .child(self.tr(f.desc.0, f.desc.1)),
+                        ),
+                )
+                .children(on.map(|on| {
+                    if on {
+                        style::tag(self.tr("On", "Açık"), pal::accent_light())
+                    } else {
+                        style::tag(self.tr("Off", "Kapalı"), pal::faint())
+                    }
+                }))
+                .child(style::icon("chevron-down", 16., pal::faint()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.game_ui.expanded.insert(id, true);
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
     }
 
     /// Cover, name, source, play time, Play / Stop and the features that are on.
@@ -640,7 +943,7 @@ impl Library {
         for f in self.applicable(entry) {
             if f.active.is_some_and(|active| active(self)) {
                 any_on = true;
-                let tab = f.tab;
+                let (tab, fid) = (f.tab, f.id);
                 on_tags = on_tags.child(
                     div()
                         .id(("on-tag", f.id.len() * 31 + f.id.as_bytes()[0] as usize))
@@ -660,7 +963,7 @@ impl Library {
                         .child(style::icon(f.icon, 12., pal::accent_light()))
                         .child(self.feature_name(f))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.game_tab = tab;
+                            this.open_feature(tab, fid);
                             cx.notify();
                         })),
                 );
@@ -700,8 +1003,8 @@ impl Library {
                         on_tags
                     } else {
                         div().text_sm().text_color(pal::faint()).child(self.tr(
-                            "Nothing extra is on for this game yet: see Quick settings below or the menu on the left.",
-                            "Bu oyunda henüz ek bir şey açık değil: aşağıdaki Hızlı ayarlara ya da soldaki menüye bak.",
+                            "Nothing extra is on for this game yet: see Quick switches below or the menu on the left.",
+                            "Bu oyunda henüz ek bir şey açık değil: aşağıdaki Hızlı anahtarlara ya da soldaki menüye bak.",
                         ))
                     }),
             )
@@ -827,26 +1130,75 @@ impl Library {
             return page.child(style::with_side_nav(nav, content));
         }
 
+        let tab = self.game_tab;
+        let tab_intro = match tab {
+            GameTab::Overview => self.tr(
+                "The most used switches, and how this game starts.",
+                "En çok kullanılan anahtarlar ve bu oyunun nasıl başladığı.",
+            ),
+            GameTab::Game => self.tr(
+                "What the game is: its name, cover, files and shortcuts.",
+                "Oyunun kendisi: adı, kapağı, dosyaları ve kısayolları.",
+            ),
+            GameTab::Runtime => self.tr(
+                "What runs a Windows game on Linux: Proton, its switches and the Wine prefix.",
+                "Windows oyununu Linux'ta çalıştıran şey: Proton, anahtarları ve Wine prefix'i.",
+            ),
+            GameTab::Launch => self.tr(
+                "How the command that starts the game is put together.",
+                "Oyunu başlatan komutun nasıl kurulduğu.",
+            ),
+            GameTab::Performance => self.tr(
+                "System tuning and frame-rate control.",
+                "Sistem ayarı ve kare hızı denetimi.",
+            ),
+            GameTab::Upscaling => self.tr(
+                "More FPS: generated frames and better upscalers. Usually one at a time.",
+                "Daha çok FPS: üretilmiş kareler ve daha iyi ölçekleyiciler. Genelde biri yeter.",
+            ),
+            GameTab::Visuals => self.tr(
+                "What is drawn over or into the picture.",
+                "Görüntünün üstüne ya da içine çizilenler.",
+            ),
+            GameTab::Logs => self.tr(
+                "When a game doesn't start, look here first.",
+                "Bir oyun açılmazsa önce buraya bak.",
+            ),
+        };
         content = content.child(
             div()
                 .flex()
-                .items_center()
-                .gap_2()
-                .child(style::icon(self.game_tab.icon(), 18., pal::accent_light()))
+                .flex_col()
+                .gap_1()
                 .child(
                     div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(self.game_tab.name(self)),
-                ),
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(style::icon(tab.icon(), 18., pal::accent_light()))
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(tab.name(self)),
+                        ),
+                )
+                .child(widgets::label(tab_intro)),
         );
-        if self.game_tab == GameTab::Overview {
-            content = content.child(self.render_quick(cx));
+        if tab == GameTab::Overview {
+            content = content
+                .child(self.render_quick(cx))
+                .child(self.render_summary(&entry, cx));
         }
-        let tab = self.game_tab;
-        for f in applicable.into_iter().filter(|f| f.tab == tab) {
-            if let Some(card) = (f.render)(self, cx) {
-                content = content.child(card);
+        let in_tab: Vec<&'static Feature> =
+            applicable.into_iter().filter(|f| f.tab == tab).collect();
+        // Few panels: all open. Otherwise the ones that are on (and the first, if it has no
+        // on/off state) start open.
+        let all_open = in_tab.len() <= 2;
+        for (ix, f) in in_tab.into_iter().enumerate() {
+            let default_open = all_open || (ix == 0 && f.active.is_none());
+            if let Some(panel) = self.feature_panel(f, default_open, cx) {
+                content = content.child(panel);
             }
         }
         page.child(style::with_side_nav(nav, content))
