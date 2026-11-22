@@ -30,11 +30,17 @@
 > It downloads the latest release from [Releases](https://github.com/WinTone01/arkor/releases)
 > (no build, no root) and installs it into `~/.local` with its app-menu entry and icon.
 > Arkor then updates itself: **Settings → General → Arkor updates**, or the note in the
-> sidebar when a new version is out. Remove it with
-> `curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash -s -- --uninstall`.
+> sidebar when a new version is out.
 
-On the first start Arkor sets itself up: it downloads umu-launcher, the EasyAntiCheat and
-BattlEye runtimes and, if you have no Proton yet, Proton-CachyOS.
+**Uninstall** — removes the program, its menu entry and icon (your settings, games and
+Wine prefixes stay):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash -s -- --uninstall
+```
+
+On the first start Arkor sets itself up: it downloads umu-launcher, the Steam Linux Runtime,
+the EasyAntiCheat and BattlEye runtimes and, if you have no Proton yet, Proton-CachyOS.
 
 <details>
 <summary><b>Build from source</b> (an Arch package, or distributions with an older glibc)</summary>
@@ -76,7 +82,15 @@ Heroic) for Epic games, `vkbasalt`.
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/game.png" alt="A game's overview with quick switches"><br><sub><b>A game's page</b> — quick switches and how it starts</sub></td>
+    <td width="50%"><img src="docs/screenshots/upscaling.png" alt="Frame generation with lsfg-vk"><br><sub><b>Upscaling &amp; frame gen</b> — lsfg-vk, MAKO, OptiScaler and more, with what is installed</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><img src="docs/screenshots/compat.png" alt="Compatibility: Proton and its switches"><br><sub><b>Compatibility</b> — always-newest Proton builds and one-click switches</sub></td>
+    <td width="50%"><img src="docs/screenshots/steam.png" alt="A Steam game's Proton and launch settings"><br><sub><b>Steam games</b> — Proton and Arkor's settings written into Steam</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/covers.png" alt="Picking a cover from SteamGridDB"><br><sub><b>Covers</b> — pick a picture or an animated one from SteamGridDB</sub></td>
+    <td width="50%"><img src="docs/screenshots/downloads.png" alt="Downloads: queue, updates and what games need"><br><sub><b>Downloads</b> — a queue with pause and resume, updates and required parts</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/mangohud.png" alt="MangoHud editor with live preview"><br><sub><b>MangoHud editor</b> — live preview, presets and tabs</sub></td>
@@ -97,16 +111,17 @@ Heroic) for Epic games, `vkbasalt`.
       <b>One library</b><br>
       Finds games already installed in <b>Steam</b>, <b>Heroic</b> (Epic, GOG, sideloaded),
       <b>Lutris</b> and <b>Faugus</b>, imports games from any Wine prefix, or adds a game by
-      hand. Covers from the store or <b>SteamGridDB</b>, categories, search, hidden games,
-      play time and a gamepad-friendly <b>big-screen mode</b>.
+      hand. Covers from the store or picked from <b>SteamGridDB</b> (animated ones too, and
+      set by themselves for new games), categories, search, hidden games, play time and a
+      gamepad-friendly <b>big-screen mode</b>.
     </td>
     <td width="50%" valign="top">
       <img src="docs/icons/proton.svg" width="40"><br>
       <b>Proton that takes care of itself</b><br>
       Runs Windows games through <b>umu-launcher</b>. Proton-CachyOS, GE-Proton, DW-Proton and
-      Wineland come as <b>Latest</b> builds that update before each start, next to any fixed
-      version you download. umu, <b>EasyAntiCheat</b> and <b>BattlEye</b> are installed by
-      Arkor itself.
+      Wineland come as <b>Latest</b> builds that keep themselves up to date, next to any fixed
+      version you download. umu, the <b>Steam Linux Runtime</b>, <b>EasyAntiCheat</b> and
+      <b>BattlEye</b> are installed by Arkor itself.
     </td>
   </tr>
   <tr>
@@ -140,6 +155,22 @@ Heroic) for Epic games, `vkbasalt`.
     </td>
   </tr>
   <tr>
+    <td valign="top">
+      <img src="docs/icons/library.svg" width="40"><br>
+      <b>Steam games, done properly</b><br>
+      Steam still starts them, and Arkor writes its choices into Steam: the game's
+      <b>Proton</b> and launch options that run it <b>through Arkor</b>, so MangoHud, frame
+      generation and the environment apply whether you press Play in Arkor or in Steam.
+    </td>
+    <td valign="top">
+      <img src="docs/icons/install.svg" width="40"><br>
+      <b>Downloads that run themselves</b><br>
+      One queue with pause, resume and retry. What a game's settings need is fetched as soon
+      as you switch it on; updates come daily, weekly, when a game starts or never. Missing
+      system tools install from the repositories (or the AUR) with a progress bar.
+    </td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">
       <img src="docs/icons/looks.svg" width="40"><br>
       <b>Looks the way you like</b><br>
@@ -160,8 +191,9 @@ Heroic) for Epic games, `vkbasalt`.
    every feature says in one line what it does.
 4. **Settings → Game defaults** sets the Proton for all games and what new games start with.
 
-Steam games keep starting from Steam; Arkor shows the launch option to paste into the game's
-properties (`arkor run local:<id> -- %command%`) so its settings still apply.
+Steam games keep starting from Steam. Arkor sets their Proton and launch options in Steam
+for you (**Compatibility → Steam** on the game's page), so its settings apply from either
+launcher.
 
 <a id="command-line"></a>
 
@@ -195,7 +227,8 @@ Run `arkor help` for the full list.
 | --- | --- |
 | Settings, library, game profiles | `~/.config/arkor/` |
 | Launch logs | `~/.local/state/arkor/logs/` |
-| umu-run, anti-cheat runtimes | `~/.local/share/arkor/` |
+| umu-run, anti-cheat runtimes, downloaded tools | `~/.local/share/arkor/` |
+| Download queue | `~/.local/state/arkor/queue.toml` |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam and Faugus) |
 | Wine prefixes of new games | `~/Games/Arkor/Prefixes/` (changeable in Settings) |
 

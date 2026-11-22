@@ -1011,7 +1011,11 @@ impl Library {
                 .child(widgets::label(format!(
                     "{} {}",
                     shown.len(),
-                    self.tr("items", "öğe")
+                    if shown.len() == 1 {
+                        self.tr("item", "öğe")
+                    } else {
+                        self.tr("items", "öğe")
+                    }
                 ))),
         );
         if shown.is_empty() {
