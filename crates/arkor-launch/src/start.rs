@@ -57,6 +57,8 @@ fn epic_game(
     app_name: &str,
     global: &Global,
 ) -> anyhow::Result<i32> {
+    let (proton, latest) = chosen_proton(id, game.source_proton.clone());
+    crate::components::before_launch(!global.no_auto_updates, latest);
     let legendary = epic::Legendary::locate()
         .context("legendary not found: install `legendary` or Heroic Games Launcher")?;
     anyhow::ensure!(
@@ -73,11 +75,10 @@ fn epic_game(
     ];
     let (argv, mut env) = legendary.launch_command(app_name, &wrapper);
     let prefix = game.effective_prefix(&global.prefixes_dir());
-    env.extend(proton_env(
-        Some("egs"),
-        &prefix,
-        chosen_proton(id, game.source_proton.clone()),
-    ));
+    env.extend(proton_env(Some("egs"), &prefix, proton, id));
+    if global.no_auto_updates {
+        env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
+    }
     let err = std::process::Command::new(&argv[0])
         .args(&argv[1..])
         .envs(&env)
@@ -91,16 +92,23 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
         "{} not found (is its drive mounted?)",
         target.exe.display()
     );
+    let update = !Global::load_or_import()
+        .map(|g| g.no_auto_updates)
+        .unwrap_or(false);
     if target.native {
         let profile = Profile::load(id).unwrap_or_default();
         let mut command = Vec::new();
         let mut env = BTreeMap::new();
         if let Some(runtime) = profile.linux_runtime.filter(|r| !r.is_empty()) {
             // umu runs native games inside the chosen Steam Linux Runtime container.
+            crate::components::before_launch(update, None);
             command.push(umu_run()?);
             env.insert("PROTONPATH".into(), runtime);
-            env.insert("GAMEID".into(), "umu-default".into());
+            env.insert("GAMEID".into(), crate::components::umu_game_id(&id.id));
             env.insert("UMU_NO_PROTON".into(), "1".into());
+            if !update {
+                env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
+            }
         }
         command.push(target.exe.display().to_string());
         command.extend(target.args);
@@ -115,6 +123,8 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
     if crate::ea_fix::apply(&prefix, &target.exe).unwrap_or(false) {
         eprintln!("arkor: updated the EA app's launcher path");
     }
+    let (proton, latest) = chosen_proton(id, target.proton.clone());
+    crate::components::before_launch(update, latest);
     let mut command = vec![umu_run()?];
     if target.needs_start() {
         // Shortcuts open through Wine's `start`, which resolves .lnk/.url inside the prefix.
@@ -122,33 +132,48 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
     }
     command.push(target.exe.display().to_string());
     command.extend(target.args.iter().cloned());
-    let env = proton_env(None, &prefix, chosen_proton(id, target.proton.clone()));
+    let mut env = proton_env(None, &prefix, proton, id);
+    if !update {
+        env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
+    }
     crate::run(id, &command, &env, Some(&target.working_dir))
 }
 
-/// Profile value meaning "newest GE-Proton, managed by umu".
+/// Older profile value for "newest GE-Proton" (umu's token); now the auto-updated
+/// `Proton-GE Latest` build (see [`crate::components::Latest`]).
 pub const GE_LATEST: &str = "GE-Proton";
 
 /// The game's Proton: the profile's choice if set and installed, else the source launcher's.
-fn chosen_proton(id: &GameId, from_source: Option<PathBuf>) -> Option<PathBuf> {
+/// A "Latest" build is also returned as such, so it can be updated before the game starts.
+fn chosen_proton(
+    id: &GameId,
+    from_source: Option<PathBuf>,
+) -> (Option<PathBuf>, Option<crate::components::Latest>) {
     // An unreadable profile must not lose the source launcher's Proton.
     let wanted = Profile::load(id).ok().and_then(|p| p.proton);
     match wanted {
-        // umu's own token: it downloads the newest GE-Proton and keeps it updated.
-        Some(name) if name == GE_LATEST => Some(PathBuf::from(GE_LATEST)),
-        Some(name) => match crate::tools::resolve_proton(&name) {
-            Some(path) => Some(path),
-            None => {
-                eprintln!("arkor: Proton `{name}` is not installed, using the default");
-                from_source
+        Some(name) => {
+            if let Some(latest) = crate::components::Latest::from_value(&name) {
+                return (latest.path().ok(), Some(latest));
             }
-        },
-        None => from_source,
+            match crate::tools::resolve_proton(&name) {
+                Some(path) => (Some(path), None),
+                None => {
+                    eprintln!("arkor: Proton `{name}` is not installed, using the default");
+                    (from_source, None)
+                }
+            }
+        }
+        None => (from_source, None),
     }
 }
 
+/// Arkor's auto-updated umu-run (Faugus' build) if downloaded, else the system's.
 pub(crate) fn umu_run() -> anyhow::Result<String> {
-    find_in_path("umu-run")
+    crate::components::umu_run_path()
+        .ok()
+        .filter(|p| p.is_file())
+        .or_else(|| find_in_path("umu-run"))
         .map(|p| p.display().to_string())
         .context("umu-run not found: install umu-launcher")
 }
@@ -165,14 +190,19 @@ pub fn proton_env(
     umu_store: Option<&str>,
     prefix: &Path,
     proton: Option<PathBuf>,
+    id: &GameId,
 ) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("WINEPREFIX".into(), prefix.display().to_string());
     if let Some(store) = umu_store {
         env.insert("STORE".into(), store.into());
     }
-    // umu requires a GAMEID; the profile's umu id (protonfixes) replaces this default.
-    env.insert("GAMEID".into(), "umu-default".into());
+    // umu requires a GAMEID; one per game (the profile's umu id for protonfixes replaces it).
+    env.insert("GAMEID".into(), crate::components::umu_game_id(&id.id));
+    // As Faugus runs umu: through Steam's runtime when installed, entering the container
+    // of an already running game instead of starting a second one.
+    env.insert("UMU_USE_STEAM".into(), "1".into());
+    env.insert("UMU_CONTAINER_NSENTER".into(), "1".into());
     if std::env::var_os("PROTONPATH").is_none() {
         let proton = proton
             .map(|p| p.display().to_string())
@@ -201,7 +231,8 @@ pub fn game_wine_env(id: &GameId) -> anyhow::Result<(PathBuf, BTreeMap<String, S
         .with_context(|| format!("`{id}` is not in the library"))?;
     anyhow::ensure!(game.needs_prefix(), "{} has no Wine prefix", game.name);
     let prefix = game.effective_prefix(&global.prefixes_dir());
-    let env = proton_env(None, &prefix, chosen_proton(id, game.source_proton.clone()));
+    let (proton, _) = chosen_proton(id, game.source_proton.clone());
+    let env = proton_env(None, &prefix, proton, id);
     Ok((prefix, env))
 }
 
@@ -364,13 +395,19 @@ mod tests {
 
     #[test]
     fn proton_env_sets_umu_vars() {
-        let env = proton_env(Some("gog"), Path::new("/pfx"), Some("/tools/GE".into()));
+        let id: GameId = "local:far-cry-6".parse().unwrap();
+        let env = proton_env(
+            Some("gog"),
+            Path::new("/pfx"),
+            Some("/tools/GE".into()),
+            &id,
+        );
         assert_eq!(env["STORE"], "gog");
-        assert_eq!(env["GAMEID"], "umu-default");
+        assert_eq!(env["GAMEID"], crate::components::umu_game_id("far-cry-6"));
         assert_eq!(env["WINEPREFIX"], "/pfx");
         if std::env::var_os("PROTONPATH").is_none() {
             assert_eq!(env["PROTONPATH"], "/tools/GE");
         }
-        assert!(!proton_env(None, Path::new("/p"), None).contains_key("STORE"));
+        assert!(!proton_env(None, Path::new("/p"), None, &id).contains_key("STORE"));
     }
 }

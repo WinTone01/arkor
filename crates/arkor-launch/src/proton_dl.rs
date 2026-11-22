@@ -77,6 +77,11 @@ pub fn list(variant: Variant) -> anyhow::Result<Vec<Release>> {
     parse(variant, &json, cpu_has_v3())
 }
 
+/// Parses a release list (newest first) the way `list` does, for this CPU.
+pub fn parse_list(variant: Variant, json: &str) -> anyhow::Result<Vec<Release>> {
+    parse(variant, json, cpu_has_v3())
+}
+
 fn parse(variant: Variant, json: &str, x86_64_v3: bool) -> anyhow::Result<Vec<Release>> {
     let releases: Vec<ApiRelease> =
         serde_json::from_str(json).context("unexpected release list")?;
@@ -126,10 +131,8 @@ pub fn install_root() -> anyhow::Result<PathBuf> {
         .join(".local/share/Steam/compatibilitytools.d"))
 }
 
-/// Downloads, verifies and unpacks `release`; returns the installed folder. Blocking.
-pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
-    let root = install_root()?;
-    std::fs::create_dir_all(&root)?;
+/// Downloads `release` into the cache and checks it against its checksum; returns the archive.
+fn fetch_verified(release: &Release) -> anyhow::Result<PathBuf> {
     let cache = dirs::cache_dir()
         .context("no cache dir")?
         .join("arkor/proton");
@@ -158,24 +161,65 @@ pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
             anyhow::bail!("checksum mismatch for {file_name}; download removed");
         }
     }
+    Ok(archive)
+}
 
-    let before = folders(&root);
+fn untar(archive: &Path, into: &Path) -> anyhow::Result<()> {
     let status = std::process::Command::new("tar")
         .arg("-xf")
-        .arg(&archive)
+        .arg(archive)
         .arg("-C")
-        .arg(&root)
+        .arg(into)
         .status()
         .context("running tar")?;
-    let _ = std::fs::remove_file(&archive);
-    anyhow::ensure!(status.success(), "could not unpack {file_name}");
+    let _ = std::fs::remove_file(archive);
+    anyhow::ensure!(status.success(), "could not unpack {}", archive.display());
+    Ok(())
+}
+
+/// Downloads, verifies and unpacks `release`; returns the installed folder. Blocking.
+pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
+    let root = install_root()?;
+    std::fs::create_dir_all(&root)?;
+    let archive = fetch_verified(release)?;
+    let file_name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let before = folders(&root);
+    untar(&archive, &root)?;
     let created = folders(&root).into_iter().find(|f| !before.contains(f));
     created
         .or_else(|| {
-            let stem = file_name.split(".tar").next().unwrap_or(file_name);
+            let stem = file_name.split(".tar").next().unwrap_or(&file_name);
             Some(root.join(stem)).filter(|p| p.is_dir())
         })
         .context("archive did not contain a Proton folder")
+}
+
+/// Like [`install`], but the build ends up in `dest` (replacing what is there), whatever
+/// the archive's folder is called. Used for the auto-updated "Latest" builds.
+pub fn install_into(release: &Release, dest: &Path) -> anyhow::Result<()> {
+    let root = dest.parent().context("destination without a parent")?;
+    std::fs::create_dir_all(root)?;
+    let archive = fetch_verified(release)?;
+    let tmp = root.join("__arkor_tmp__");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp)?;
+    let result = (|| {
+        untar(&archive, &tmp)?;
+        let extracted = folders(&tmp)
+            .into_iter()
+            .find(|p| p.is_dir())
+            .context("archive did not contain a Proton folder")?;
+        if dest.exists() {
+            std::fs::remove_dir_all(dest)?;
+        }
+        std::fs::rename(&extracted, dest)?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
 }
 
 fn folders(root: &Path) -> Vec<PathBuf> {

@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use arkor_launch::proton_dl::{self, Release, Variant};
-use arkor_launch::tools;
+use arkor_launch::{components, tools};
 use arkor_stores::prefix::human_size;
+use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, div, prelude::*};
 
 use super::Library;
@@ -16,13 +17,24 @@ use super::widgets;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ProtonTab {
     #[default]
+    Auto,
     Installed,
     Download,
     AntiCheat,
 }
 
+/// Something the "Auto-updated" section can install or update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Component {
+    Umu,
+    AntiCheat,
+    Proton(components::Latest),
+}
+
 pub(super) struct ProtonsState {
     pub(super) tab: ProtonTab,
+    /// Auto-updated component being installed or checked.
+    updating: Option<Component>,
     anticheat_busy: bool,
     variant: Variant,
     releases: HashMap<&'static str, Result<Vec<Release>, String>>,
@@ -33,7 +45,8 @@ pub(super) struct ProtonsState {
 impl Default for ProtonsState {
     fn default() -> Self {
         Self {
-            tab: ProtonTab::Installed,
+            tab: ProtonTab::Auto,
+            updating: None,
             anticheat_busy: false,
             variant: Variant::Ge,
             releases: HashMap::new(),
@@ -80,6 +93,167 @@ impl Library {
             });
         })
         .detach();
+    }
+
+    /// Installs or updates one auto-updated component now (also what happens before a game).
+    fn update_component(&mut self, c: Component, cx: &mut Context<Self>) {
+        self.protons.updating = Some(c);
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move {
+                    match c {
+                        Component::Umu => components::ensure_umu(true).map(|_| ()),
+                        Component::AntiCheat => components::ensure_anticheat(true).map(|_| ()),
+                        Component::Proton(l) => components::ensure_latest(l, true).map(|_| ()),
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.protons.updating = None;
+                this.report(result);
+                this.tools = super::enhance::GameTools::scan();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// One component: name, what it is and its version, and an install / update button.
+    fn component_row(
+        &self,
+        c: Component,
+        ix: usize,
+        name: &'static str,
+        hint: &'static str,
+        version: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use super::style::{self, pal};
+        let busy = self.protons.updating;
+        let installed = version.is_some();
+        let state = match version {
+            Some(v) => format!("{} {v}", self.tr("Installed:", "Kurulu:")),
+            None => self
+                .tr("Not installed yet", "Henüz kurulu değil")
+                .to_string(),
+        };
+        let control = if busy == Some(c) {
+            widgets::label(self.tr("Working…", "Çalışıyor…")).into_any_element()
+        } else {
+            style::button(
+                ("auto-update", ix),
+                if installed {
+                    self.tr("Check for update", "Güncellemeyi denetle")
+                } else {
+                    self.tr("Install", "Kur")
+                },
+                !installed,
+            )
+            .child(style::icon(
+                if installed { "refresh-cw" } else { "download" },
+                13.,
+                if installed {
+                    pal::muted()
+                } else {
+                    pal::on_accent()
+                },
+            ))
+            .when(busy.is_some(), |b| b.opacity(0.4))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.protons.updating.is_none() {
+                    this.update_component(c, cx);
+                }
+            }))
+            .into_any_element()
+        };
+        widgets::setting_row(name, format!("{hint} · {state}"), control)
+    }
+
+    fn render_auto(&mut self, cx: &mut Context<Self>) -> Div {
+        use components::Latest;
+        let tools_card = widgets::section(self.tr("Launch components", "Başlatma bileşenleri"))
+            .child(widgets::label(self.tr(
+                "What Windows games start with, kept up to date the way Faugus Launcher does (its builds, from github.com/Faugus).",
+                "Windows oyunlarının başlatıldığı bileşenler, Faugus Launcher'ın yaptığı gibi güncel tutulur (onun derlemeleri, github.com/Faugus).",
+            )))
+            .child(self.component_row(
+                Component::Umu,
+                0,
+                "umu-launcher",
+                self.tr("Runs Proton outside Steam", "Proton'u Steam dışında çalıştırır"),
+                components::umu_version(),
+                cx,
+            ))
+            .child(widgets::divider())
+            .child(self.component_row(
+                Component::AntiCheat,
+                1,
+                "EasyAntiCheat & BattlEye",
+                self.tr("For games that allow them on Linux", "Linux'ta izin veren oyunlar için"),
+                components::anticheat_version(),
+                cx,
+            ));
+        let mut protons_card = widgets::section(self.tr("Always-newest Proton", "Hep en yeni Proton"))
+            .child(widgets::label(self.tr(
+                "Pick one on a game's page (Runtime). It is downloaded on first use and replaced in place when a new release is out; Steam lists it too.",
+                "Bir oyunun sayfasında seç (Çalışma ortamı). İlk kullanımda indirilir, yeni sürüm çıkınca yerinde değiştirilir; Steam de listeler.",
+            )));
+        for (i, l) in Latest::ALL.into_iter().enumerate() {
+            let hint = match l {
+                Latest::CachyOs => self.tr(
+                    "CachyOS' build, tuned for newer CPUs",
+                    "CachyOS derlemesi, yeni işlemciler için ayarlı",
+                ),
+                Latest::Ge => self.tr(
+                    "GloriousEggroll's, with the most game fixes",
+                    "GloriousEggroll'un, en çok oyun düzeltmesiyle",
+                ),
+                Latest::Dw => self.tr("Dawn Winery's", "Dawn Winery'nin"),
+                Latest::Wineland => self.tr(
+                    "CachyOS with Wayland-first patches",
+                    "Wayland öncelikli yamalarla CachyOS",
+                ),
+            };
+            if i > 0 {
+                protons_card = protons_card.child(widgets::divider());
+            }
+            protons_card = protons_card.child(self.component_row(
+                Component::Proton(l),
+                2 + i,
+                l.dir_name(),
+                hint,
+                l.installed_version(),
+                cx,
+            ));
+        }
+        let off = self.global.no_auto_updates;
+        let switch_card = widgets::section(self.tr("Automatic updates", "Otomatik güncelleme")).child(
+            widgets::setting_row(
+                self.tr("Check before every game start", "Her oyun başlamadan önce denetle"),
+                self.tr(
+                    "A quick check of each release; nothing is downloaded when it is current. Off: only missing components are downloaded.",
+                    "Her sürüm için kısa bir kontrol; güncelse hiçbir şey indirilmez. Kapalı: yalnızca eksik bileşenler indirilir.",
+                ),
+                widgets::switch(!off)
+                    .id("auto-updates")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.global.no_auto_updates = !this.global.no_auto_updates;
+                        let saved = this.global.save();
+                        this.report(saved);
+                        cx.notify();
+                    })),
+            ),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(switch_card)
+            .child(tools_card)
+            .child(protons_card)
     }
 
     fn download_anticheat(&mut self, cx: &mut Context<Self>) {
@@ -276,32 +450,34 @@ impl Library {
             )))
             .child(ac_row("EasyAntiCheat", &ac.eac))
             .child(ac_row("BattlEye", &ac.battleye));
+        anticheat = anticheat.child(widgets::label(self.tr(
+            "When Steam's runtimes aren't installed, Arkor downloads Faugus Launcher's copy (github.com/Faugus/components) and keeps it updated.",
+            "Steam'in runtime'ları kurulu değilse Arkor, Faugus Launcher'ın kopyasını (github.com/Faugus/components) indirir ve güncel tutar.",
+        )));
         if ac.eac.is_none() || ac.battleye.is_none() {
             anticheat = anticheat.child(div().flex().child(if self.protons.anticheat_busy {
                 widgets::label(self.tr("Downloading…", "İndiriliyor…")).into_any_element()
             } else {
-                super::style::button(
-                    "anticheat-dl",
-                    self.tr(
-                        "Download (from Faugus components)",
-                        "İndir (Faugus bileşenlerinden)",
-                    ),
-                    true,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.download_anticheat(cx)))
-                .into_any_element()
+                super::style::button("anticheat-dl", self.tr("Download", "İndir"), true)
+                    .on_click(cx.listener(|this, _, _, cx| this.download_anticheat(cx)))
+                    .into_any_element()
             }));
         }
 
         use super::style;
         let tab = self.protons.tab;
         let mut entries = vec![
+            style::NavEntry::new(
+                "refresh-cw",
+                self.tr("Auto-updated", "Otomatik güncellenen"),
+            ),
             style::NavEntry::new("hard-drive", self.tr("Installed", "Kurulu")),
             style::NavEntry::new("download", self.tr("Download", "İndir")),
             style::NavEntry::new("shield", self.tr("Anti-cheat", "Anti-cheat")),
         ];
-        entries[0].badge = Some(installed.len().to_string()).filter(|n| n != "0");
+        entries[1].badge = Some(installed.len().to_string()).filter(|n| n != "0");
         let tabs = [
+            ProtonTab::Auto,
             ProtonTab::Installed,
             ProtonTab::Download,
             ProtonTab::AntiCheat,
@@ -317,6 +493,7 @@ impl Library {
             },
         );
         let content = match tab {
+            ProtonTab::Auto => self.render_auto(cx),
             ProtonTab::Installed => installed_card,
             ProtonTab::Download => available,
             ProtonTab::AntiCheat => anticheat,

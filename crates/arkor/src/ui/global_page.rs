@@ -307,6 +307,18 @@ impl Library {
                     ),
                 )
                 .child(
+                    widgets::section(self.tr("Updates", "Güncellemeler")).child(widgets::setting_row(
+                        self.tr("Update launch components automatically", "Başlatma bileşenlerini otomatik güncelle"),
+                        self.tr(
+                            "Before a game starts: umu-launcher, the anti-cheat runtimes and the game's always-newest Proton (Proton & Wine → Auto-updated).",
+                            "Oyun başlamadan önce: umu-launcher, anti-cheat runtime'ları ve oyunun hep en yeni Proton'u (Proton ve Wine → Otomatik güncellenen).",
+                        ),
+                        switch("auto-updates-settings", !self.global.no_auto_updates, cx, |this| {
+                            this.global.no_auto_updates = !this.global.no_auto_updates
+                        }),
+                    )),
+                )
+                .child(
                     widgets::section(self.tr("Environment variables (all games)", "Ortam değişkenleri (tüm oyunlar)"))
                         .child(widgets::label(self.tr(
                             "Added to every game. A game's own variables override these.",

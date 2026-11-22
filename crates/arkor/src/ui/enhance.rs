@@ -1068,23 +1068,33 @@ impl Library {
             widgets::chip("proton-auto", t.proton_auto, current.is_none())
                 .on_click(cx.listener(|this, _, _, cx| this.set_proton(None, cx))),
         );
-        let ge_latest = arkor_launch::start::GE_LATEST;
-        chips = chips.child(
-            widgets::chip(
-                "proton-ge-latest",
-                self.tr(
-                    "Newest GE-Proton (auto-updated)",
-                    "En yeni GE-Proton (otomatik güncellenir)",
-                ),
-                current.as_deref() == Some(ge_latest),
-            )
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.set_proton(Some(ge_latest.to_string()), cx)),
-            ),
-        );
+        use arkor_launch::components::Latest;
+        let chosen_latest = current.as_deref().and_then(Latest::from_value);
+        let mut latest_row = div().flex().flex_wrap().gap_2();
+        for (ix, l) in Latest::ALL.into_iter().enumerate() {
+            let name = l.dir_name();
+            latest_row = latest_row.child(
+                widgets::chip(("proton-latest", ix), name, chosen_latest == Some(l))
+                    .child(super::style::icon(
+                        "refresh-cw",
+                        12.,
+                        super::style::pal::muted(),
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_proton(Some(name.to_string()), cx)
+                    })),
+            );
+        }
+        let mut installed_row = div().flex().flex_wrap().gap_2();
+        let mut any_installed = false;
         for (ix, (name, _)) in self.tools.protons.iter().enumerate() {
+            // The "Latest" folders are offered above.
+            if Latest::from_value(name).is_some() {
+                continue;
+            }
+            any_installed = true;
             let value = name.clone();
-            chips = chips.child(
+            installed_row = installed_row.child(
                 widgets::chip(
                     ("proton", ix),
                     name.clone(),
@@ -1095,6 +1105,20 @@ impl Library {
                 ),
             );
         }
+        chips = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(chips)
+            .child(widgets::subheading(self.tr(
+                "Auto-updated (downloaded on first use, updated before each start)",
+                "Otomatik güncellenen (ilk kullanımda indirilir, her başlatmadan önce güncellenir)",
+            )))
+            .child(latest_row)
+            .when(any_installed, |d| {
+                d.child(widgets::subheading(self.tr("Installed", "Kurulu")))
+                    .child(installed_row)
+            });
         let note = if self.tools.protons.is_empty() {
             t.proton_none
         } else {

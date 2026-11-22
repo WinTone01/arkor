@@ -80,6 +80,21 @@ pub fn http_get(url: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Like [`http_get`] with a short timeout, for update checks before a game starts.
+pub fn http_get_quick(url: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "8", "-A", "arkor", url])
+        .output()
+        .context("running curl")?;
+    anyhow::ensure!(
+        out.status.success(),
+        "request failed: {url}: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Downloads `url` to `dest` (through a `.part` file, so a failed download leaves nothing).
 pub fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
     use anyhow::Context;
@@ -110,7 +125,6 @@ pub struct AntiCheat {
 
 const EAC_APPID: &str = "1826330";
 const BATTLEYE_APPID: &str = "1161040";
-const COMPONENTS_API: &str = "https://api.github.com/repos/Faugus/components/releases/latest";
 
 /// Arkor's own copy of the runtimes (downloaded when Steam's aren't installed).
 pub fn components_dir() -> anyhow::Result<PathBuf> {
@@ -133,40 +147,10 @@ pub fn anticheat() -> AntiCheat {
     }
 }
 
-/// Downloads both runtimes (Faugus' redistribution of them) into `components_dir`. Blocking.
+/// Downloads both runtimes (Faugus' redistribution of them) into `components_dir`, or
+/// updates them when a newer release is out. Blocking.
 pub fn download_anticheat() -> anyhow::Result<AntiCheat> {
-    use anyhow::Context;
-    #[derive(serde::Deserialize)]
-    struct Rel {
-        assets: Vec<Asset>,
-    }
-    #[derive(serde::Deserialize)]
-    struct Asset {
-        name: String,
-        browser_download_url: String,
-    }
-    let rel: Rel =
-        serde_json::from_str(&http_get(COMPONENTS_API)?).context("unexpected release response")?;
-    let dir = components_dir()?;
-    std::fs::create_dir_all(&dir)?;
-    for name in ["eac.tar.gz", "be.tar.gz"] {
-        let asset = rel
-            .assets
-            .iter()
-            .find(|a| a.name == name)
-            .with_context(|| format!("{name} missing in release"))?;
-        let archive = dir.join(name);
-        download(&asset.browser_download_url, &archive)?;
-        let status = std::process::Command::new("tar")
-            .arg("-xzf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&dir)
-            .status()?;
-        let _ = std::fs::remove_file(&archive);
-        anyhow::ensure!(status.success(), "could not unpack {name}");
-    }
-    Ok(anticheat())
+    crate::components::ensure_anticheat(true)
 }
 
 /// A tool Arkor can use, whether it's present, and the Arch package that provides it.

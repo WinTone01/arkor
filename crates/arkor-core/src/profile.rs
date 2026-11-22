@@ -349,6 +349,9 @@ pub struct Global {
     pub steamgriddb_key: String,
     pub backup: crate::backup::BackupSettings,
     pub appearance: Appearance,
+    /// Don't look for new umu-launcher, anti-cheat and "Latest" Proton releases before a
+    /// game starts (missing ones are still downloaded).
+    pub no_auto_updates: bool,
 }
 
 /// Look and feel of Arkor's window.
