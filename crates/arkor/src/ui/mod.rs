@@ -123,6 +123,8 @@ pub struct Library {
     required: protons::RequiredState,
     settings_tab: global_page::SettingsTab,
     downloads: downloads_page::DownloadsState,
+    /// The redraw loop for download progress is running.
+    downloads_watch: bool,
     /// Move the keyboard focus back to the window on the next render.
     refocus: bool,
     accent_picker: Option<(
@@ -178,6 +180,7 @@ impl Library {
             feature_query: String::new(),
             settings_tab: Default::default(),
             downloads: Default::default(),
+            downloads_watch: false,
             refocus: false,
             accent_picker: None,
             backup_prefixes: false,

@@ -15,6 +15,7 @@ pub mod ea_fix;
 pub mod launchers;
 pub mod layers;
 pub mod optiscaler;
+pub mod progress;
 pub mod proton_dl;
 pub mod reshade;
 pub mod shortcuts;

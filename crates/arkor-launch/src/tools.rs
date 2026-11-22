@@ -158,23 +158,59 @@ pub fn http_get_quick(url: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Size of `url` from its headers (after redirects), if the server says.
+fn content_length(url: &str) -> Option<u64> {
+    let out = std::process::Command::new("curl")
+        .args(["-sIL", "--max-time", "20", "-A", "arkor", url])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim()
+                .eq_ignore_ascii_case("content-length")
+                .then(|| v.trim().parse::<u64>().ok())?
+        })
+        .next_back()
+}
+
 /// Downloads `url` to `dest` (through a `.part` file, so a failed download leaves nothing).
+/// Progress goes to `progress` (the thread's job, or an entry of its own).
 pub fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
     use anyhow::Context;
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let part = dest.with_extension("part");
-    let status = std::process::Command::new("curl")
+    let _ = std::fs::remove_file(&part);
+    let label = url
+        .rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .replace("%20", " ");
+    let transfer = crate::progress::Transfer::begin(&label, content_length(url));
+    let mut child = std::process::Command::new("curl")
         .args(["-fsSL", "-A", "arkor", "-o"])
         .arg(&part)
         .arg(url)
-        .status()
+        .spawn()
         .context("running curl")?;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    };
     if !status.success() {
         let _ = std::fs::remove_file(&part);
         anyhow::bail!("download failed: {url}");
     }
+    transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
     std::fs::rename(&part, dest)?;
     Ok(())
 }

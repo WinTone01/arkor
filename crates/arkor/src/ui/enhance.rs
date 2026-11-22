@@ -656,6 +656,7 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let result = bg
                 .spawn(async move {
+                    let _job = arkor_launch::progress::job("streamline", "Streamline SDK");
                     let v = arkor_launch::streamline::latest_version()?;
                     let dir = arkor_launch::streamline::download(&v)?;
                     anyhow::Ok((v, dir))
@@ -697,7 +698,13 @@ impl Library {
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = bg
-                .spawn(async move { arkor_launch::bundles::download(b) })
+                .spawn(async move {
+                    let _job = arkor_launch::progress::job(
+                        arkor_launch::bundles::Bundle::ALL[ix].key(),
+                        arkor_launch::bundles::Bundle::ALL[ix].name(),
+                    );
+                    arkor_launch::bundles::download(b)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.tools.busy = None;
@@ -996,6 +1003,7 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let result = bg
                 .spawn(async move {
+                    let _job = arkor_launch::progress::job("optiscaler", "OptiScaler");
                     let release = optiscaler::latest_release_in(channel)?;
                     let dir = optiscaler::download(&release)?;
                     anyhow::Ok((release.tag, dir))
@@ -1540,15 +1548,16 @@ impl Library {
                 self.tr("Download another build", "Başka bir sürüm indir"),
                 cx,
             ));
-            let mut folders = div().flex().flex_col().gap_1();
+            let mut folders = div().flex().flex_col().items_start().gap_1().max_w_full();
             for (ix, folder) in tools.folders.iter().enumerate() {
                 let f = folder.clone();
                 folders = folders.child(
                     widgets::chip(
                         ("opti-folder", ix),
-                        folder.display().to_string(),
+                        short_dir(folder),
                         tools.target.as_ref() == Some(folder),
                     )
+                    .max_w_full()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.tools.target = Some(f.clone());
                         cx.notify();
@@ -1556,11 +1565,9 @@ impl Library {
                 );
             }
             if let Some(chosen) = tools.target.as_ref().filter(|t| !tools.folders.contains(t)) {
-                folders = folders.child(widgets::chip(
-                    "opti-folder-custom",
-                    chosen.display().to_string(),
-                    true,
-                ));
+                folders = folders.child(
+                    widgets::chip("opti-folder-custom", short_dir(chosen), true).max_w_full(),
+                );
             }
             if tools.folders.is_empty() && tools.target.is_none() {
                 folders = folders.child(widgets::label(t.opti_no_folder));
@@ -1690,6 +1697,7 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let result = bg
                 .spawn(async move {
+                    let _job = arkor_launch::progress::job("dlss-enabler", "DLSS Enabler");
                     let build = arkor_launch::dlss_enabler::builds()?
                         .into_iter()
                         .next()
@@ -1773,17 +1781,15 @@ impl Library {
                 ),
             ),
             Some((version, _)) => match &tools.target {
-                Some(target) => card
-                    .child(widgets::label(target.display().to_string()))
-                    .child(
-                        div().flex().child(
-                            widgets::primary_button(
-                                "de-install",
-                                format!("{} ({version})", self.t().opti_install),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.de_install(cx))),
-                        ),
+                Some(target) => card.child(widgets::label(short_dir(target))).child(
+                    div().flex().child(
+                        widgets::primary_button(
+                            "de-install",
+                            format!("{} ({version})", self.t().opti_install),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.de_install(cx))),
                     ),
+                ),
                 None => card.child(widgets::label(self.t().opti_no_folder)),
             },
         };
@@ -1803,6 +1809,7 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let result = bg
                 .spawn(async move {
+                    let _job = arkor_launch::progress::job("reshade", "ReShade");
                     let v = arkor_launch::reshade::latest_version()?;
                     let dir = arkor_launch::reshade::download(&v)?;
                     anyhow::Ok((v, dir))
@@ -1896,35 +1903,33 @@ impl Library {
                 ),
             );
         match self.tools.target.clone() {
-            Some(target) => card
-                .child(widgets::label(target.display().to_string()))
-                .child(
-                    div().flex().child(
-                        widgets::primary_button(
-                            "rs-install",
-                            format!("{} ({version})", t.opti_install),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let (Some(id), Some((v, src))) =
-                                (this.selected_id(), this.tools.rs_downloaded.clone())
-                            else {
-                                return;
-                            };
-                            match arkor_launch::reshade::install(
-                                &id,
-                                &v,
-                                &src,
-                                &target,
-                                this.tools.rs_proxy,
-                                this.tools.rs_32bit,
-                            ) {
-                                Ok(m) => this.tools.rs_manifest = Some(m),
-                                Err(e) => this.tools.error = Some(format!("{e:#}")),
-                            }
-                            cx.notify();
-                        })),
-                    ),
+            Some(target) => card.child(widgets::label(short_dir(&target))).child(
+                div().flex().child(
+                    widgets::primary_button(
+                        "rs-install",
+                        format!("{} ({version})", t.opti_install),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let (Some(id), Some((v, src))) =
+                            (this.selected_id(), this.tools.rs_downloaded.clone())
+                        else {
+                            return;
+                        };
+                        match arkor_launch::reshade::install(
+                            &id,
+                            &v,
+                            &src,
+                            &target,
+                            this.tools.rs_proxy,
+                            this.tools.rs_32bit,
+                        ) {
+                            Ok(m) => this.tools.rs_manifest = Some(m),
+                            Err(e) => this.tools.error = Some(format!("{e:#}")),
+                        }
+                        cx.notify();
+                    })),
                 ),
+            ),
             None => card.child(widgets::label(t.opti_no_folder)),
         }
     }
@@ -2139,6 +2144,7 @@ impl Library {
             let tool = &arkor_launch::layers::TOOLS[ix];
             let result = bg
                 .spawn(async move {
+                    let _job = (!remove).then(|| arkor_launch::progress::job(tool.id, tool.name));
                     if remove {
                         arkor_launch::layers::uninstall(tool.id).map(|_| String::new())
                     } else {
@@ -2594,4 +2600,18 @@ fn game_source_proton(lib: &Library) -> Option<String> {
         .and_then(|g| g.source_proton.as_ref())
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
+}
+
+/// A game folder short enough for a button: its last three parts ("…/games/Far Cry 5/bin"),
+/// which tell candidate folders apart without running off the card.
+pub(super) fn short_dir(path: &std::path::Path) -> String {
+    let parts: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .filter(|p| p != "/")
+        .collect();
+    if parts.len() <= 3 {
+        return path.display().to_string();
+    }
+    format!("…/{}", parts[parts.len() - 3..].join("/"))
 }

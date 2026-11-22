@@ -249,3 +249,33 @@ fn upscaling_subtabs_and_downloads_page_render() {
     cx.run_until_parked();
     assert!(view.read_with(cx, |l, _| matches!(l.selection, Some(Selection::Downloads))));
 }
+
+#[test]
+fn download_progress_shows_in_sidebar_and_downloads_page() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("downloads"));
+        lib
+    });
+    // A job in progress: the page and the sidebar card draw it; it ends with the guard.
+    let job = arkor_launch::progress::job("optiscaler", "OptiScaler");
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert!(arkor_launch::progress::running("optiscaler"));
+    // Its own Download button is busy, others are not.
+    assert!(!arkor_launch::progress::running("streamline"));
+    drop(job);
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert!(!arkor_launch::progress::running("optiscaler"));
+}

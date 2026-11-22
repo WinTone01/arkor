@@ -227,13 +227,7 @@ pub fn download(release: &Release) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(&staging)?;
     let archive = staging.join("release.archive");
 
-    let status = Command::new("curl")
-        .args(["-fsSL", "-A", "arkor", "-o"])
-        .arg(&archive)
-        .arg(&release.url)
-        .status()
-        .context("running curl")?;
-    anyhow::ensure!(status.success(), "download failed: {}", release.url);
+    crate::tools::download(&release.url, &archive)?;
 
     let unpacked = staging.join("files");
     extract(&archive, &unpacked)?;

@@ -282,6 +282,62 @@ impl Library {
         }
 
         side = side.child(div().flex_1());
+        // Downloads in progress, like a store's download bar; opens the Downloads page.
+        let active = arkor_launch::progress::list();
+        if !active.is_empty() {
+            let mut card = div()
+                .id("downloads-progress")
+                .mb_2()
+                .p_3()
+                .rounded(px(12.))
+                .bg(pal::accent().opacity(0.08))
+                .border_1()
+                .border_color(pal::accent().opacity(0.3))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(pal::accent().opacity(0.14)))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(pal::muted())
+                        .child(style::icon("download", 13., pal::accent_light()))
+                        .child(format!(
+                            "{} · {}",
+                            self.tr("Downloading", "İndiriliyor"),
+                            active.len()
+                        )),
+                );
+            for e in active.iter().take(2) {
+                card = card.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .gap_2()
+                                .text_sm()
+                                .child(div().min_w_0().truncate().child(e.label.clone()))
+                                .children(e.fraction().map(|f| {
+                                    div()
+                                        .text_xs()
+                                        .text_color(pal::accent_light())
+                                        .child(format!("{:.0}%", f * 100.))
+                                })),
+                        )
+                        .child(super::downloads_page::progress_bar(e.fraction())),
+                );
+            }
+            side = side
+                .child(card.on_click(cx.listener(|this, _, _, cx| this.go(Nav::Downloads, cx))));
+        }
         if let Some(step) = self.required.step.clone().filter(|_| self.required.running) {
             side = side.child(
                 div()
@@ -486,6 +542,7 @@ impl Library {
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_theme(window, cx);
+        self.watch_progress(cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         // After a page or mode change a focused field may no longer be drawn; keys would
         // then reach nothing, so focus goes back to the window.

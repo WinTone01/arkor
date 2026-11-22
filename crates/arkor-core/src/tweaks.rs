@@ -389,3 +389,21 @@ mod tests {
         }
     }
 }
+
+/// GPU maker a switch is only useful with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuNeed {
+    Amd,
+    Nvidia,
+}
+
+/// Switches that do nothing without a given GPU maker (hidden when there is none).
+pub fn gpu_need(id: &str) -> Option<GpuNeed> {
+    match id {
+        "antilag" | "radv_rt" | "radv_nofastclears" | "hide_amd" | "staging_shm" | "zluda" => {
+            Some(GpuNeed::Amd)
+        }
+        "dlss_rr" | "nvapi" | "hide_nvidia" => Some(GpuNeed::Nvidia),
+        _ => None,
+    }
+}

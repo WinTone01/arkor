@@ -2,7 +2,6 @@
 //! DW-Proton and Proton-Wineland.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use arkor_launch::proton_dl::{self, Release, Variant};
 use arkor_launch::{components, tools};
@@ -297,13 +296,6 @@ impl Library {
         card
     }
 
-    fn remove_proton(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let result = proton_dl::uninstall(&path);
-        self.report(result);
-        self.tools = super::enhance::GameTools::scan();
-        cx.notify();
-    }
-
     pub(super) fn render_protons(&mut self, cx: &mut Context<Self>) -> Div {
         use super::style::{self, pal};
         use components::Latest;
@@ -315,60 +307,34 @@ impl Library {
         {
             self.load_releases(variant, cx);
         }
-        let user_root = proton_dl::install_root().ok();
         let installed = tools::installed_protons();
 
         let content = match tab {
-            ProtonTab::Installed => {
-                let mut list = widgets::section(self.tr("Installed builds", "Kurulu derlemeler"));
-                if installed.is_empty() {
-                    list = list.child(widgets::label(self.tr(
-                        "None yet. One is installed by itself; others in Download.",
-                        "Henüz yok. Biri kendiliğinden kurulur; diğerleri İndir bölümünde.",
-                    )));
-                }
-                for (ix, (name, path)) in installed.iter().enumerate() {
-                    let latest = Latest::from_value(name);
-                    let removable = user_root.as_ref().is_some_and(|r| path.starts_with(r));
-                    let p = path.clone();
-                    let hint = match latest {
-                        Some(l) => format!(
-                            "{} · {}",
-                            self.tr(
-                                "Always the newest, updated before each start",
-                                "Hep en yeni, her başlatmadan önce güncellenir"
-                            ),
-                            l.installed_version().unwrap_or_default()
+            ProtonTab::Installed => div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.render_required(installed.len(), cx))
+                .child(
+                    div()
+                        .id("protons-to-downloads")
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(pal::muted())
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(pal::text()))
+                        .child(style::icon("hard-drive-download", 14., pal::accent_light()))
+                        .child(self.tr(
+                            "Installed builds, updates and removing them: Downloads",
+                            "Kurulu derlemeler, güncellemeleri ve silinmeleri: İndirilenler",
+                        ))
+                        .child(style::icon("chevron-right", 14., pal::faint()))
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Downloads, cx)),
                         ),
-                        None => path.display().to_string(),
-                    };
-                    let mut controls = div().flex().gap_2();
-                    if let Some(l) = latest {
-                        controls = controls.child(self.latest_control(l, 10 + ix, cx));
-                    }
-                    controls =
-                        controls.child(if removable {
-                            style::button(("proton-remove", ix), self.tr("Remove", "Kaldır"), false)
-                                .child(style::icon("trash", 13., pal::danger()))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_proton(p.clone(), cx)
-                                }))
-                                .into_any_element()
-                        } else {
-                            widgets::label(source_label(path, self)).into_any_element()
-                        });
-                    if ix > 0 {
-                        list = list.child(widgets::divider());
-                    }
-                    list = list.child(widgets::setting_row(name.clone(), hint, controls));
-                }
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(self.render_required(installed.len(), cx))
-                    .child(list)
-            }
+                ),
             ProtonTab::Download => {
                 let mut chips = div().flex().flex_wrap().gap_2();
                 for (ix, v) in Variant::ALL.into_iter().enumerate() {
@@ -491,11 +457,10 @@ impl Library {
             }
         };
 
-        let mut entries = vec![
-            style::NavEntry::new("hard-drive", self.tr("Installed", "Kurulu")),
+        let entries = vec![
+            style::NavEntry::new("circle-check", self.tr("Required", "Gerekli")),
             style::NavEntry::new("download", self.tr("Download", "İndir")),
         ];
-        entries[0].badge = Some(installed.len().to_string()).filter(|n| n != "0");
         let tabs = [ProtonTab::Installed, ProtonTab::Download];
         let nav = style::side_nav(
             "proton-tab",
@@ -523,20 +488,4 @@ impl Library {
 fn which_umu() -> bool {
     std::env::var_os("PATH")
         .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("umu-run").is_file()))
-}
-
-/// Who provides an installed build that Arkor won't remove.
-fn source_label(path: &std::path::Path, lib: &Library) -> String {
-    let p = path.display().to_string();
-    if p.starts_with("/usr/") {
-        lib.tr("system package", "sistem paketi").into()
-    } else if p.contains("/heroic/") {
-        "Heroic".into()
-    } else if p.contains("/Steam/") || p.contains("/.steam/") {
-        "Steam".into()
-    } else {
-        path.parent()
-            .map(|d| d.display().to_string())
-            .unwrap_or_default()
-    }
 }

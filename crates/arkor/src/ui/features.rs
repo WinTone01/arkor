@@ -168,6 +168,10 @@ fn download_of(id: &str) -> Option<(Ready, Start)> {
 fn amd_wine_game(l: &Library, g: &LibraryGame) -> bool {
     l.tools.gpus.amd && g.needs_prefix()
 }
+/// AFMF (AMD Fluid Motion Frames) is offered on AMD cards only.
+fn amd_only(l: &Library, _: &LibraryGame) -> bool {
+    l.tools.gpus.amd
+}
 /// DLSS Enabler brings DLSS frame generation to AMD and Intel cards; NVIDIA has DLSS itself.
 fn non_nvidia_wine_game(l: &Library, g: &LibraryGame) -> bool {
     (l.tools.gpus.amd || l.tools.gpus.intel) && g.needs_prefix()
@@ -446,7 +450,7 @@ pub(super) const FEATURES: &[Feature] = &[
             "Her oyun için AMD Fluid Motion Frames.",
         ),
         keywords: "afmf amd fluid motion frames kare üretimi fps",
-        applies: always,
+        applies: amd_only,
         active: Some(|l| l.profile.layers.afmf.enabled),
         render: |l, cx| Some(l.render_afmf(cx)),
     },
@@ -955,7 +959,8 @@ impl Library {
                 )
                 .when_some(download, |row, start| {
                     // Nothing to set up before it is downloaded: just the button.
-                    let busy = self.tools.busy.is_some();
+                    // Only this tool's own download counts, not others running at the same time.
+                    let busy = arkor_launch::progress::running(id);
                     row.child(
                         style::button(
                             ("panel-download", id.len() * 131 + id.as_bytes()[0] as usize),
@@ -973,7 +978,7 @@ impl Library {
                         ))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
-                            if this.tools.busy.is_none() {
+                            if !arkor_launch::progress::running(id) {
                                 // Open the panel once the download is there.
                                 this.game_ui.expanded.insert(id, true);
                                 start(this, cx);

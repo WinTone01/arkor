@@ -32,6 +32,11 @@ impl Bundle {
         }
     }
 
+    /// Id for progress and download lists.
+    pub fn key(self) -> &'static str {
+        self.dir()
+    }
+
     fn dir(self) -> &'static str {
         match self {
             Bundle::HelixSr => "helixsr",

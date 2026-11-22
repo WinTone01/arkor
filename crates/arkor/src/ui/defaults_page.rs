@@ -90,10 +90,17 @@ impl Library {
         };
         let mut list = div().flex().flex_col().gap_2();
         for (ci, c) in Category::ALL.into_iter().enumerate() {
+            let gpus = self.tools.gpus;
             let tweaks: Vec<_> = TWEAKS
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| t.category == c)
+                // Hidden when this computer has no GPU they work with.
+                .filter(|(_, t)| match arkor_core::tweaks::gpu_need(t.id) {
+                    Some(arkor_core::tweaks::GpuNeed::Amd) => gpus.amd,
+                    Some(arkor_core::tweaks::GpuNeed::Nvidia) => gpus.nvidia,
+                    None => true,
+                })
                 .collect();
             if tweaks.is_empty() {
                 continue;
