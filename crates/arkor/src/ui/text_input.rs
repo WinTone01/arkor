@@ -73,6 +73,8 @@ pub struct TextInput {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far the text is scrolled left, so the cursor stays visible in a long line.
+    scroll: Pixels,
     is_selecting: bool,
 }
 
@@ -91,6 +93,7 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll: px(0.),
             is_selecting: false,
         }
     }
@@ -246,7 +249,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        line.closest_index_for_x(position.x - bounds.left() + self.scroll)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -404,15 +407,10 @@ impl EntityInputHandler for TextInput {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        let left = bounds.left() - self.scroll;
         Some(Bounds::from_corners(
-            point(
-                bounds.left() + last_layout.x_for_index(range.start),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + last_layout.x_for_index(range.end),
-                bounds.bottom(),
-            ),
+            point(left + last_layout.x_for_index(range.start), bounds.top()),
+            point(left + last_layout.x_for_index(range.end), bounds.bottom()),
         ))
     }
 
@@ -424,7 +422,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        let utf8_index = last_layout.index_for_x(line_point.x + self.scroll)?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -435,6 +433,8 @@ struct TextElement {
 
 struct PrepaintState {
     line: Option<ShapedLine>,
+    /// Text scrolled left by this much (see `TextInput::scroll`).
+    scroll: Pixels,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
 }
@@ -490,6 +490,7 @@ impl Element for TextElement {
         };
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
+        let old_scroll = input.scroll;
         let style = window.text_style();
 
         let run = TextRun {
@@ -539,12 +540,30 @@ impl Element for TextElement {
         } else {
             line.x_for_index(cursor)
         };
+        // Keep the cursor in view: scroll as little as needed, never past the text's end.
+        let width = bounds.size.width;
+        let room = px(2.);
+        let mut scroll = if showing_placeholder {
+            px(0.)
+        } else {
+            old_scroll
+        };
+        if cursor_pos - scroll > width - room {
+            scroll = cursor_pos - width + room;
+        }
+        if cursor_pos < scroll {
+            scroll = cursor_pos;
+        }
+        scroll = scroll
+            .min((line.width - width + room).max(px(0.)))
+            .max(px(0.));
+        let left = bounds.left() - scroll;
         let (selection, cursor) = if selected_range.is_empty() || showing_placeholder {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
+                        point(left + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
                     ACCENT(),
@@ -554,22 +573,20 @@ impl Element for TextElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
+                        point(left + line.x_for_index(selected_range.start), bounds.top()),
+                        point(left + line.x_for_index(selected_range.end), bounds.bottom()),
                     ),
                     super::style::pal::accent().opacity(0.33),
                 )),
                 None,
             )
         };
+        if scroll != old_scroll {
+            self.input.update(cx, |input, _| input.scroll = scroll);
+        }
         PrepaintState {
             line: Some(line),
+            scroll,
             cursor,
             selection,
         }
@@ -591,25 +608,29 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
-        }
         let Some(line) = prepaint.line.take() else {
             return;
         };
-        let _ = line.paint(
-            bounds.origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        );
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
+        // Text longer than the box is cut at its edges.
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            if let Some(selection) = prepaint.selection.take() {
+                window.paint_quad(selection)
+            }
+            let origin = point(bounds.left() - prepaint.scroll, bounds.top());
+            let _ = line.paint(
+                origin,
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+            if focus_handle.is_focused(window)
+                && let Some(cursor) = prepaint.cursor.take()
+            {
+                window.paint_quad(cursor);
+            }
+        });
         self.input.update(cx, |input, _| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
@@ -656,6 +677,7 @@ impl Render for TextInput {
             })
             .text_color(TEXT())
             .line_height(px(24.))
+            .overflow_hidden()
             .child(TextElement { input: cx.entity() })
     }
 }

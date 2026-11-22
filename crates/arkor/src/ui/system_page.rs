@@ -258,16 +258,27 @@ impl Library {
         ))
     }
 
-    fn install_missing(&mut self, pkgs: Vec<&'static str>, cx: &mut Context<Self>) {
+    /// Installs packages as a download job (shown with its progress in Downloads): repository
+    /// ones with pacman, AUR ones with the AUR helper in a terminal.
+    fn install_missing(&mut self, pkgs: Vec<&'static str>, aur: bool, cx: &mut Context<Self>) {
         if self.system.installing {
             return;
         }
         self.system.installing = true;
+        self.watch_progress(cx);
         cx.notify();
+        let label = pkgs.join(", ");
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = bg
-                .spawn(async move { tools::install_packages(&pkgs) })
+                .spawn(async move {
+                    let _job = arkor_launch::progress::job("system-tools", &label);
+                    if aur {
+                        tools::install_aur(&pkgs)
+                    } else {
+                        tools::install_packages(&pkgs)
+                    }
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.system.installing = false;
@@ -306,7 +317,11 @@ impl Library {
                         .child(div().flex_1().font_weight(gpui::FontWeight::MEDIUM).child(
                             format!(
                                 "{missing} {}",
-                                self.tr("tools are not installed", "araç kurulu değil")
+                                if missing == 1 {
+                                    self.tr("tool is not installed", "araç kurulu değil")
+                                } else {
+                                    self.tr("tools are not installed", "araç kurulu değil")
+                                }
                             ),
                         )),
                 );
@@ -341,21 +356,45 @@ impl Library {
                             )
                             .child(style::icon("download", 13., pal::on_accent()))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.install_missing(pkgs.clone(), cx)
+                                this.install_missing(pkgs.clone(), false, cx)
                             }))
                             .into_any_element()
                         }),
                 );
             }
             if !other.is_empty() {
-                card = card.child(widgets::label(format!(
-                    "{} {}",
-                    self.tr(
-                        "Not in the Arch repositories (AUR):",
-                        "Arch depolarında yok (AUR):"
-                    ),
-                    other.join(", ")
-                )));
+                let pkgs = other.clone();
+                let action = match tools::aur_command(&other) {
+                    _ if self.system.installing => {
+                        widgets::label(self.tr("Installing…", "Kuruluyor…")).into_any_element()
+                    }
+                    Some(_) => style::button("tools-aur", self.tr("Download", "İndir"), true)
+                        .child(style::icon("download", 13., pal::on_accent()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.install_missing(pkgs.clone(), true, cx)
+                        }))
+                        .into_any_element(),
+                    None => widgets::label(self.tr(
+                        "Install an AUR helper (paru or yay) to download these here.",
+                        "Bunları buradan indirmek için bir AUR yardımcısı (paru ya da yay) kur.",
+                    ))
+                    .into_any_element(),
+                };
+                card = card.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(div().flex_1().min_w_0().child(widgets::label(format!(
+                            "{} {}",
+                            self.tr(
+                                "From the AUR (a terminal opens to build it; confirm there):",
+                                "AUR'dan (derlemek için bir terminal açılır; orada onayla):"
+                            ),
+                            other.join(", ")
+                        ))))
+                        .child(action),
+                );
             }
             out = out.child(card);
         }
@@ -387,10 +426,25 @@ impl Library {
                     )
                     .child(match &t.found {
                         Some(v) => div().text_sm().text_color(pal::muted()).child(v.clone()),
-                        None => style::tag(
+                        None if self.system.installing => style::tag(
                             format!("{} · {}", self.tr("missing", "eksik"), t.package),
                             pal::warning(),
                         ),
+                        None => {
+                            let pkg = t.package;
+                            let aur = other.contains(&pkg);
+                            div().flex().items_center().gap_2().child(
+                                style::button(
+                                    ("tool-install", ix),
+                                    self.tr("Download", "İndir"),
+                                    false,
+                                )
+                                .child(style::icon("download", 13., pal::muted()))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.install_missing(vec![pkg], aur, cx),
+                                )),
+                            )
+                        }
                     }),
             );
         }

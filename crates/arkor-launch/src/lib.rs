@@ -22,6 +22,7 @@ pub mod reshade;
 pub mod self_update;
 pub mod shortcuts;
 pub mod start;
+pub mod steam_link;
 pub mod streamline;
 pub mod tools;
 pub mod umu_db;
@@ -173,11 +174,16 @@ pub fn plan(
         env.insert("PROTON_LOG".into(), "1".into());
         env.insert("PROTON_LOG_DIR".into(), dir.display().to_string());
     }
-    // Proton loads these only for games that ship EasyAntiCheat / BattlEye.
-    if let Some(eac) = &host.anticheat.eac {
+    // Proton loads these only for games that ship EasyAntiCheat / BattlEye. A runtime the
+    // caller already set (Steam sets its own) is kept.
+    if let Some(eac) = &host.anticheat.eac
+        && std::env::var_os("PROTON_EAC_RUNTIME").is_none()
+    {
         env.insert("PROTON_EAC_RUNTIME".into(), eac.display().to_string());
     }
-    if let Some(be) = &host.anticheat.battleye {
+    if let Some(be) = &host.anticheat.battleye
+        && std::env::var_os("PROTON_BATTLEYE_RUNTIME").is_none()
+    {
         env.insert("PROTON_BATTLEYE_RUNTIME".into(), be.display().to_string());
     }
     if let Some(umu_id) = profile.umu_id.as_ref().filter(|id| !id.is_empty()) {

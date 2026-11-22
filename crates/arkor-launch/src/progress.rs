@@ -56,6 +56,15 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static CURRENT: RefCell<Option<String>> = const { RefCell::new(None) };
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with its downloads left out of the list (small files such as previews).
+pub fn quietly<R>(f: impl FnOnce() -> R) -> R {
+    let before = QUIET.with(|q| q.replace(true));
+    let r = f();
+    QUIET.with(|q| q.set(before));
+    r
 }
 
 fn with<R>(f: impl FnOnce(&mut Vec<Entry>) -> R) -> R {
@@ -145,6 +154,14 @@ impl Transfer {
     pub(crate) fn begin(label: &str, total: Option<u64>) -> Transfer {
         let current = CURRENT.with(|c| c.borrow().clone());
         let started = Instant::now();
+        if QUIET.with(|q| q.get()) {
+            // Not listed: updates and the drop find no entry.
+            return Transfer {
+                key: String::new(),
+                own: false,
+                started,
+            };
+        }
         match current {
             Some(key) => {
                 with(|v| {

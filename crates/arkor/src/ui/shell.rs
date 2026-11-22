@@ -496,7 +496,7 @@ impl Library {
     /// Ctrl+F: the game page's settings search, otherwise the library search.
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = if matches!(self.selection, Some(Selection::Game(_))) {
-            let placeholder = self.tr("Search this game's settings…", "Bu oyunun ayarlarında ara…");
+            let placeholder = self.tr("Search settings…", "Ayarlarda ara…");
             self.field(
                 "feature-search",
                 |this| this.feature_query.clone(),
@@ -656,5 +656,6 @@ impl Render for Library {
                             ),
                     ),
             )
+            .children(self.render_sgdb_picker(cx))
     }
 }

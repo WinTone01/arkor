@@ -19,9 +19,11 @@ mod hud_editor;
 mod i18n;
 mod icons;
 mod protons;
+mod sgdb_picker;
 mod shell;
 mod sounds;
 mod splash;
+mod steam_card;
 mod style;
 mod system_page;
 mod text_input;
@@ -124,6 +126,11 @@ pub struct Library {
     required: protons::RequiredState,
     settings_tab: global_page::SettingsTab,
     downloads: downloads_page::DownloadsState,
+    /// Steam's settings for the selected Steam game.
+    steam: steam_card::SteamState,
+    /// The SteamGridDB cover picker on the game page, when open.
+    sgdb: Option<sgdb_picker::Picker>,
+    sgdb_on_open: bool,
     app_update: app_update::AppUpdate,
     /// The redraw loop for download progress is running.
     downloads_watch: bool,
@@ -182,6 +189,9 @@ impl Library {
             feature_query: String::new(),
             settings_tab: Default::default(),
             downloads: Default::default(),
+            steam: Default::default(),
+            sgdb: None,
+            sgdb_on_open: false,
             app_update: Default::default(),
             downloads_watch: false,
             refocus: false,
@@ -323,6 +333,8 @@ impl Library {
         }
         self.global_hud_tab = matches!(tab, Some("advanced" | "mangohud"));
         self.game_tab = tab.and_then(GameTab::from_name).unwrap_or_default();
+        // `#cover` opens the SteamGridDB cover picker too.
+        self.sgdb_on_open = tab == Some("cover");
         // `#search=dlss` opens the game page with its settings search filled in.
         if let Some(q) = tab.and_then(|t| t.strip_prefix("search=")) {
             self.feature_query = q.replace('+', " ");
@@ -409,6 +421,8 @@ impl Library {
                 Profile::default()
             });
             self.tools.select(&self.games[ix]);
+            self.steam_refresh(true);
+            self.sgdb = None;
             self.find_game_folders();
         }
     }
@@ -426,6 +440,8 @@ impl Library {
             for (key, _) in arkor_launch::downloads::needs(&self.profile) {
                 arkor_launch::downloads::enqueue(&key);
             }
+            // Steam games: Steam gets the new settings (now, when it is closed).
+            self.steam_after_save();
         }
         self.report(result);
     }

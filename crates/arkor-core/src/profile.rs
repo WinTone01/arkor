@@ -48,6 +48,20 @@ pub struct Profile {
     pub tweaks: std::collections::BTreeSet<String>,
     pub vkbasalt: crate::vkbasalt::VkBasalt,
     pub layers: crate::layers::Layers,
+    /// Steam games only: what Arkor sets in Steam for the game.
+    pub steam: SteamSettings,
+}
+
+/// What Arkor writes into Steam's own settings for a Steam game (Steam starts it).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SteamSettings {
+    /// Compatibility tool, by Steam's name for it (`proton_experimental`, `GE-Proton10-25`).
+    /// `None` leaves Steam's own choice; `Some("")` = Steam's default for the game.
+    pub compat_tool: Option<String>,
+    /// Leave Arkor out of the game's launch options: Steam gets only the launch options
+    /// written here, and Arkor's other settings (MangoHud, lsfg-vk, environment) do not apply.
+    pub no_arkor: bool,
 }
 
 /// A second program started together with the game (e.g. a trainer or mod manager).

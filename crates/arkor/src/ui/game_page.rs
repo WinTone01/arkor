@@ -101,6 +101,18 @@ impl Library {
             // SAFETY: plain syscall; a negative pid addresses the whole process group.
             unsafe { libc::kill(-(*pgid as i32), libc::SIGTERM) };
         }
+        // A Steam game runs under Steam, not under Arkor's process: end it there.
+        if let Some(arkor_core::library::GameKind::Steam { appid }) =
+            self.entry().map(|g| g.kind.clone())
+        {
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |_, _| {
+                let _ = bg
+                    .spawn(async move { arkor_launch::steam_link::stop_game(&appid) })
+                    .await;
+            })
+            .detach();
+        }
         if self.entry().is_some_and(|g| g.needs_prefix()) {
             let bg = cx.background_executor().clone();
             cx.spawn(async move |_, _| {
@@ -158,8 +170,12 @@ impl Library {
         .detach();
     }
 
-    fn find_umu(&mut self, cx: &mut Context<Self>) {
-        let Some(name) = self.entry().map(|g| g.name.clone()) else {
+    /// Looks `name` up in umu-database (the game's own name when `None`).
+    fn find_umu(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        let Some(name) = name
+            .filter(|n| !n.trim().is_empty())
+            .or_else(|| self.entry().map(|g| g.name.clone()))
+        else {
             return;
         };
         self.game_ui.umu_loading = true;
@@ -548,13 +564,6 @@ impl Library {
     }
 
     /// Steam picks Proton itself.
-    pub(super) fn render_steam_runtime_note(&mut self, _cx: &mut Context<Self>) -> Div {
-        widgets::section("Proton").child(widgets::label(self.tr(
-            "Steam runs this game with its own Proton; pick it in the game's Properties in Steam. Launch options, environment and the other tabs still apply.",
-            "Bu oyunu Steam kendi Proton'uyla çalıştırır; Steam'de oyunun Özellikler bölümünden seç. Başlatma seçenekleri, ortam ve diğer sekmeler yine geçerli.",
-        )))
-    }
-
     /// Starts or stops the selected game.
     pub(super) fn toggle_play(&mut self, cx: &mut Context<Self>) {
         let running = self
@@ -650,12 +659,7 @@ impl Library {
             )
     }
 
-    pub(super) fn render_launch(
-        &mut self,
-        game_id: &str,
-        is_steam: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    pub(super) fn render_launch(&mut self, is_steam: bool, cx: &mut Context<Self>) -> Div {
         use super::style::{self, pal};
         let t = self.t();
         let options = self.field(
@@ -783,9 +787,7 @@ impl Library {
         if is_steam {
             card = card
                 .child(widgets::divider())
-                .child(widgets::label(t.steam_launches_note))
-                .child(widgets::label(t.steam_launch_option))
-                .child(code_box(format!("arkor run local:{game_id} -- %command%")));
+                .child(widgets::label(t.steam_launches_note));
         }
         card
     }
@@ -822,21 +824,45 @@ impl Library {
                 this.save();
             },
         );
+        let search = self.submit_field(
+            "umu-search",
+            self.tr(
+                "Game name, e.g. Warframe, then Enter",
+                "Oyun adı, ör. Warframe, sonra Enter",
+            ),
+            cx,
+            |this, text, cx| this.find_umu(Some(text.to_string()), cx),
+        );
         let mut card = widgets::section(self.tr("Protonfixes", "Protonfix'ler"))
             .child(widgets::setting_row(
                 self.tr("umu id", "umu kimliği"),
                 self.tr(
-                    "Proton applies the known fixes for this id. Empty = none. Search finds it by the game's name.",
-                    "Proton bu kimlik için bilinen düzeltmeleri uygular. Boş = yok. Arama, oyunun adıyla bulur.",
+                    "Proton applies the known fixes for this id. Empty = none.",
+                    "Proton bu kimlik için bilinen düzeltmeleri uygular. Boş = yok.",
+                ),
+                div().w(px(200.)).child(umu),
+            ))
+            .child(widgets::setting_row(
+                self.tr("Find the id by name", "Kimliği adla bul"),
+                self.tr(
+                    "Type the game's name; pick it from the matches below.",
+                    "Oyunun adını yaz; aşağıdaki eşleşmelerden seç.",
                 ),
                 div()
                     .flex()
                     .gap_2()
-                    .child(div().w(px(180.)).child(umu))
+                    .child(div().w(px(260.)).child(search))
                     .child(
                         style::button("umu-find", self.tr("Search", "Ara"), false)
                             .child(style::icon("search", 13., pal::muted()))
-                            .on_click(cx.listener(|this, _, _, cx| this.find_umu(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let text = this
+                                    .fields
+                                    .inputs
+                                    .get("umu-search")
+                                    .map(|(f, _)| f.read(cx).text());
+                                this.find_umu(text, cx)
+                            })),
                     ),
             ));
         if self.game_ui.umu_loading {
@@ -851,30 +877,69 @@ impl Library {
                 ))
             }
             Some(Ok(hits)) => {
-                let mut row = div().flex().flex_wrap().gap_2();
+                let mut list = div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(pal::border_strong())
+                    .overflow_hidden();
+                let n = hits.len();
                 for (ix, hit) in hits.iter().enumerate() {
                     let id = hit.umu_id.clone();
-                    let text =
-                        format!("{} · {}", hit.title.clone().unwrap_or_default(), hit.umu_id);
-                    row = row.child(
-                        widgets::chip(
-                            ("umu-hit", ix),
-                            text,
-                            self.profile.umu_id.as_deref() == Some(&hit.umu_id),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.profile.umu_id = Some(id.clone());
-                            this.fields.remove("umu-id");
-                            this.save();
-                            cx.notify();
-                        })),
+                    let chosen = self.profile.umu_id.as_deref() == Some(&hit.umu_id);
+                    let store = hit.store.clone().filter(|s| !s.is_empty() && s != "none");
+                    list = list.child(
+                        div()
+                            .id(("umu-hit", ix))
+                            .px_3()
+                            .py_2()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .cursor_pointer()
+                            .when(ix + 1 < n, |d| {
+                                d.border_b_1().border_color(pal::glass_spec().border)
+                            })
+                            .when(chosen, |d| d.bg(pal::accent().opacity(0.12)))
+                            .hover(|d| d.bg(pal::raised().opacity(0.5)))
+                            .child(style::icon(
+                                if chosen { "circle-check" } else { "circle" },
+                                14.,
+                                if chosen {
+                                    pal::accent_light()
+                                } else {
+                                    pal::faint()
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(hit.title.clone().unwrap_or_default()),
+                            )
+                            .children(store.map(|s| style::tag(s, pal::muted())))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_family("monospace")
+                                    .text_color(pal::muted())
+                                    .child(hit.umu_id.clone()),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.profile.umu_id = Some(id.clone());
+                                this.fields.remove("umu-id");
+                                this.save();
+                                cx.notify();
+                            })),
                     );
                 }
                 card = card
                     .child(widgets::subheading(
                         self.tr("Matches: pick one", "Eşleşmeler: birini seç"),
                     ))
-                    .child(row);
+                    .child(list);
             }
             Some(Err(e)) => card = card.child(widgets::label(format!("⚠ {e}"))),
             None => {}
@@ -1363,6 +1428,9 @@ impl Library {
             id.to_string(),
             name.to_string(),
         );
+        if std::mem::take(&mut self.sgdb_on_open) {
+            self.sgdb_open(id.to_string(), name.to_string(), cx);
+        }
         div()
             .flex()
             .gap_4()
@@ -1404,24 +1472,13 @@ impl Library {
                                     },
                                 )),
                             )
-                            .child(super::style::button("cover-sgdb", "SteamGridDB", false).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    let (id, name, key) = (
-                                        id_sgdb.clone(),
-                                        name_sgdb.clone(),
-                                        this.global.steamgriddb_key.clone(),
-                                    );
-                                    this.cover_job(
-                                        id.clone(),
-                                        move || {
-                                            arkor_launch::covers::set_from_steamgriddb(
-                                                &id, &name, &key,
-                                            )
-                                        },
-                                        cx,
-                                    );
-                                }),
-                            ))
+                            .child(
+                                super::style::button("cover-sgdb", "SteamGridDB", false)
+                                    .child(super::style::icon("images", 13., super::style::pal::muted()))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.sgdb_open(id_sgdb.clone(), name_sgdb.clone(), cx)
+                                    })),
+                            )
                             .child(
                                 super::style::button("cover-reset", self.tr("Reset", "Sıfırla"), false)
                                     .on_click(cx.listener(move |this, _, _, cx| {

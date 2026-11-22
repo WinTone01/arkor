@@ -250,6 +250,7 @@ dependencies = [
  "arkor-core",
  "arkor-stores",
  "dirs 6.0.0",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

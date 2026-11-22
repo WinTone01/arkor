@@ -11,6 +11,7 @@ pub mod prefix;
 pub mod steam;
 pub mod target;
 pub mod vdf;
+pub mod vdf_edit;
 
 use anyhow::Context;
 use arkor_core::library::{GameKind, Library, NewGame};

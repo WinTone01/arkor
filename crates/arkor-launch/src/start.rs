@@ -1,7 +1,7 @@
 //! `arkor launch <id>`: start a library game the way its kind needs, with its profile applied.
 //!
-//! - Steam: hand off to Steam (`steam://rungameid`); the profile applies through the
-//!   `arkor run <id> -- %command%` launch option.
+//! - Steam: Arkor's settings are written into Steam's (see `steam_link`), then Steam starts
+//!   the game (`steam://rungameid`) and Arkor waits while it runs.
 //! - Epic: `legendary launch` (login/ownership), with `arkor run <id> -- umu-run` as wrapper.
 //! - Windows: `umu-run <exe>` through `arkor run`, in the game's prefix with its Proton.
 //! - Linux: the executable itself, optionally inside a Steam Linux Runtime through umu.
@@ -23,7 +23,10 @@ use arkor_stores::target::ExeTarget;
 pub fn start(id: &GameId) -> anyhow::Result<i32> {
     match id.store {
         // Legacy ids from before the library: still startable directly.
-        Store::Steam => steam(&id.id),
+        Store::Steam => {
+            crate::steam_link::open_url(&format!("steam://rungameid/{}", id.id))?;
+            Ok(0)
+        }
         Store::Local => {
             let global = Global::load_or_import()?;
             let library = Library::load()?;
@@ -34,7 +37,7 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
             // What the game's settings use but is missing (a layer, a "Latest" Proton).
             crate::downloads::ensure_needs(&Profile::load(id).unwrap_or_default());
             match &game.kind {
-                GameKind::Steam { appid } => steam(appid),
+                GameKind::Steam { appid } => crate::steam_link::launch(appid, id),
                 GameKind::Epic { app_name } => epic_game(id, &game, app_name, &global),
                 GameKind::Windows | GameKind::Linux => {
                     let target = arkor_stores::launch_target(id, &global.prefixes_dir())?;
@@ -44,13 +47,6 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
         }
         _ => anyhow::bail!("`{id}` is not a library game: add it to the library first"),
     }
-}
-
-fn steam(appid: &str) -> anyhow::Result<i32> {
-    let err = std::process::Command::new("steam")
-        .arg(format!("steam://rungameid/{appid}"))
-        .exec();
-    Err(err).context("failed to start Steam")
 }
 
 fn epic_game(
@@ -195,7 +191,7 @@ pub(crate) fn umu_run() -> anyhow::Result<String> {
         .context("umu-run not found: install umu-launcher")
 }
 
-fn find_in_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())

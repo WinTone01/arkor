@@ -106,6 +106,8 @@ impl Library {
         }
         self.reload_games();
         self.select_game(&id, cx);
+        // A cover from SteamGridDB when it knows the game by exactly this name.
+        self.auto_cover(&id.id, cx);
         Some(id)
     }
 

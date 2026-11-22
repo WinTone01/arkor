@@ -451,26 +451,197 @@ pub fn split_repo_packages<'a>(packages: &[&'a str]) -> (Vec<&'a str>, Vec<&'a s
     })
 }
 
+/// What pacman would download for `packages` (dependencies included): the start of each
+/// package file's name (`name-version-`) and its size in bytes.
+fn pacman_targets(packages: &[&str]) -> Vec<(String, u64)> {
+    let Ok(out) = std::process::Command::new("pacman")
+        .args(["-Sp", "--needed", "--print-format", "%n %v %s", "--"])
+        .args(packages)
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let (name, version, size) = (w.next()?, w.next()?, w.next()?.parse().ok()?);
+            Some((format!("{name}-{version}-"), size))
+        })
+        .collect()
+}
+
+const PACMAN_CACHE: &str = "/var/cache/pacman/pkg";
+
+/// Bytes of `targets` already in pacman's cache (finished files and partial downloads,
+/// also in the `download-*` folders pacman downloads into), each capped at its size.
+fn pacman_cached(targets: &[(String, u64)]) -> u64 {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(PACMAN_CACHE) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("download-") {
+                if let Ok(inner) = std::fs::read_dir(e.path()) {
+                    files.extend(inner.flatten());
+                }
+            } else {
+                files.push(e);
+            }
+        }
+    }
+    targets
+        .iter()
+        .map(|(prefix, size)| {
+            let have = files
+                .iter()
+                .filter(|f| {
+                    let n = f.file_name().to_string_lossy().into_owned();
+                    n.starts_with(prefix.as_str()) && !n.ends_with(".sig")
+                })
+                .filter_map(|f| f.metadata().ok().map(|m| m.len()))
+                .max()
+                .unwrap_or(0);
+            have.min(*size)
+        })
+        .sum()
+}
+
 /// Installs repository packages with pacman through pkexec (the desktop's polkit agent asks
-/// for the password). Blocking.
+/// for the password). The download is reported to `progress` from pacman's cache. Blocking.
 pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
     use anyhow::Context;
     anyhow::ensure!(!packages.is_empty(), "nothing to install");
-    let out = std::process::Command::new("pkexec")
+    let targets = pacman_targets(packages);
+    let already = pacman_cached(&targets);
+    let total = targets
+        .iter()
+        .map(|(_, s)| s)
+        .sum::<u64>()
+        .saturating_sub(already);
+    let log = std::env::temp_dir().join(format!("arkor-pacman-{}.log", std::process::id()));
+    let out = std::fs::File::create(&log).context("creating the pacman log")?;
+    let mut child = std::process::Command::new("pkexec")
         .args(["pacman", "-S", "--needed", "--noconfirm", "--"])
         .args(packages)
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(out.try_clone()?)
+        .stderr(out)
+        .spawn()
         .context("running pkexec (is polkit installed?)")?;
+    let mut transfer = (total > 0).then(|| crate::progress::Transfer::begin("pacman", Some(total)));
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if let Some(t) = &transfer {
+            let done = pacman_cached(&targets).saturating_sub(already);
+            t.update(done.min(total));
+            // Downloaded: pacman is installing now.
+            if done >= total {
+                transfer = None;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    };
+    drop(transfer);
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_file(&log);
     anyhow::ensure!(
-        out.status.success(),
+        status.success(),
         "pacman failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .chain(String::from_utf8_lossy(&out.stdout).lines())
+        text.lines()
             .filter(|l| l.contains("error"))
             .collect::<Vec<_>>()
             .join("; ")
     );
+    Ok(())
+}
+
+/// An AUR helper that is installed (`paru`, `yay`…).
+pub fn aur_helper() -> Option<&'static str> {
+    ["paru", "yay", "pikaur", "trizen"]
+        .into_iter()
+        .find(|h| which(h).is_some())
+}
+
+fn which(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|p| {
+        std::env::split_paths(&p)
+            .map(|d| d.join(name))
+            .find(|f| f.is_file())
+    })
+}
+
+/// A terminal that runs `bash -c script` and stays in the foreground until it ends.
+fn terminal_command(script: &str) -> Option<Vec<String>> {
+    let run = |prefix: &[&str]| -> Vec<String> {
+        prefix
+            .iter()
+            .map(|s| s.to_string())
+            .chain(["bash".into(), "-c".into(), script.to_string()])
+            .collect()
+    };
+    if let Some(t) = std::env::var("TERMINAL")
+        .ok()
+        .filter(|t| which(t).is_some())
+    {
+        return Some(run(&[t.as_str(), "-e"]));
+    }
+    let known: [(&str, &[&str]); 9] = [
+        ("konsole", &["konsole", "--nofork", "-e"]),
+        ("kitty", &["kitty"]),
+        ("alacritty", &["alacritty", "-e"]),
+        ("foot", &["foot"]),
+        ("ghostty", &["ghostty", "-e"]),
+        ("wezterm", &["wezterm", "start", "--"]),
+        ("gnome-terminal", &["gnome-terminal", "--wait", "--"]),
+        (
+            "xfce4-terminal",
+            &["xfce4-terminal", "--disable-server", "-x"],
+        ),
+        ("xterm", &["xterm", "-e"]),
+    ];
+    known
+        .iter()
+        .find(|(bin, _)| which(bin).is_some())
+        .map(|(_, prefix)| run(prefix))
+}
+
+/// The command that installs AUR `packages` with the helper (shown when no terminal is found).
+pub fn aur_command(packages: &[&str]) -> Option<String> {
+    Some(format!(
+        "{} -S --needed {}",
+        aur_helper()?,
+        packages.join(" ")
+    ))
+}
+
+/// Installs AUR packages with the AUR helper in a terminal window (building AUR packages
+/// asks the user to review and confirm), waiting until the window closes. Blocking.
+pub fn install_aur(packages: &[&str]) -> anyhow::Result<()> {
+    anyhow::ensure!(!packages.is_empty(), "nothing to install");
+    let command = aur_command(packages)
+        .ok_or_else(|| anyhow::anyhow!("no AUR helper found (install paru or yay)"))?;
+    let script = format!(
+        "echo 'Arkor: {command}'; echo; {command}; echo; read -n 1 -s -r -p 'Press any key to close…'"
+    );
+    let argv = terminal_command(&script)
+        .ok_or_else(|| anyhow::anyhow!("no terminal found; run: {command}"))?;
+    let _ = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .status();
+    let missing: Vec<&str> = packages
+        .iter()
+        .copied()
+        .filter(|p| {
+            !std::process::Command::new("pacman")
+                .args(["-Q", "--", p])
+                .output()
+                .is_ok_and(|o| o.status.success())
+        })
+        .collect();
+    anyhow::ensure!(missing.is_empty(), "not installed: {}", missing.join(", "));
     Ok(())
 }
 

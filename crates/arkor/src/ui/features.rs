@@ -71,7 +71,7 @@ impl GameTab {
     pub(super) fn from_name(name: &str) -> Option<GameTab> {
         Some(match name {
             "overview" | "general" => GameTab::Overview,
-            "game" | "details" | "files" => GameTab::Game,
+            "game" | "details" | "files" | "cover" => GameTab::Game,
             "launch" => GameTab::Launch,
             "runtime" | "compatibility" | "wine" | "proton" => GameTab::Runtime,
             "performance" => GameTab::Performance,
@@ -258,15 +258,15 @@ pub(super) const FEATURES: &[Feature] = &[
         id: "steam-proton",
         tab: GameTab::Runtime,
         icon: "wine",
-        name: ("Proton", "Proton"),
+        name: ("Steam: Proton and launch", "Steam: Proton ve başlatma"),
         desc: (
-            "Chosen in Steam for Steam games.",
-            "Steam oyunlarında Steam'de seçilir.",
+            "The Proton Steam uses for the game, and starting it through Arkor.",
+            "Steam'in oyun için kullandığı Proton ve oyunu Arkor üzerinden başlatma.",
         ),
-        keywords: "proton steam",
+        keywords: "proton steam compatibility uyumluluk launch options başlatma seçenekleri verify doğrula",
         applies: steam_game,
-        active: None,
-        render: |l, cx| Some(l.render_steam_runtime_note(cx)),
+        active: Some(|l| l.profile.steam.compat_tool.is_some()),
+        render: |l, cx| Some(l.render_steam(cx)),
     },
     Feature {
         id: "tweaks",
@@ -348,7 +348,7 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| {
             let entry = l.entry()?.clone();
             let steam = matches!(entry.kind, GameKind::Steam { .. });
-            Some(l.render_launch(&entry.id, steam, cx))
+            Some(l.render_launch(steam, cx))
         },
     },
     Feature {
@@ -1143,7 +1143,7 @@ impl Library {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Entity<super::text_input::TextInput> {
-        let placeholder = self.tr("Search this game's settings…", "Bu oyunun ayarlarında ara…");
+        let placeholder = self.tr("Search settings…", "Ayarlarda ara…");
         self.field(
             "feature-search",
             |this| this.feature_query.clone(),

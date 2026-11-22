@@ -225,7 +225,7 @@ impl Library {
                 .child(self.render_app_update(cx))
                 .child(
                     widgets::section(self.tr("Language", "Dil")).child(widgets::setting_row(
-                        t.language,
+                        self.tr("Interface language", "Arayüz dili"),
                         self.tr("Every page and message of Arkor.", "Arkor'un tüm sayfaları ve mesajları."),
                         languages,
                     )),
