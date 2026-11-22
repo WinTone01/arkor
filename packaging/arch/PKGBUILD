@@ -1,0 +1,62 @@
+# Maintainer: WinTone01
+pkgname=arkor-git
+_pkgname=arkor
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Game launcher for Linux: Steam, Epic, GOG and your own games with Proton, MangoHud, Gamescope and upscalers per game"
+arch=('x86_64')
+url="https://github.com/WinTone01/arkor"
+license=('GPL-3.0-or-later')
+depends=(
+  'gcc-libs' 'glibc' 'systemd-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11'
+  'vulkan-icd-loader' 'wayland' 'fontconfig' 'freetype2'
+  'curl' 'tar' 'xz' 'python'
+)
+makedepends=('cargo' 'git')
+optdepends=(
+  'umu-launcher: system umu-run (Arkor downloads its own otherwise)'
+  'mangohud: performance overlay'
+  'gamemode: CPU/GPU tuning while playing'
+  'gamescope: Valve’s gaming compositor'
+  'winetricks: prefix tools'
+  'steam: Steam games'
+  'legendary: Epic games (or Heroic Games Launcher)'
+  'vkbasalt: post-processing effects'
+)
+# GCC LTO objects from bundled C code (SQLite, Wayland) can't be linked by Rust's linker.
+options=('!lto')
+provides=('arkor')
+conflicts=('arkor')
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  printf "%s.r%s.%s" "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p arkor
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/arkor "$pkgdir/usr/bin/arkor"
+  install -Dm644 packaging/arkor.desktop "$pkgdir/usr/share/applications/arkor.desktop"
+  install -Dm644 crates/arkor/assets/logo/arkor.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/arkor.svg"
+  for size in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "crates/arkor/assets/logo/arkor-$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/arkor.png"
+  done
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

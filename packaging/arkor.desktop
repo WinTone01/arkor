@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Arkor
+GenericName=Game launcher
+GenericName[tr]=Oyun başlatıcı
+Comment=Every game on Linux, one launcher
+Comment[tr]=Linux'taki her oyun, tek başlatıcı
+Exec=arkor
+Icon=arkor
+Terminal=false
+Categories=Game;
+Keywords=games;launcher;proton;wine;steam;epic;gog;mangohud;
+StartupWMClass=arkor
