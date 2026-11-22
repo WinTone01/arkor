@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/WinTone01/arkor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/WinTone01/arkor?style=flat-square&color=8b5cf6&label=release"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-8b5cf6?style=flat-square"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-8b5cf6?style=flat-square&logo=linux&logoColor=white">
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-8b5cf6?style=flat-square&logo=rust&logoColor=white">
@@ -15,9 +16,50 @@
   MangoHud, Gamescope, frame generation and upscaler settings — no config files to edit.
 </p>
 
+<p align="center">
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#uninstall"><b>Uninstall</b></a> ·
+  <a href="#screenshots"><b>Screenshots</b></a> ·
+  <a href="#features"><b>Features</b></a> ·
+  <a href="#first-steps"><b>First steps</b></a> ·
+  <a href="#command-line"><b>Command line</b></a> ·
+  <a href="#files"><b>Files</b></a>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="docs/screenshots/library.png" alt="The library: covers, categories, search and sorting" width="100%">
+</p>
+
+<table>
+  <tr>
+    <td width="25%" align="center" valign="top">
+      <img src="docs/icons/library.svg" width="44"><br>
+      <b>One library</b><br>
+      <sub>Steam, Heroic, Lutris, Faugus and your own games together</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
+      <img src="docs/icons/proton.svg" width="44"><br>
+      <b>Proton on autopilot</b><br>
+      <sub>Always-newest builds, runtimes and anti-cheat installed for you</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
+      <img src="docs/icons/frames.svg" width="44"><br>
+      <b>More frames</b><br>
+      <sub>lsfg-vk, MAKO, OptiScaler and Gamescope, per game</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
+      <img src="docs/icons/steam.svg" width="44"><br>
+      <b>Steam built in</b><br>
+      <sub>Proton and Arkor's settings written into Steam for you</sub>
+    </td>
+  </tr>
+</table>
+
 <a id="install"></a>
 
-## <img src="docs/icons/install.svg" width="30" align="top"> Install in one command
+## <img src="docs/icons/install.svg" width="30" align="top"> Install
 
 > [!TIP]
 > **Arch Linux, CachyOS, EndeavourOS, Manjaro and other up-to-date distributions (x86_64,
@@ -31,13 +73,6 @@
 > (no build, no root) and installs it into `~/.local` with its app-menu entry and icon.
 > Arkor then updates itself: **Settings → General → Arkor updates**, or the note in the
 > sidebar when a new version is out.
-
-**Uninstall** — removes the program, its menu entry and icon (your settings, games and
-Wine prefixes stay):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash -s -- --uninstall
-```
 
 On the first start Arkor sets itself up: it downloads umu-launcher, the Steam Linux Runtime,
 the EasyAntiCheat and BattlEye runtimes and, if you have no Proton yet, Proton-CachyOS.
@@ -67,30 +102,33 @@ Arkor uses `curl`, `tar` and `python` (for umu-run).
 
 </details>
 
-**Optional tools** — Arkor works with what you have and **Downloads → System tools** shows what is
-missing: `mangohud`, `gamescope`, `winetricks`, `steam`, `legendary` (or
-Heroic) for Epic games, `vkbasalt`.
+**Optional tools** — Arkor works with what you have, and **Downloads → System tools** installs
+what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, `legendary`
+(or Heroic) for Epic games, `vkbasalt`.
+
+<a id="uninstall"></a>
+
+## <img src="docs/icons/uninstall.svg" width="30" align="top"> Uninstall
+
+> [!NOTE]
+> **Installed with the command above** — paste this into a terminal:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash -s -- --uninstall
+> ```
+>
+> It removes the program, its app-menu entry and its icon. Your games, Wine prefixes and
+> settings in `~/.config/arkor` stay, so installing again picks up where you left off.
+> Installed as a pacman package instead? Remove it with `sudo pacman -R arkor-git`.
 
 <a id="screenshots"></a>
 
 ## <img src="docs/icons/screenshots.svg" width="30" align="top"> Screenshots
 
-<p align="center">
-  <img src="docs/screenshots/library.png" alt="The library: covers, categories, search and sorting" width="100%">
-</p>
-
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/game.png" alt="A game's overview with quick switches"><br><sub><b>A game's page</b> — quick switches and how it starts</sub></td>
-    <td width="50%"><img src="docs/screenshots/upscaling.png" alt="Frame generation with lsfg-vk"><br><sub><b>Upscaling &amp; frame gen</b> — lsfg-vk, MAKO, OptiScaler and more, with what is installed</sub></td>
-  </tr>
-  <tr>
     <td width="50%"><img src="docs/screenshots/compat.png" alt="Compatibility: Proton and its switches"><br><sub><b>Compatibility</b> — always-newest Proton builds and one-click switches</sub></td>
-    <td width="50%"><img src="docs/screenshots/steam.png" alt="A Steam game's Proton and launch settings"><br><sub><b>Steam games</b> — Proton and Arkor's settings written into Steam</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/covers.png" alt="Picking a cover from SteamGridDB"><br><sub><b>Covers</b> — pick a picture or an animated one from SteamGridDB</sub></td>
-    <td width="50%"><img src="docs/screenshots/downloads.png" alt="Downloads: queue, updates and what games need"><br><sub><b>Downloads</b> — a queue with pause and resume, updates and required parts</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/mangohud.png" alt="MangoHud editor with live preview"><br><sub><b>MangoHud editor</b> — live preview, presets and tabs</sub></td>
@@ -118,10 +156,27 @@ Heroic) for Epic games, `vkbasalt`.
     <td width="50%" valign="top">
       <img src="docs/icons/proton.svg" width="40"><br>
       <b>Proton that takes care of itself</b><br>
-      Runs Windows games through <b>umu-launcher</b>. Proton-CachyOS, GE-Proton, DW-Proton and
-      Wineland come as <b>Latest</b> builds that keep themselves up to date, next to any fixed
-      version you download. umu, the <b>Steam Linux Runtime</b>, <b>EasyAntiCheat</b> and
+      Runs Windows games through <b>umu-launcher</b> inside the <b>Steam Linux Runtime</b>.
+      Proton-CachyOS, GE-Proton, DW-Proton and Wineland come as <b>Latest</b> builds that keep
+      themselves up to date, next to any fixed version you download. <b>EasyAntiCheat</b> and
       <b>BattlEye</b> are installed by Arkor itself.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/icons/steam.svg" width="40"><br>
+      <b>Steam games, done properly</b><br>
+      Steam still starts them, and Arkor writes its choices into Steam: the game's
+      <b>Proton</b> and launch options that run it <b>through Arkor</b>, so MangoHud, frame
+      generation and the environment apply whether you press Play in Arkor or in Steam.
+    </td>
+    <td valign="top">
+      <img src="docs/icons/frames.svg" width="40"><br>
+      <b>More frames, per game</b><br>
+      <b>Gamescope</b>, <b>lsfg-vk</b> (Lossless Scaling frame generation), <b>MAKO</b>,
+      <b>AFMF</b>, <b>OptiScaler</b> (e.g. FSR 4 in DLSS games), <b>DLSS Enabler</b>,
+      newer <b>DLSS</b> files, <b>HelixSR</b> and <b>DLSS-NR</b> for AMD cards. Only what
+      your graphics card can use is shown.
     </td>
   </tr>
   <tr>
@@ -132,42 +187,26 @@ Heroic) for Epic games, `vkbasalt`.
       and key bindings in clear tabs. One shared layout for every game, or a game's own.
     </td>
     <td valign="top">
-      <img src="docs/icons/frames.svg" width="40"><br>
-      <b>More frames, per game</b><br>
-      <b>Gamescope</b>, <b>lsfg-vk</b> (Lossless Scaling frame generation), <b>MAKO</b>,
-      <b>AFMF</b>, <b>OptiScaler</b> (e.g. FSR 4 in DLSS games), <b>DLSS Enabler</b>,
-      newer <b>DLSS</b> files, <b>HelixSR</b> and <b>DLSS-NR</b> for AMD cards.
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
       <img src="docs/icons/visuals.svg" width="40"><br>
       <b>Better pictures</b><br>
       <b>vkBasalt</b>, <b>ReShade</b>, vkSumi colour grading, HDR, and one-click Proton
       and driver switches: Wayland, NTSYNC, WOW64, Reflex, Anti-Lag 2, DLSS/FSR/XeSS upgrades.
     </td>
-    <td valign="top">
-      <img src="docs/icons/tools.svg" width="40"><br>
-      <b>Everything a game needs</b><br>
-      Launch options in Steam style (<code>VAR=1 %command%</code>), commands before and after,
-      a second program next to the game, winecfg and winetricks, protonfixes, clear launch
-      logs, benchmarks from MangoHud logs, backups and Discord status.
-    </td>
   </tr>
   <tr>
     <td valign="top">
-      <img src="docs/icons/library.svg" width="40"><br>
-      <b>Steam games, done properly</b><br>
-      Steam still starts them, and Arkor writes its choices into Steam: the game's
-      <b>Proton</b> and launch options that run it <b>through Arkor</b>, so MangoHud, frame
-      generation and the environment apply whether you press Play in Arkor or in Steam.
-    </td>
-    <td valign="top">
-      <img src="docs/icons/install.svg" width="40"><br>
+      <img src="docs/icons/downloads.svg" width="40"><br>
       <b>Downloads that run themselves</b><br>
       One queue with pause, resume and retry. What a game's settings need is fetched as soon
       as you switch it on; updates come daily, weekly, when a game starts or never. Missing
       system tools install from the repositories (or the AUR) with a progress bar.
+    </td>
+    <td valign="top">
+      <img src="docs/icons/tools.svg" width="40"><br>
+      <b>Everything a game needs</b><br>
+      Launch options in Steam style (<code>VAR=1 %command%</code>), commands before and after,
+      a second program next to the game, winecfg and winetricks, protonfixes found by name,
+      clear launch logs, benchmarks from MangoHud logs, backups and Discord status.
     </td>
   </tr>
   <tr>
@@ -175,7 +214,8 @@ Heroic) for Epic games, `vkbasalt`.
       <img src="docs/icons/looks.svg" width="40"><br>
       <b>Looks the way you like</b><br>
       Dark or light, any accent colour, four glass styles, animated backgrounds or your own
-      picture, adjustable text size; in English and Turkish.
+      picture, adjustable text size; in English and Turkish. Arkor updates itself and
+      restarts in place.
     </td>
   </tr>
 </table>
@@ -184,12 +224,12 @@ Heroic) for Epic games, `vkbasalt`.
 
 ## <img src="docs/icons/start.svg" width="30" align="top"> First steps
 
-1. **Open Arkor.** The first start installs what Windows games need; the sidebar shows it.
-2. **Library → Add game.** Pick a game Arkor found on your computer, or add an `.exe`
-   (or a Linux game) by hand.
-3. **Play.** A game's page has its settings: *Overview* holds the most used switches, and
-   every feature says in one line what it does.
-4. **Settings → Game defaults** sets the Proton for all games and what new games start with.
+| | |
+| --- | --- |
+| **1. Open Arkor** | The first start installs what games need; the sidebar shows the progress. |
+| **2. Add your games** | **Library → Add game**: pick a game Arkor found on your computer, or add an `.exe` (or a Linux game) by hand. |
+| **3. Play** | A game's page has its settings: *Overview* holds the most used switches, and every feature says in one line what it does. |
+| **4. Set your defaults** | **Settings → Game defaults** sets the Proton for all games and what new games start with. |
 
 Steam games keep starting from Steam. Arkor sets their Proton and launch options in Steam
 for you (**Compatibility → Steam** on the game's page), so its settings apply from either
@@ -212,6 +252,7 @@ Everything in the window is also scriptable:
 | `arkor tool <id> winecfg \| winetricks \| run <file>` | Prefix tools |
 | `arkor proton installed \| list \| install` | Proton builds |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
+| `arkor update [--check]` | Updates Arkor to the latest release |
 
 Run `arkor help` for the full list.
 
@@ -226,9 +267,8 @@ Run `arkor help` for the full list.
 | | |
 | --- | --- |
 | Settings, library, game profiles | `~/.config/arkor/` |
-| Launch logs | `~/.local/state/arkor/logs/` |
+| Launch logs, download queue | `~/.local/state/arkor/` |
 | umu-run, anti-cheat runtimes, downloaded tools | `~/.local/share/arkor/` |
-| Download queue | `~/.local/state/arkor/queue.toml` |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam and Faugus) |
 | Wine prefixes of new games | `~/Games/Arkor/Prefixes/` (changeable in Settings) |
 
@@ -242,8 +282,10 @@ Arkor stands on the shoulders of great Linux gaming projects:
 packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher),
 [GOverlay](https://github.com/benjamimgois/goverlay), [MangoHud](https://github.com/flightlessmango/MangoHud),
 [GE-Proton](https://github.com/GloriousEggroll/proton-ge-custom),
-[Proton-CachyOS](https://github.com/CachyOS/proton-cachyos) and
-[OptiScaler](https://github.com/optiscaler/OptiScaler). The window is built with
+[Proton-CachyOS](https://github.com/CachyOS/proton-cachyos),
+[lsfg-vk](https://github.com/PancakeTAS/lsfg-vk),
+[OptiScaler](https://github.com/optiscaler/OptiScaler) and
+[SteamGridDB](https://www.steamgriddb.com). The window is built with
 [gpui-kit](https://crates.io/crates/gpui-kit); icons are [Lucide](https://lucide.dev)
 (ISC license), the font is [Inter](https://rsms.me/inter/).
 
