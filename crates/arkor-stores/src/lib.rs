@@ -6,6 +6,7 @@ pub mod epic;
 pub mod faugus;
 pub mod gog;
 pub mod heroic;
+pub mod lutris;
 pub mod prefix;
 pub mod steam;
 pub mod target;
@@ -29,7 +30,11 @@ pub fn all_games() -> (Vec<Game>, Vec<anyhow::Error>) {
         }
     }
 
-    for (found, errs) in [gog::installed_games(), heroic::sideload_games()] {
+    for (found, errs) in [
+        gog::installed_games(),
+        heroic::sideload_games(),
+        lutris::games(),
+    ] {
         games.extend(found);
         errors.extend(errs);
     }
@@ -55,6 +60,7 @@ pub fn launch_target(id: &GameId) -> anyhow::Result<ExeTarget> {
         Store::Gog => gog::launch_target(&id.id),
         Store::Heroic => heroic::sideload_target(&id.id),
         Store::Faugus => faugus::launch_target(&id.id),
+        Store::Lutris => lutris::launch_target(&id.id),
         Store::Local => {
             let imported = Imported::load()?;
             let game = imported

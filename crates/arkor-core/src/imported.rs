@@ -99,6 +99,19 @@ impl Imported {
         id
     }
 
+    /// Changes the display name. The id stays, so the game's profile stays attached.
+    pub fn rename(&mut self, id: &str, name: &str) -> anyhow::Result<()> {
+        let name = name.trim();
+        anyhow::ensure!(!name.is_empty(), "name cannot be empty");
+        let game = self
+            .games
+            .iter_mut()
+            .find(|g| g.id == id)
+            .with_context(|| format!("imported game `{id}` not found"))?;
+        game.name = name.to_string();
+        Ok(())
+    }
+
     pub fn remove(&mut self, id: &str) {
         self.games.retain(|g| g.id != id);
     }
@@ -126,6 +139,10 @@ mod tests {
             (a.as_str(), b.as_str(), c.as_str()),
             ("far-cry-5", "far-cry-5-2", "game")
         );
+        i.rename("far-cry-5-2", "  Far Cry 5 (mods)  ").unwrap();
+        assert_eq!(i.get("far-cry-5-2").unwrap().name, "Far Cry 5 (mods)");
+        assert!(i.rename("far-cry-5-2", "   ").is_err());
+        assert!(i.rename("nope", "x").is_err());
         i.remove("far-cry-5");
         assert!(i.get("far-cry-5").is_none() && i.get("far-cry-5-2").is_some());
         let game = i.get("game").unwrap().to_game();

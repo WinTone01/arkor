@@ -8,4 +8,4 @@ pub mod paths;
 pub mod profile;
 
 pub use game::{Game, GameId, Store};
-pub use profile::{Global, HudMode, Language, Profile};
+pub use profile::{Global, HudMode, Language, Lsfg, LsfgMode, Profile};

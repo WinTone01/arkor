@@ -2,7 +2,9 @@
 
 use arkor_core::imported::Imported;
 use arkor_core::{Game, GameId, HudMode, Store, paths};
-use gpui::{Context, Div, div, prelude::*, rgb};
+use gpui::{Context, Div, Focusable, Window, div, prelude::*, rgb};
+
+use super::text_input::{InputEvent, TextInput};
 
 use super::widgets::{self, theme::*};
 use super::{Library, Selection};
@@ -60,6 +62,45 @@ impl Library {
             });
         })
         .detach();
+    }
+
+    pub(super) fn start_rename(
+        &mut self,
+        id: GameId,
+        current: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| TextInput::new(current, cx));
+        let subscription =
+            cx.subscribe(&input, move |this, _, event: &InputEvent, cx| match event {
+                InputEvent::Submit(text) => this.finish_rename(&id, text, cx),
+                InputEvent::Cancel => {
+                    this.rename = None;
+                    cx.notify();
+                }
+            });
+        window.focus(&input.focus_handle(cx));
+        self.rename = Some((input, subscription));
+        cx.notify();
+    }
+
+    fn finish_rename(&mut self, id: &GameId, name: &str, cx: &mut Context<Self>) {
+        let result = Imported::load().and_then(|mut imported| {
+            imported.rename(&id.id, name)?;
+            imported.save()
+        });
+        match result {
+            Ok(()) => {
+                self.rename = None;
+                self.reload_games();
+                self.select_game(id, cx);
+            }
+            Err(e) => {
+                self.status = Some(format!("{}: {e:#}", self.t().save_failed).into());
+                cx.notify();
+            }
+        }
     }
 
     fn remove_imported(&mut self, id: GameId, cx: &mut Context<Self>) {
@@ -145,33 +186,74 @@ impl Library {
                 .child(code_box(format!("arkor run {} -- %command%", game.id)))
         });
 
-        let imported = (game.id.store == Store::Local).then(|| {
-            let prefix = Imported::load()
-                .ok()
-                .and_then(|i| i.get(&game.id.id).map(|g| g.prefix.display().to_string()))
-                .unwrap_or_default();
-            let id = game.id.clone();
-            widgets::section(t.store_local)
-                .child(widgets::label(t.prefix_label))
-                .child(code_box(prefix))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(
-                            widgets::chip("remove-imported", t.remove_imported, false).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.remove_imported(id.clone(), cx)
-                                }),
-                            ),
-                        )
-                        .child(widgets::label(t.remove_imported_note)),
-                )
-        });
+        let imported =
+            (game.id.store == Store::Local).then(|| {
+                let prefix = Imported::load()
+                    .ok()
+                    .and_then(|i| i.get(&game.id.id).map(|g| g.prefix.display().to_string()))
+                    .unwrap_or_default();
+                let id = game.id.clone();
+                let name_row =
+                    match &self.rename {
+                        Some((input, _)) => {
+                            let input_for_save = input.clone();
+                            let save_id = game.id.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().flex_1().child(input.clone()))
+                                .child(widgets::chip("rename-save", t.save, false).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        let text = input_for_save.read(cx).text();
+                                        this.finish_rename(&save_id, &text, cx);
+                                    }),
+                                ))
+                        }
+                        None => {
+                            let rename_id = game.id.clone();
+                            let current = game.name.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(div().child(game.name.clone()))
+                                .child(widgets::chip("rename", t.rename, false).on_click(
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.start_rename(
+                                            rename_id.clone(),
+                                            current.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                                ))
+                        }
+                    };
+                widgets::section(t.store_local)
+                    .child(widgets::label(t.name_label))
+                    .child(name_row)
+                    .child(widgets::label(t.prefix_label))
+                    .child(code_box(prefix))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                widgets::chip("remove-imported", t.remove_imported, false)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_imported(id.clone(), cx)
+                                    })),
+                            )
+                            .child(widgets::label(t.remove_imported_note)),
+                    )
+            });
 
         div()
             .child(header)
+            // Name and prefix of an imported game: identity first.
+            .children(imported)
             .child(hud_card)
             .children(custom_editor)
             .child(
@@ -201,7 +283,9 @@ impl Library {
                     }))
                     .children(steam_option),
             )
-            .children(imported)
+            .children(self.render_proton(game, cx))
+            .child(self.render_lsfg(cx))
+            .child(self.render_optiscaler(cx))
     }
 }
 

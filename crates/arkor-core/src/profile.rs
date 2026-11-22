@@ -18,6 +18,72 @@ pub struct Profile {
     pub mangohud: GameHud,
     pub gamemode: bool,
     pub gamescope: Gamescope,
+    /// Proton build for this game: a folder name from a compatibility tools dir
+    /// (e.g. `GE-Proton10-25`) or an absolute path. `None` = automatic.
+    /// Not used for Steam games, where Steam picks the Proton.
+    pub proton: Option<String>,
+    pub lsfg: Lsfg,
+}
+
+/// lsfg-vk (Lossless Scaling frame generation on Linux) for this game.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Lsfg {
+    pub mode: LsfgMode,
+    /// Generated frames per real frame + 1: 2 doubles the frame rate.
+    pub multiplier: u32,
+    /// Motion estimation resolution in percent (25-100). Lower is faster, less accurate.
+    pub flow_scale: u32,
+    /// Lighter model: faster, slightly lower quality.
+    pub performance_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LsfgMode {
+    /// Leave it to lsfg-vk's own config file (its `active_in` profiles).
+    #[default]
+    Default,
+    /// Arkor's settings below, passed through the environment.
+    On,
+    /// Never, even if lsfg-vk's config file has a profile for this game.
+    Off,
+}
+
+pub const LSFG_MULTIPLIER_RANGE: (u32, u32) = (2, 4);
+pub const LSFG_FLOW_SCALE_RANGE: (u32, u32) = (25, 100);
+
+impl Default for Lsfg {
+    fn default() -> Self {
+        Self {
+            mode: LsfgMode::Default,
+            multiplier: 2,
+            flow_scale: 100,
+            performance_mode: false,
+        }
+    }
+}
+
+impl Lsfg {
+    pub fn step_multiplier(&mut self, up: bool) {
+        let (min, max) = LSFG_MULTIPLIER_RANGE;
+        self.multiplier = if up {
+            self.multiplier + 1
+        } else {
+            self.multiplier.saturating_sub(1)
+        }
+        .clamp(min, max);
+    }
+
+    pub fn step_flow_scale(&mut self, up: bool) {
+        let (min, max) = LSFG_FLOW_SCALE_RANGE;
+        self.flow_scale = if up {
+            self.flow_scale + 5
+        } else {
+            self.flow_scale.saturating_sub(5)
+        }
+        .clamp(min, max);
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

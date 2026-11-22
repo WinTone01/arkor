@@ -13,17 +13,20 @@ pub enum Store {
     Heroic,
     /// Games added in Faugus Launcher.
     Faugus,
+    /// Wine and native games installed through Lutris.
+    Lutris,
     /// Games imported into Arkor from a Wine prefix.
     Local,
 }
 
 impl Store {
-    pub const ALL: [Store; 6] = [
+    pub const ALL: [Store; 7] = [
         Store::Steam,
         Store::Epic,
         Store::Gog,
         Store::Heroic,
         Store::Faugus,
+        Store::Lutris,
         Store::Local,
     ];
 
@@ -34,6 +37,7 @@ impl Store {
             Store::Gog => "gog",
             Store::Heroic => "heroic",
             Store::Faugus => "faugus",
+            Store::Lutris => "lutris",
             Store::Local => "local",
         }
     }

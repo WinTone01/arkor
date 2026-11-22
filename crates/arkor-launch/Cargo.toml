@@ -9,6 +9,9 @@ arkor-core.workspace = true
 anyhow.workspace = true
 arkor-stores.workspace = true
 dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use arkor_core::{GameId, Store};
-use arkor_stores::target::{ExeTarget, compat_tool_roots};
+use arkor_stores::target::ExeTarget;
 use arkor_stores::{epic, heroic};
 
 pub fn start(id: &GameId) -> anyhow::Result<Infallible> {
@@ -46,7 +46,7 @@ pub fn start(id: &GameId) -> anyhow::Result<Infallible> {
                 id,
                 Some("egs"),
                 heroic::wine_prefix(&id.id),
-                heroic::proton(&id.id),
+                chosen_proton(id, heroic::proton(&id.id)),
             ));
             let err = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
@@ -54,7 +54,7 @@ pub fn start(id: &GameId) -> anyhow::Result<Infallible> {
                 .exec();
             Err(err).with_context(|| format!("failed to exec `{}`", argv[0]))
         }
-        Store::Gog | Store::Heroic | Store::Faugus | Store::Local => {
+        Store::Gog | Store::Heroic | Store::Faugus | Store::Lutris | Store::Local => {
             let target = arkor_stores::launch_target(id)?;
             // umu's STORE selects store-specific protonfixes; only GOG is a store umu knows.
             let umu_store = (id.store == Store::Gog).then_some("gog");
@@ -86,8 +86,25 @@ fn run_target(
     }
     command.push(target.exe.display().to_string());
     command.extend(target.args.iter().cloned());
-    let env = proton_env(id, umu_store, target.prefix.clone(), target.proton.clone());
+    let proton = chosen_proton(id, target.proton.clone());
+    let env = proton_env(id, umu_store, target.prefix.clone(), proton);
     crate::exec_with(id, &command, &env, Some(&target.working_dir))
+}
+
+/// The game's Proton: the profile's choice if set and installed, else the source launcher's.
+fn chosen_proton(id: &GameId, from_source: Option<PathBuf>) -> Option<PathBuf> {
+    // An unreadable profile must not lose the source launcher's Proton.
+    let wanted = arkor_core::Profile::load(id).ok().and_then(|p| p.proton);
+    match wanted {
+        Some(name) => match crate::tools::resolve_proton(&name) {
+            Some(path) => Some(path),
+            None => {
+                eprintln!("arkor: Proton `{name}` is not installed, using the default");
+                from_source
+            }
+        },
+        None => from_source,
+    }
 }
 
 fn umu_run() -> anyhow::Result<String> {
@@ -138,12 +155,10 @@ fn default_prefix(id: &GameId) -> PathBuf {
 /// Picks a Proton build: an installed one if any (system packages first, e.g. CachyOS's
 /// proton-cachyos), otherwise `GE-Proton`, which umu downloads and keeps up to date.
 fn default_proton() -> String {
-    let mut candidates = Vec::new();
-    for root in compat_tool_roots() {
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            candidates.extend(entries.flatten().map(|e| e.path()));
-        }
-    }
+    let candidates: Vec<PathBuf> = crate::tools::installed_protons()
+        .into_iter()
+        .map(|(_, p)| p)
+        .collect();
     pick_proton(&candidates).map_or_else(|| "GE-Proton".into(), |p| p.display().to_string())
 }
 
@@ -174,7 +189,7 @@ fn pick_proton(candidates: &[PathBuf]) -> Option<&Path> {
 }
 
 /// Sort key that compares digit runs as numbers, so "GE-Proton10-1" > "GE-Proton9-20".
-fn natural_key(s: &str) -> Vec<(u64, String)> {
+pub(crate) fn natural_key(s: &str) -> Vec<(u64, String)> {
     let mut key = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(&c) = chars.peek() {

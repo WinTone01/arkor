@@ -1,10 +1,12 @@
 //! Library window: "Global" + installed games on the left, settings for the selection on the
 //! right. Every change is saved immediately; `arkor run` picks it up on the next launch.
 
+mod enhance;
 mod game_page;
 mod hud_editor;
 mod i18n;
 mod import;
+mod text_input;
 mod widgets;
 
 use arkor_core::mangohud::HudSettings;
@@ -15,6 +17,7 @@ use gpui::{
     uniform_list,
 };
 
+use enhance::GameTools;
 use i18n::Strings;
 use import::ImportState;
 use widgets::theme::*;
@@ -38,6 +41,9 @@ pub struct Library {
     profile: Profile,
     global: Global,
     import: ImportState,
+    tools: GameTools,
+    /// Open "rename imported game" input, with its event subscription.
+    rename: Option<(gpui::Entity<text_input::TextInput>, gpui::Subscription)>,
     status: Option<SharedString>,
 }
 
@@ -61,6 +67,8 @@ impl Library {
             profile: Profile::default(),
             global,
             import: ImportState::default(),
+            tools: GameTools::scan(),
+            rename: None,
             status: None,
         };
         lib.reload_games();
@@ -96,6 +104,7 @@ impl Library {
             Store::Gog => "GOG",
             Store::Heroic => "Heroic",
             Store::Faugus => "Faugus",
+            Store::Lutris => "Lutris",
             Store::Local => self.t().store_local,
         }
     }
@@ -131,6 +140,7 @@ impl Library {
     fn set_selection(&mut self, selection: Selection) {
         self.selection = Some(selection);
         self.status = None;
+        self.rename = None;
         if let Selection::Game(ix) = selection {
             self.list_scroll.scroll_to_item(ix, ScrollStrategy::Center);
             let t = self.t();
@@ -138,6 +148,7 @@ impl Library {
                 self.status = Some(format!("{}: {e:#}", t.profile_load_failed).into());
                 Profile::default()
             });
+            self.tools.select(&self.games[ix]);
         }
     }
 
@@ -402,6 +413,7 @@ pub fn run(open: Option<String>) -> anyhow::Result<()> {
     // removed again (see `game_page::spawn_launch`).
     unsafe { std::env::set_var("DISABLE_MANGOHUD", "1") };
     Application::new().run(|cx: &mut App| {
+        text_input::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1200.), px(820.)), cx);
         let opened = cx.open_window(
             WindowOptions {

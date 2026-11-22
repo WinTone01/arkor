@@ -5,14 +5,16 @@
 //! `exec` performs side effects (writes generated configs, replaces the process).
 //! `start` (see [`start`]) is the store-aware entry point behind `arkor launch` / Play.
 
+pub mod optiscaler;
 pub mod start;
+pub mod tools;
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use arkor_core::{GameId, Global, Profile, paths};
+use arkor_core::{GameId, Global, LsfgMode, Profile, paths};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
@@ -22,9 +24,37 @@ pub struct Plan {
     pub files: Vec<(PathBuf, String)>,
 }
 
+/// Facts about this machine and game that `plan` needs, gathered by the caller so `plan`
+/// stays pure and testable.
+#[derive(Debug, Clone, Default)]
+pub struct Host {
+    /// Lossless Scaling's `Lossless.dll` (lsfg-vk needs it), if found.
+    pub lossless_dll: Option<PathBuf>,
+    /// Proxy DLL name OptiScaler is installed as in this game (e.g. `dxgi`), if installed.
+    pub optiscaler_dll: Option<String>,
+    /// `WINEDLLOVERRIDES` already in the environment, kept when Arkor adds its own.
+    pub inherited_dll_overrides: Option<String>,
+}
+
+impl Host {
+    pub fn detect(id: &GameId) -> Self {
+        Self {
+            lossless_dll: tools::lossless_dll(),
+            optiscaler_dll: optiscaler::Manifest::load(id)
+                .ok()
+                .flatten()
+                .map(|m| m.dll_stem()),
+            inherited_dll_overrides: std::env::var("WINEDLLOVERRIDES")
+                .ok()
+                .filter(|v| !v.is_empty()),
+        }
+    }
+}
+
 pub fn plan(
     profile: &Profile,
     global: &Global,
+    host: &Host,
     game_dir: &Path,
     command: &[String],
 ) -> anyhow::Result<Plan> {
@@ -53,6 +83,41 @@ pub fn plan(
         }
         // Explicitly off, so a system-wide MANGOHUD=1 (e.g. environment.d) cannot re-enable it.
         None => disable_layer(&mut env),
+    }
+
+    match profile.lsfg.mode {
+        LsfgMode::Default => {}
+        LsfgMode::On => {
+            let lsfg = &profile.lsfg;
+            env.insert("ENABLE_LSFGVK".into(), "1".into());
+            // Take settings from the variables below instead of lsfg-vk's conf.toml.
+            env.insert("LSFGVK_ENV".into(), "1".into());
+            env.insert("LSFGVK_MULTIPLIER".into(), lsfg.multiplier.to_string());
+            env.insert(
+                "LSFGVK_FLOW_SCALE".into(),
+                format!("{:.2}", lsfg.flow_scale as f32 / 100.0),
+            );
+            env.insert(
+                "LSFGVK_PERFORMANCE_MODE".into(),
+                if lsfg.performance_mode { "1" } else { "0" }.into(),
+            );
+            if let Some(dll) = &host.lossless_dll {
+                env.insert("LSFGVK_DLL_PATH".into(), dll.display().to_string());
+            }
+        }
+        LsfgMode::Off => {
+            env.insert("DISABLE_LSFGVK".into(), "1".into());
+        }
+    }
+
+    if let Some(dll) = &host.optiscaler_dll {
+        // Wine must load OptiScaler's proxy DLL from the game folder instead of its builtin.
+        let ours = format!("{dll}=n,b");
+        let overrides = match &host.inherited_dll_overrides {
+            Some(existing) => format!("{existing};{ours}"),
+            None => ours,
+        };
+        env.insert("WINEDLLOVERRIDES".into(), overrides);
     }
 
     if profile.gamemode {
@@ -98,7 +163,7 @@ pub fn exec_with(
     let profile = Profile::load(id)?;
     let global = Global::load_or_import()?;
     let game_dir = paths::game_config_dir(id)?;
-    let plan = plan(&profile, &global, &game_dir, command)?;
+    let plan = plan(&profile, &global, &Host::detect(id), &game_dir, command)?;
 
     for (path, contents) in &plan.files {
         if let Some(dir) = path.parent() {
@@ -139,7 +204,14 @@ mod tests {
 
     #[test]
     fn no_hud_forces_layer_off() {
-        let p = plan(&Profile::default(), &global(false), Path::new("/g"), &cmd()).unwrap();
+        let p = plan(
+            &Profile::default(),
+            &global(false),
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
         assert_eq!(p.argv, cmd());
         assert_eq!(p.env["MANGOHUD"], "0");
         assert_eq!(p.env["DISABLE_MANGOHUD"], "1");
@@ -149,7 +221,14 @@ mod tests {
     #[test]
     fn global_hud_uses_layer_and_global_layout() {
         let g = global(true);
-        let p = plan(&Profile::default(), &g, Path::new("/g"), &cmd()).unwrap();
+        let p = plan(
+            &Profile::default(),
+            &g,
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
         assert_eq!(p.env["MANGOHUD"], "1");
         assert_eq!(p.env["MANGOHUD_CONFIGFILE"], "/g/MangoHud.conf");
         assert!(!p.env.contains_key("DISABLE_MANGOHUD"));
@@ -166,7 +245,14 @@ mod tests {
     fn game_off_beats_global_on() {
         let mut prof = Profile::default();
         prof.mangohud.mode = HudMode::Off;
-        let p = plan(&prof, &global(true), Path::new("/g"), &cmd()).unwrap();
+        let p = plan(
+            &prof,
+            &global(true),
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
         assert_eq!(p.env["DISABLE_MANGOHUD"], "1");
         assert!(p.files.is_empty());
     }
@@ -182,7 +268,14 @@ mod tests {
         prof.gamescope.args = vec!["-f".into()];
         prof.env.insert("FOO".into(), "bar".into());
 
-        let p = plan(&prof, &global(false), Path::new("/g"), &cmd()).unwrap();
+        let p = plan(
+            &prof,
+            &global(false),
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
         assert_eq!(
             p.argv,
             [
@@ -208,12 +301,76 @@ mod tests {
     fn user_env_overrides() {
         let mut prof = Profile::default();
         prof.env.insert("MANGOHUD".into(), "1".into());
-        let p = plan(&prof, &global(false), Path::new("/g"), &cmd()).unwrap();
+        let p = plan(
+            &prof,
+            &global(false),
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
         assert_eq!(p.env["MANGOHUD"], "1");
     }
 
     #[test]
+    fn lsfg_modes() {
+        let mut prof = Profile::default();
+        let host = Host {
+            lossless_dll: Some("/ls/Lossless.dll".into()),
+            ..Default::default()
+        };
+        let p = plan(&prof, &global(false), &host, Path::new("/g"), &cmd()).unwrap();
+        assert!(
+            !p.env.keys().any(|k| k.contains("LSFG")),
+            "default leaves lsfg-vk alone"
+        );
+
+        prof.lsfg.mode = LsfgMode::On;
+        prof.lsfg.multiplier = 3;
+        prof.lsfg.flow_scale = 75;
+        let p = plan(&prof, &global(false), &host, Path::new("/g"), &cmd()).unwrap();
+        assert_eq!(p.env["ENABLE_LSFGVK"], "1");
+        assert_eq!(p.env["LSFGVK_ENV"], "1");
+        assert_eq!(p.env["LSFGVK_MULTIPLIER"], "3");
+        assert_eq!(p.env["LSFGVK_FLOW_SCALE"], "0.75");
+        assert_eq!(p.env["LSFGVK_PERFORMANCE_MODE"], "0");
+        assert_eq!(p.env["LSFGVK_DLL_PATH"], "/ls/Lossless.dll");
+
+        prof.lsfg.mode = LsfgMode::Off;
+        let p = plan(&prof, &global(false), &host, Path::new("/g"), &cmd()).unwrap();
+        assert_eq!(p.env["DISABLE_LSFGVK"], "1");
+        assert!(!p.env.contains_key("ENABLE_LSFGVK"));
+    }
+
+    #[test]
+    fn optiscaler_override_keeps_existing() {
+        let host = Host {
+            optiscaler_dll: Some("dxgi".into()),
+            inherited_dll_overrides: Some("d3d11=n".into()),
+            ..Default::default()
+        };
+        let p = plan(
+            &Profile::default(),
+            &global(false),
+            &host,
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
+        assert_eq!(p.env["WINEDLLOVERRIDES"], "d3d11=n;dxgi=n,b");
+    }
+
+    #[test]
     fn empty_command_is_error() {
-        assert!(plan(&Profile::default(), &global(false), Path::new("/g"), &[]).is_err());
+        assert!(
+            plan(
+                &Profile::default(),
+                &global(false),
+                &Host::default(),
+                Path::new("/g"),
+                &[]
+            )
+            .is_err()
+        );
     }
 }

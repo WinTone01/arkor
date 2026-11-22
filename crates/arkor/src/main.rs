@@ -9,6 +9,10 @@ usage:
   arkor list                    print installed games from every source
   arkor launch <store:id>       start a game through its store with its profile
   arkor import <prefix> [exe]   list games found in a Wine prefix, or add one
+  arkor rename <local:id> <name>  rename an imported game
+  arkor optiscaler download                         fetch the latest OptiScaler
+  arkor optiscaler install <store:id> <dir> [proxy] install into a game folder
+  arkor optiscaler remove <store:id>                undo the install
   arkor run <store:id> -- CMD   launch CMD with the game's profile
                                 (Steam launch options: arkor run steam:<appid> -- %command%)";
 
@@ -20,6 +24,20 @@ fn main() -> anyhow::Result<()> {
             args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.clone(),
         )),
         Some("list") => list(),
+        Some("rename") => {
+            let id: GameId = args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.parse()?;
+            let name = args.get(2).ok_or_else(|| anyhow::anyhow!(USAGE))?;
+            anyhow::ensure!(
+                id.store == arkor_core::Store::Local,
+                "only imported (local:) games can be renamed"
+            );
+            let mut imported = arkor_core::imported::Imported::load()?;
+            imported.rename(&id.id, name)?;
+            imported.save()?;
+            println!("renamed {id} to {}", name.trim());
+            Ok(())
+        }
+        Some("optiscaler") => optiscaler(&args[1..]),
         Some("import") => import(
             args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?,
             args.get(2),
@@ -83,5 +101,42 @@ fn import(prefix_arg: &str, exe: Option<&String>) -> anyhow::Result<()> {
     let id = imported.add(prefix::suggested_name(&exe), root, exe);
     imported.save()?;
     println!("added local:{id}");
+    Ok(())
+}
+
+fn optiscaler(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::optiscaler;
+    match args.first().map(String::as_str) {
+        Some("download") => {
+            let release = optiscaler::latest_release()?;
+            println!(
+                "downloading OptiScaler {} ({} MB)…",
+                release.tag,
+                release.size / 1_000_000
+            );
+            println!("ready: {}", optiscaler::download(&release)?.display());
+        }
+        Some("install") => {
+            let id: GameId = args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.parse()?;
+            let dir = std::path::PathBuf::from(args.get(2).ok_or_else(|| anyhow::anyhow!(USAGE))?);
+            let proxy = args.get(3).map_or("dxgi", String::as_str);
+            let (tag, source) = optiscaler::downloaded().into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!("no OptiScaler downloaded yet: run `arkor optiscaler download`")
+            })?;
+            let m = optiscaler::install(&id, &tag, &source, &dir, proxy)?;
+            println!(
+                "installed OptiScaler {tag} as {} ({} files, {} game files backed up)",
+                m.dll,
+                m.created.len(),
+                m.backed_up.len()
+            );
+        }
+        Some("remove") => {
+            let id: GameId = args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.parse()?;
+            optiscaler::uninstall(&id)?;
+            println!("removed");
+        }
+        _ => anyhow::bail!(USAGE),
+    }
     Ok(())
 }

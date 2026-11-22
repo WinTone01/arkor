@@ -111,6 +111,28 @@ pub fn find_executables(prefix: &Path) -> Vec<Candidate> {
     found
 }
 
+/// Executables in a game's own install folder, the likeliest main binary first: Unreal
+/// Engine `*-Shipping.exe` (the real game, next to which proxy DLLs must go), then ones
+/// named like their folder, then by size.
+pub fn game_executables(install_dir: &Path) -> Vec<Candidate> {
+    let mut found = Vec::new();
+    walk(install_dir, 6, &mut found);
+    let shipping = |c: &Candidate| {
+        c.path
+            .file_stem()
+            .is_some_and(|s| s.to_string_lossy().to_lowercase().ends_with("-shipping"))
+    };
+    found.sort_by(|a, b| {
+        shipping(b)
+            .cmp(&shipping(a))
+            .then(b.name_matches_folder.cmp(&a.name_matches_folder))
+            .then(b.size.cmp(&a.size))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    found.truncate(50);
+    found
+}
+
 fn walk(dir: &Path, depth: u32, found: &mut Vec<Candidate>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -269,6 +291,26 @@ mod tests {
                 // …then the rest.
                 "drive_c/Ubi/Launcher/upc.exe",
                 "drive_c/users/steamuser/Desktop/Far Cry 5.url",
+            ]
+        );
+    }
+
+    #[test]
+    fn unreal_shipping_exe_comes_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let g = tmp.path();
+        touch(&g.join("MyGame.exe"), 500);
+        touch(
+            &g.join("MyGame/Binaries/Win64/MyGame-Win64-Shipping.exe"),
+            100,
+        );
+        touch(&g.join("Engine/Extras/Redist/UEPrereqSetup_x64.exe"), 900);
+        let found: Vec<_> = game_executables(g).into_iter().map(|c| c.path).collect();
+        assert_eq!(
+            found,
+            [
+                g.join("MyGame/Binaries/Win64/MyGame-Win64-Shipping.exe"),
+                g.join("MyGame.exe")
             ]
         );
     }
