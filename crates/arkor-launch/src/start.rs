@@ -128,7 +128,15 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
     let mut command = vec![umu_run()?];
     if target.needs_start() {
         // Shortcuts open through Wine's `start`, which resolves .lnk/.url inside the prefix.
-        command.extend(["start.exe".into(), "/unix".into()]);
+        // Its full path lets umu find it and Proton pick a game drive (a bare "start.exe"
+        // gives "Executable not found" and "unable to use parent for game drive").
+        let start = prefix.join("drive_c/windows/system32/start.exe");
+        command.push(if start.exists() {
+            start.display().to_string()
+        } else {
+            "start.exe".into()
+        });
+        command.push("/unix".into());
     }
     command.push(target.exe.display().to_string());
     command.extend(target.args.iter().cloned());

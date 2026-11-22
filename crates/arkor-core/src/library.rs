@@ -85,8 +85,19 @@ impl LibraryGame {
     pub fn effective_prefix(&self, prefixes_dir: &Path) -> PathBuf {
         self.prefix
             .clone()
+            // A program inside a prefix (e.g. a launcher's shortcut) runs in that prefix,
+            // even when the entry was saved without one (its drive was not mounted then).
+            .or_else(|| prefix_containing(&self.exe))
             .unwrap_or_else(|| prefixes_dir.join(&self.id))
     }
+}
+
+/// The Wine prefix `path` lies in (`<prefix>/drive_c/...`), if any. Purely by the path.
+pub fn prefix_containing(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == "drive_c"))
+        .and_then(|drive_c| drive_c.parent())
+        .map(Path::to_path_buf)
 }
 
 /// A game to add: everything except the id, which the library assigns.
@@ -232,12 +243,18 @@ impl Library {
     /// Adds a game and returns its new id, derived from the name and made unique.
     pub fn add(&mut self, new: NewGame) -> String {
         let id = self.unique_id(&new.name);
+        // Whatever the import path: a Windows program inside a prefix keeps that prefix
+        // (written down, so the game page shows it and it survives a moved library).
+        let prefix = match new.kind {
+            GameKind::Windows if new.prefix.is_none() => prefix_containing(&new.exe),
+            _ => new.prefix,
+        };
         self.games.push(LibraryGame {
             id: id.clone(),
             name: new.name.trim().to_string(),
             kind: new.kind,
             exe: new.exe,
-            prefix: new.prefix,
+            prefix,
             args: new.args,
             working_dir: new.working_dir,
             source_proton: new.source_proton,
@@ -304,6 +321,38 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn exe_inside_a_prefix_runs_in_that_prefix() {
+        let exe = Path::new(
+            "/mnt/Games/Heroic/Prefixes/Ubisoft Connect/drive_c/users/steamuser/Desktop/Far Cry® 5.url",
+        );
+        assert_eq!(
+            prefix_containing(exe),
+            Some(PathBuf::from("/mnt/Games/Heroic/Prefixes/Ubisoft Connect"))
+        );
+        assert_eq!(prefix_containing(Path::new("/games/fc6/FarCry6.exe")), None);
+        let mut lib = Library::default();
+        let id = lib.add(NewGame::windows("Far Cry 5", exe.to_path_buf()));
+        let game = lib.get(&id).unwrap();
+        assert_eq!(
+            game.prefix.as_deref(),
+            Some(Path::new("/mnt/Games/Heroic/Prefixes/Ubisoft Connect")),
+            "written down at import"
+        );
+        assert_eq!(
+            game.effective_prefix(Path::new("/arkor/prefixes")),
+            PathBuf::from("/mnt/Games/Heroic/Prefixes/Ubisoft Connect")
+        );
+        let id = lib.add(NewGame::windows("Other", PathBuf::from("/games/x/x.exe")));
+        assert_eq!(
+            lib.get(&id)
+                .unwrap()
+                .effective_prefix(Path::new("/arkor/prefixes")),
+            PathBuf::from("/arkor/prefixes/other")
+        );
+    }
+
     use super::*;
 
     fn lib_with(names: &[&str]) -> Library {

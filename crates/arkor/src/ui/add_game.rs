@@ -299,6 +299,10 @@ impl Library {
                             "Oyunun çalıştırılabilir dosyasını seç",
                         );
                         this.prompt_path(false, title, cx, |this, path, _| {
+                            // A program inside a prefix (e.g. another launcher's) runs there.
+                            if this.add.prefix.is_none() {
+                                this.add.prefix = arkor_core::library::prefix_containing(&path);
+                            }
                             this.add.exe = Some(path)
                         });
                     })),

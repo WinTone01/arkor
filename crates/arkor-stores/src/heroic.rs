@@ -54,10 +54,13 @@ fn game_config(app_name: &str) -> Option<GameConfig> {
     })
 }
 
-/// The Wine prefix Heroic uses for `app_name`, if it exists (e.g. its drive is mounted).
-/// Launching with the same prefix keeps the game's saves and settings.
+/// The Wine prefix Heroic uses for `app_name`. Launching with the same prefix keeps the
+/// game's saves and settings. Kept even when its drive is not mounted right now, so the
+/// game does not end up in a new, empty prefix.
 pub fn wine_prefix(app_name: &str) -> Option<PathBuf> {
-    game_config(app_name)?.wine_prefix.filter(|p| p.is_dir())
+    game_config(app_name)?
+        .wine_prefix
+        .filter(|p| !p.as_os_str().is_empty())
 }
 
 /// The Proton build Heroic uses for `app_name`, if it is a Proton (not plain Wine).
