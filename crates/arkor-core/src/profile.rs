@@ -37,8 +37,9 @@ pub struct Profile {
     pub proton_log: bool,
     /// umu database id (e.g. `umu-1086940`) so Proton applies the game's protonfixes.
     pub umu_id: Option<String>,
-    /// Linux games only: run inside a Steam Linux Runtime through umu
-    /// (`umu-sniper`, `umu-soldier`, `umu-scout`, `umu-steamrt4`). `None` = run directly.
+    /// Linux games only: the Steam Linux Runtime they run in through umu (`umu-steamrt4`,
+    /// `umu-sniper`, `umu-soldier`, `umu-scout`), or `disable-runtime` to run directly.
+    /// `None` = the default, Steam Runtime 4 (as Faugus Launcher does).
     pub linux_runtime: Option<String>,
     /// Enabled one-click switches, by id (see `tweaks::TWEAKS`).
     pub tweaks: std::collections::BTreeSet<String>,
@@ -175,6 +176,22 @@ impl Default for Lsfg {
             pacing: None,
             override_present_mode: true,
             fp16: true,
+        }
+    }
+}
+
+/// `linux_runtime` value that runs a Linux game directly, without a runtime container.
+pub const NO_RUNTIME: &str = "disable-runtime";
+/// The runtime Linux games use unless chosen otherwise.
+pub const DEFAULT_RUNTIME: &str = "umu-steamrt4";
+
+impl Profile {
+    /// The runtime a Linux game runs in, `None` when it runs directly.
+    pub fn runtime(&self) -> Option<&str> {
+        match self.linux_runtime.as_deref() {
+            None | Some("") => Some(DEFAULT_RUNTIME),
+            Some(NO_RUNTIME) => None,
+            Some(r) => Some(r),
         }
     }
 }
@@ -635,6 +652,20 @@ pub(crate) fn write_toml<T: Serialize>(path: &Path, value: &T) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn linux_games_run_in_steam_runtime_4_by_default() {
+        let mut p = Profile::default();
+        assert_eq!(
+            p.runtime(),
+            Some(DEFAULT_RUNTIME),
+            "like Faugus: SteamRT4 unless chosen"
+        );
+        p.linux_runtime = Some("umu-sniper".into());
+        assert_eq!(p.runtime(), Some("umu-sniper"));
+        p.linux_runtime = Some(NO_RUNTIME.into());
+        assert_eq!(p.runtime(), None, "run directly");
+    }
+
     #[test]
     fn old_lsfg_default_reads_as_off() {
         // "default" (leave it to lsfg-vk's own config) is gone: Arkor manages lsfg-vk.

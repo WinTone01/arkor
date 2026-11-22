@@ -814,8 +814,12 @@ impl Library {
             )),
             GameKind::Linux => rows.push((
                 self.tr("Runs", "Çalışma"),
-                match &self.profile.linux_runtime {
-                    Some(r) => format!("{} {r}", self.tr("Inside", "İçinde:")),
+                match self.profile.runtime() {
+                    Some(r) => format!(
+                        "{} {}",
+                        self.tr("Inside", "İçinde:"),
+                        r.trim_start_matches("umu-")
+                    ),
                     None => self
                         .tr("Directly (native Linux)", "Doğrudan (yerel Linux)")
                         .to_string(),

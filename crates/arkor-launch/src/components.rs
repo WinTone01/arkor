@@ -262,6 +262,50 @@ pub fn ensure_anticheat(update: bool) -> anyhow::Result<tools::AntiCheat> {
     Ok(tools::anticheat())
 }
 
+/// The Steam Linux Runtime umu runs games in (Faugus' default too).
+pub const RUNTIME: &str = "steamrt4";
+
+/// The installed Steam Linux Runtime's version (its depot version), if any.
+pub fn runtime_version() -> Option<String> {
+    let dir = dirs::data_dir()?.join("umu").join(RUNTIME);
+    std::fs::read_to_string(dir.join("VERSIONS.txt"))
+        .ok()?
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("depot")
+                .map(|v| v.split_whitespace().next().unwrap_or("").to_string())
+        })
+        .filter(|v| !v.is_empty())
+}
+
+/// Downloads (or with `update` refreshes) the Steam Linux Runtime, the container umu starts
+/// every game in, so the first game does not wait for it. umu-run does the download, as
+/// it would before a game. Blocking.
+pub fn ensure_runtime(update: bool) -> anyhow::Result<()> {
+    if runtime_version().is_some() && !update {
+        return Ok(());
+    }
+    let umu = crate::start::umu_run()?;
+    let out = std::process::Command::new(umu)
+        .arg("/usr/bin/true")
+        .env("PROTONPATH", format!("umu-{RUNTIME}"))
+        .env("GAMEID", "umu-arkor-runtime")
+        .env("UMU_NO_PROTON", "1")
+        .env("UMU_RUNTIME_UPDATE", if update { "" } else { "0" })
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("running umu-run")?;
+    anyhow::ensure!(
+        runtime_version().is_some(),
+        "the Steam Linux Runtime could not be installed: {}",
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .last()
+            .unwrap_or("")
+    );
+    Ok(())
+}
+
 /// Before a game that runs through umu: refresh umu-run and the anti-cheat runtimes, and
 /// the game's "Latest" Proton if it uses one. `update` false (automatic updates off) only
 /// downloads what is missing. Problems are printed, never fatal: the game still starts.
@@ -271,6 +315,10 @@ pub fn before_launch(update: bool, latest: Option<Latest>) {
     }
     if let Err(e) = ensure_anticheat(update) {
         eprintln!("arkor: anti-cheat runtimes not updated: {e:#}");
+    }
+    // umu updates the runtime itself when the game starts; this only fills in a missing one.
+    if let Err(e) = ensure_runtime(false) {
+        eprintln!("arkor: Steam Linux Runtime not installed: {e:#}");
     }
     if let Some(latest) = latest
         && let Err(e) = ensure_latest(latest, update)
@@ -303,6 +351,8 @@ pub fn ensure_required(
     ensure_umu(update)?;
     step("EasyAntiCheat & BattlEye");
     ensure_anticheat(update)?;
+    step("Steam Linux Runtime");
+    ensure_runtime(update)?;
     if !any_proton() {
         let latest = first_proton(default_proton);
         step(latest.dir_name());

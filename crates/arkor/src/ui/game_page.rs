@@ -31,11 +31,11 @@ pub(super) struct GameUi {
     pub(super) expanded: std::collections::HashMap<&'static str, bool>,
 }
 
-const RUNTIMES: [(&str, &str); 4] = [
+/// Other runtimes a Linux game can use instead of the default Steam Runtime 4.
+const RUNTIMES: [(&str, &str); 3] = [
     ("umu-sniper", "Sniper"),
     ("umu-soldier", "Soldier"),
     ("umu-scout", "Scout"),
-    ("umu-steamrt4", "Steam Runtime 4"),
 ];
 
 impl Library {
@@ -907,35 +907,49 @@ impl Library {
     }
 
     pub(super) fn render_runtime(&mut self, cx: &mut Context<Self>) -> Div {
-        let current = self.profile.linux_runtime.clone();
-        let mut row = div().flex().flex_wrap().gap_2().child(
-            widgets::chip(
-                "runtime-none",
-                self.tr("Run directly", "Doğrudan çalıştır"),
-                current.is_none(),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.profile.linux_runtime = None;
-                this.save();
-                cx.notify();
-            })),
-        );
+        use arkor_core::profile::NO_RUNTIME;
+        let current = self.profile.linux_runtime.clone().filter(|r| !r.is_empty());
+        let chip = |id: (&'static str, usize),
+                    label: String,
+                    value: Option<&'static str>,
+                    current: &Option<String>,
+                    cx: &mut Context<Self>| {
+            widgets::chip(id, label, current.as_deref() == value).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.profile.linux_runtime = value.map(str::to_string);
+                    this.save();
+                    cx.notify();
+                },
+            ))
+        };
+        let mut row = div().flex().flex_wrap().gap_2().child(chip(
+            ("runtime", 0),
+            format!("Steam Runtime 4 ({})", self.tr("default", "varsayılan")),
+            None,
+            &current,
+            cx,
+        ));
         for (ix, (id, label)) in RUNTIMES.into_iter().enumerate() {
-            row = row.child(
-                widgets::chip(("runtime", ix), label, current.as_deref() == Some(id)).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        this.profile.linux_runtime = Some(id.to_string());
-                        this.save();
-                        cx.notify();
-                    }),
-                ),
-            );
+            row = row.child(chip(
+                ("runtime", ix + 1),
+                label.to_string(),
+                Some(id),
+                &current,
+                cx,
+            ));
         }
+        row = row.child(chip(
+            ("runtime", 9),
+            self.tr("Run directly", "Doğrudan çalıştır").to_string(),
+            Some(NO_RUNTIME),
+            &current,
+            cx,
+        ));
         widgets::section("Steam Linux Runtime").child(widgets::setting_row(
             self.tr("Container", "Konteyner"),
             self.tr(
-                "Sniper suits most native games; older ones may need Soldier or Scout.",
-                "Sniper çoğu yerel oyuna uyar; eskileri Soldier ya da Scout isteyebilir.",
+                "Like Faugus Launcher, Linux games run inside Steam Runtime 4 by default; older games may need Soldier or Scout.",
+                "Faugus Launcher gibi, Linux oyunları varsayılan olarak Steam Runtime 4 içinde çalışır; eski oyunlar Soldier ya da Scout isteyebilir.",
             ),
             row,
         ))

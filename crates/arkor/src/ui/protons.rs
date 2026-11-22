@@ -12,14 +12,6 @@ use gpui::{Context, Div, div, prelude::*};
 use super::Library;
 use super::widgets;
 
-/// Sections of the Proton page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum ProtonTab {
-    #[default]
-    Installed,
-    Download,
-}
-
 /// Progress of the required components (see `components::ensure_required`).
 #[derive(Default)]
 pub(super) struct RequiredState {
@@ -36,7 +28,6 @@ pub(super) enum Component {
 }
 
 pub(super) struct ProtonsState {
-    pub(super) tab: ProtonTab,
     /// Auto-updated component being installed or checked.
     updating: Option<Component>,
     variant: Variant,
@@ -48,7 +39,6 @@ pub(super) struct ProtonsState {
 impl Default for ProtonsState {
     fn default() -> Self {
         Self {
-            tab: ProtonTab::Installed,
             updating: None,
             variant: Variant::Ge,
             releases: HashMap::new(),
@@ -213,8 +203,9 @@ impl Library {
         .into_any_element()
     }
 
-    /// umu-launcher, anti-cheat and a Proton: their state, installed by Arkor itself.
-    fn render_required(&self, protons: usize, cx: &mut Context<Self>) -> Div {
+    /// umu-launcher, anti-cheat, the Steam Linux Runtime and a Proton: their state,
+    /// installed by Arkor itself. Shown on the Downloads page.
+    pub(super) fn render_required(&self, protons: usize, cx: &mut Context<Self>) -> Div {
         use super::style::{self, pal};
         let ac = tools::anticheat();
         let ours = tools::components_dir().ok();
@@ -232,6 +223,9 @@ impl Library {
             None if which_umu() => self.tr("System's umu-run", "Sistemin umu-run'ı").into(),
             None => String::new(),
         };
+        let runtime_text = components::runtime_version()
+            .map(|v| format!("SteamRT4 {v}"))
+            .unwrap_or_default();
         let proton_text = if protons > 0 {
             format!("{protons} {}", self.tr("installed", "kurulu"))
         } else {
@@ -268,12 +262,14 @@ impl Library {
                     self.tr("Missing", "Eksik").to_string()
                 }))
         };
-        let mut card = widgets::section(self.tr("Required for Windows games", "Windows oyunları için gerekli"))
+        let mut card = widgets::section(self.tr("Required for games", "Oyunlar için gerekli"))
             .child(widgets::label(self.tr(
-                "Arkor installs these by itself when it starts and keeps them updated, as Faugus Launcher does.",
-                "Arkor bunları açılırken kendisi kurar ve Faugus Launcher gibi güncel tutar.",
+                "Arkor installs these by itself when it starts and keeps them updated, as Faugus Launcher does. Games run inside the Steam Linux Runtime.",
+                "Arkor bunları açılırken kendisi kurar ve Faugus Launcher gibi güncel tutar. Oyunlar Steam Linux Runtime içinde çalışır.",
             )))
             .child(row("umu-launcher", umu_text, 0))
+            .child(widgets::divider())
+            .child(row("Steam Linux Runtime", runtime_text, 3))
             .child(widgets::divider())
             .child(row("EasyAntiCheat & BattlEye", ac_text, 1))
             .child(widgets::divider())
@@ -300,42 +296,13 @@ impl Library {
         use super::style::{self, pal};
         use components::Latest;
         let variant = self.protons.variant;
-        let tab = self.protons.tab;
-        if tab == ProtonTab::Download
-            && !self.protons.releases.contains_key(variant.label())
-            && !self.protons.loading
-        {
+        if !self.protons.releases.contains_key(variant.label()) && !self.protons.loading {
             self.load_releases(variant, cx);
         }
         let installed = tools::installed_protons();
 
-        let content = match tab {
-            ProtonTab::Installed => div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .child(self.render_required(installed.len(), cx))
-                .child(
-                    div()
-                        .id("protons-to-downloads")
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_sm()
-                        .text_color(pal::muted())
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(pal::text()))
-                        .child(style::icon("hard-drive-download", 14., pal::accent_light()))
-                        .child(self.tr(
-                            "Installed builds, updates and removing them: Downloads",
-                            "Kurulu derlemeler, güncellemeleri ve silinmeleri: İndirilenler",
-                        ))
-                        .child(style::icon("chevron-right", 14., pal::faint()))
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Downloads, cx)),
-                        ),
-                ),
-            ProtonTab::Download => {
+        let content = {
+            {
                 let mut chips = div().flex().flex_wrap().gap_2();
                 for (ix, v) in Variant::ALL.into_iter().enumerate() {
                     chips = chips.child(
@@ -457,21 +424,6 @@ impl Library {
             }
         };
 
-        let entries = vec![
-            style::NavEntry::new("circle-check", self.tr("Required", "Gerekli")),
-            style::NavEntry::new("download", self.tr("Download", "İndir")),
-        ];
-        let tabs = [ProtonTab::Installed, ProtonTab::Download];
-        let nav = style::side_nav(
-            "proton-tab",
-            entries,
-            tabs.iter().position(|t| *t == tab),
-            cx,
-            move |this, i, cx| {
-                this.protons.tab = tabs[i];
-                cx.notify();
-            },
-        );
         div()
             .child(Self::header(
                 self.tr("Proton & Wine", "Proton ve Wine"),
@@ -480,7 +432,7 @@ impl Library {
                     "Windows oyunlarının çalıştığı derlemeler. Oyun başına seç (oyun sayfası → Uyumluluk) ya da hepsi için varsayılan belirle (Ayarlar → Oyun varsayılanları).",
                 ),
             ))
-            .child(style::with_side_nav(nav, content))
+            .child(content)
     }
 }
 

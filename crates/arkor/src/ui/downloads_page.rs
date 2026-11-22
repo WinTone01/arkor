@@ -393,140 +393,121 @@ impl Library {
         rows
     }
 
-    pub(super) fn render_downloads(&mut self, cx: &mut Context<Self>) -> Div {
-        let _ = self.downloads.generation;
-        let mut page = div().child(Self::header(
-            self.tr("Downloads", "İndirilenler"),
-            self.tr(
-                "What Arkor is downloading and everything it has downloaded. Removing a tool does not change games it was installed into.",
-                "Arkor'un indirdikleri ve indirmekte oldukları. Bir aracı silmek, kurulduğu oyunları değiştirmez.",
-            ),
-        ));
-        let section = |text: &'static str| {
+    /// One active download as a large card: bar on top, then a strip of figures.
+    fn active_card(&self, e: &progress::Entry) -> Div {
+        let stat = |title: &'static str, value: String| {
             div()
-                .pt_2()
-                .text_xs()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(pal::faint())
-                .child(text)
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .px_4()
+                .py_2()
+                .child(div().text_xs().text_color(pal::faint()).child(title))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(value),
+                )
         };
-
-        // Active downloads.
-        let active = progress::list();
-        if !active.is_empty() {
-            let mut list = div().flex().flex_col().gap_3();
-            for e in &active {
-                list = list.child(
-                    style::card()
-                        .p_4()
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .child(
-                            div()
-                                .size(px(44.))
-                                .flex_none()
-                                .rounded(px(12.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .bg(pal::accent().opacity(0.15))
-                                .child(style::icon("download", 20., pal::accent_light())),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            div()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .truncate()
-                                                .child(e.label.clone()),
-                                        )
-                                        .children(e.fraction().map(|f| {
-                                            div()
-                                                .text_sm()
-                                                .text_color(pal::accent_light())
-                                                .child(format!("{:.0}%", f * 100.))
-                                        })),
-                                )
-                                .child(progress_bar(if e.phase == Phase::Downloading {
+        let size = match (e.phase, e.total) {
+            (Phase::Downloading, Some(t)) => format!(
+                "{} / {}",
+                progress::human_bytes(e.done),
+                progress::human_bytes(t)
+            ),
+            (Phase::Downloading, None) => progress::human_bytes(e.done),
+            _ => "—".into(),
+        };
+        let speed = if e.phase == Phase::Downloading && e.speed > 1. {
+            format!("{}/s", progress::human_bytes(e.speed as u64))
+        } else {
+            "—".into()
+        };
+        let left = match (e.phase, e.eta_secs()) {
+            (Phase::Downloading, Some(s)) if s >= 60 => format!("{} min", s / 60),
+            (Phase::Downloading, Some(s)) => format!("{s} s"),
+            _ => "—".into(),
+        };
+        style::card()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .p_4()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(
+                        div()
+                            .size(px(52.))
+                            .flex_none()
+                            .rounded(px(14.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(style::accent_gradient())
+                            .child(style::icon("download", 24., pal::on_accent())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_end()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .truncate()
+                                            .child(e.label.clone()),
+                                    )
+                                    .child(div().text_sm().text_color(pal::accent_light()).child(
+                                        match e.fraction() {
+                                            Some(f) if e.phase == Phase::Downloading => {
+                                                format!("{:.0}%", f * 100.)
+                                            }
+                                            _ => progress_text(e, self),
+                                        },
+                                    )),
+                            )
+                            .child(
+                                progress_bar(if e.phase == Phase::Downloading {
                                     e.fraction()
                                 } else {
                                     None
-                                }))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(pal::muted())
-                                        .child(progress_text(e, self)),
-                                ),
-                        ),
-                );
-            }
-            page = page
-                .child(section(self.tr("DOWNLOADING", "İNDİRİLİYOR")))
-                .child(list);
-        }
+                                })
+                                .h(px(8.)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .border_t_1()
+                    .border_color(pal::glass_spec().border)
+                    .bg(pal::raised().opacity(0.25))
+                    .child(stat(self.tr("Downloaded", "İndirilen"), size))
+                    .child(stat(self.tr("Speed", "Hız"), speed))
+                    .child(stat(self.tr("Time left", "Kalan süre"), left)),
+            )
+    }
 
-        // Installed, with filters.
-        let mut rows = self.proton_rows();
-        rows.extend(self.tool_rows());
-        let count = |f: Filter| {
-            rows.iter()
-                .filter(|r| f == Filter::All || r.filter == f)
-                .count()
-        };
-        let mut chips = div().flex().flex_wrap().gap_2();
-        for (ix, (f, label)) in [
-            (Filter::All, self.tr("All", "Tümü")),
-            (Filter::Proton, "Proton"),
-            (
-                Filter::Layers,
-                self.tr("Vulkan layers", "Vulkan katmanları"),
-            ),
-            (Filter::Mods, self.tr("Game mods", "Oyun modları")),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            chips = chips.child(
-                widgets::chip(
-                    ("dl-filter", ix),
-                    format!("{label} · {}", count(f)),
-                    self.downloads.filter == f,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.downloads.filter = f;
-                    cx.notify();
-                })),
-            );
-        }
-        page = page
-            .child(section(self.tr("INSTALLED", "KURULU")))
-            .child(chips);
-
-        let filter = self.downloads.filter;
-        let shown: Vec<Row> = rows
-            .into_iter()
-            .filter(|r| filter == Filter::All || r.filter == filter)
-            .collect();
-        if shown.is_empty() {
-            page = page.child(widgets::label(self.tr(
-                "Nothing here yet. Proton builds and the tools you download from a game's page (e.g. OptiScaler, MAKO) appear here.",
-                "Henüz bir şey yok. Proton derlemeleri ve bir oyunun sayfasından indirdiğin araçlar (ör. OptiScaler, MAKO) burada görünür.",
-            )));
-        }
-        let mut list = div().flex().flex_col().gap_2();
-        for (ix, row) in shown.into_iter().enumerate() {
+    /// Installed things as one framed list with a divider between rows.
+    fn installed_list(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) -> Div {
+        let mut list = style::card().overflow_hidden().flex().flex_col();
+        let n = rows.len();
+        for (ix, row) in rows.into_iter().enumerate() {
             let busy = progress::running(&row.key);
             let Row {
                 key,
@@ -537,9 +518,17 @@ impl Library {
                 remove,
                 ..
             } = row;
-            let mut actions = div().flex().items_center().gap_2();
+            let mut actions = div().flex().items_center().gap_2().flex_none();
             if busy {
-                actions = actions.child(widgets::label(self.tr("Working…", "Çalışıyor…")));
+                actions = actions.child(
+                    div()
+                        .w(px(140.))
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(widgets::label(self.tr("Working…", "Çalışıyor…")))
+                        .child(progress_bar(None)),
+                );
             } else {
                 if let Some(update) = update {
                     let (k, l) = (key.clone(), title.clone());
@@ -558,8 +547,21 @@ impl Library {
                 if let Some(remove) = remove {
                     let (k, l) = (key.clone(), title.clone());
                     actions = actions.child(
-                        style::button(("dl-remove", ix), self.tr("Remove", "Sil"), false)
-                            .child(style::icon("trash", 13., pal::danger()))
+                        div()
+                            .id(("dl-remove", ix))
+                            .size(px(32.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(9.))
+                            .border_1()
+                            .border_color(pal::border_strong())
+                            .cursor_pointer()
+                            .hover(|s| {
+                                s.bg(pal::danger().opacity(0.15))
+                                    .border_color(pal::danger().opacity(0.5))
+                            })
+                            .child(style::icon("trash", 14., pal::danger()))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.downloads_job(k.clone(), l.clone(), remove(), cx)
                             })),
@@ -567,21 +569,28 @@ impl Library {
                 }
             }
             list = list.child(
-                style::card()
-                    .p_3()
+                div()
+                    .px_4()
+                    .py_3()
                     .flex()
                     .items_center()
                     .gap_4()
+                    .hover(|s| s.bg(pal::raised().opacity(0.3)))
+                    .when(ix + 1 < n, |d| {
+                        d.border_b_1().border_color(pal::glass_spec().border)
+                    })
                     .child(
                         div()
-                            .size(px(40.))
+                            .size(px(42.))
                             .flex_none()
-                            .rounded(px(10.))
+                            .rounded(px(11.))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(pal::raised())
-                            .child(style::icon(icon, 18., pal::accent_light())),
+                            .bg(pal::accent().opacity(0.12))
+                            .border_1()
+                            .border_color(pal::accent().opacity(0.25))
+                            .child(style::icon(icon, 19., pal::accent_light())),
                     )
                     .child(
                         div()
@@ -589,6 +598,7 @@ impl Library {
                             .min_w_0()
                             .flex()
                             .flex_col()
+                            .gap_0p5()
                             .child(
                                 div()
                                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -603,13 +613,113 @@ impl Library {
                                     .child(detail),
                             ),
                     )
-                    .when(busy, |d| {
-                        d.child(div().w(px(120.)).child(progress_bar(None)))
-                    })
                     .child(actions),
             );
         }
-        page.child(list)
+        list
+    }
+
+    pub(super) fn render_downloads(&mut self, cx: &mut Context<Self>) -> Div {
+        let _ = self.downloads.generation;
+        let section = |text: &'static str| {
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(pal::faint())
+                .child(text)
+        };
+        let mut rows = self.proton_rows();
+        rows.extend(self.tool_rows());
+        let count = |f: Filter| {
+            rows.iter()
+                .filter(|r| f == Filter::All || r.filter == f)
+                .count()
+        };
+        let active = progress::list();
+
+        // Left menu, like a store's download page: an overview and one entry per kind.
+        let filters = [Filter::All, Filter::Proton, Filter::Layers, Filter::Mods];
+        let mut entries = vec![
+            style::NavEntry::new("layout-dashboard", self.tr("Overview", "Genel bakış")),
+            style::NavEntry::new("wine", "Proton"),
+            style::NavEntry::new("layers", self.tr("Vulkan layers", "Vulkan katmanları")),
+            style::NavEntry::new("puzzle", self.tr("Game mods", "Oyun modları")),
+        ];
+        entries[0].badge = Some(active.len().to_string()).filter(|n| n != "0");
+        for (i, f) in filters.iter().enumerate().skip(1) {
+            entries[i].badge = Some(count(*f).to_string());
+        }
+        let current = self.downloads.filter;
+        let nav = style::side_nav(
+            "downloads-nav",
+            entries,
+            filters.iter().position(|f| *f == current),
+            cx,
+            move |this, i, cx| {
+                this.downloads.filter = filters[i];
+                cx.notify();
+            },
+        );
+
+        let mut content = div().flex().flex_col().gap_4();
+        if current == Filter::All {
+            content = content.child(section(self.tr("DOWNLOADING", "İNDİRİLİYOR")));
+            if active.is_empty() {
+                content = content.child(
+                    style::card()
+                        .p_4()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(style::icon("circle-check", 18., pal::success()))
+                        .child(widgets::label(self.tr(
+                            "Nothing is downloading right now.",
+                            "Şu an bir şey indirilmiyor.",
+                        ))),
+                );
+            }
+            for e in &active {
+                content = content.child(self.active_card(e));
+            }
+            let protons = tools::installed_protons().len();
+            content = content.child(self.render_required(protons, cx));
+        }
+        let shown: Vec<Row> = rows
+            .into_iter()
+            .filter(|r| current == Filter::All || r.filter == current)
+            .collect();
+        content = content.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(section(self.tr("INSTALLED", "KURULU")))
+                .child(widgets::label(format!(
+                    "{} {}",
+                    shown.len(),
+                    self.tr("items", "öğe")
+                ))),
+        );
+        if shown.is_empty() {
+            content = content.child(
+                style::card().p_6().flex().flex_col().items_center().gap_2().child(style::icon("hard-drive-download", 28., pal::faint())).child(widgets::label(self.tr(
+                    "Nothing here yet. Proton builds and the tools you download from a game's page (e.g. OptiScaler, MAKO) appear here.",
+                    "Henüz bir şey yok. Proton derlemeleri ve bir oyunun sayfasından indirdiğin araçlar (ör. OptiScaler, MAKO) burada görünür.",
+                ))),
+            );
+        } else {
+            content = content.child(self.installed_list(shown, cx));
+        }
+
+        div()
+            .child(Self::header(
+                self.tr("Downloads", "İndirilenler"),
+                self.tr(
+                    "What Arkor is downloading, what games need, and everything it has downloaded. Removing a tool does not change games it was installed into.",
+                    "Arkor'un indirdikleri, oyunların ihtiyaç duydukları ve indirilmiş her şey. Bir aracı silmek, kurulduğu oyunları değiştirmez.",
+                ),
+            ))
+            .child(style::with_side_nav(nav, content))
     }
 }
 

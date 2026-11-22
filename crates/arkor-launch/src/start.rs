@@ -99,7 +99,7 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
         let profile = Profile::load(id).unwrap_or_default();
         let mut command = Vec::new();
         let mut env = BTreeMap::new();
-        if let Some(runtime) = profile.linux_runtime.filter(|r| !r.is_empty()) {
+        if let Some(runtime) = profile.runtime().map(str::to_string) {
             // umu runs native games inside the chosen Steam Linux Runtime container.
             crate::components::before_launch(update, None);
             command.push(umu_run()?);
