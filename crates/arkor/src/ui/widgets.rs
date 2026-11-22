@@ -63,6 +63,22 @@ pub fn chip(
         .child(text.into())
 }
 
+/// Filled accent button for the main action on a page (e.g. Play).
+pub fn primary_button(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px_6()
+        .py_2()
+        .rounded_lg()
+        .bg(rgb(ACCENT))
+        .text_color(rgb(BG))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .cursor_pointer()
+        .hover(|s| s.opacity(0.9))
+        .child(text.into())
+}
+
 /// Non-clickable chip for state that cannot be chosen directly (e.g. "Custom" preset).
 pub fn badge(text: impl Into<SharedString>, active: bool) -> Div {
     div()

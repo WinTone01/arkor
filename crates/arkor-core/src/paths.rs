@@ -25,3 +25,11 @@ pub fn mangohud_user_config() -> Option<PathBuf> {
     let p = dirs::config_dir()?.join("MangoHud/MangoHud.conf");
     p.is_file().then_some(p)
 }
+
+/// `~/.local/state/arkor/logs/<id>.log`: output of the last launch of a game.
+pub fn launch_log(id: &crate::GameId) -> anyhow::Result<PathBuf> {
+    let state = dirs::state_dir().context("no XDG state dir")?;
+    Ok(state
+        .join("arkor/logs")
+        .join(format!("{}.log", id.file_stem())))
+}

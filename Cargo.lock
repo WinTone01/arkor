@@ -119,6 +119,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arkor-core",
+ "arkor-stores",
+ "dirs 6.0.0",
+ "tempfile",
 ]
 
 [[package]]
@@ -128,6 +131,9 @@ dependencies = [
  "anyhow",
  "arkor-core",
  "dirs 6.0.0",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

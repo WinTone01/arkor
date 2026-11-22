@@ -86,8 +86,15 @@ impl FromStr for GameId {
 pub struct Game {
     pub id: GameId,
     pub name: String,
+    /// `None` for games that are owned but not installed.
     pub install_dir: Option<PathBuf>,
     pub size_on_disk: Option<u64>,
+}
+
+impl Game {
+    pub fn is_installed(&self) -> bool {
+        self.install_dir.is_some()
+    }
 }
 
 #[cfg(test)]

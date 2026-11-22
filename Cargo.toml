@@ -14,6 +14,8 @@ arkor-launch = { path = "crates/arkor-launch" }
 gpui = "=0.2.2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
+serde_json = "1"
+tempfile = "3"
 anyhow = "1"
 dirs = "6"
 

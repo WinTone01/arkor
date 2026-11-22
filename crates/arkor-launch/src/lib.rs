@@ -3,6 +3,9 @@
 //!
 //! `plan` is pure (profile + command in, final argv + env out) so it can be unit-tested;
 //! `exec` performs side effects (writes generated configs, replaces the process).
+//! `start` (see [`start`]) is the store-aware entry point behind `arkor launch` / Play.
+
+pub mod start;
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
@@ -81,6 +84,17 @@ fn disable_layer(env: &mut BTreeMap<String, String>) {
 /// Loads the game's profile, writes generated configs and replaces this process with the game.
 /// Only returns on error.
 pub fn exec(id: &GameId, command: &[String]) -> anyhow::Result<std::convert::Infallible> {
+    exec_with(id, command, &BTreeMap::new(), None)
+}
+
+/// Like [`exec`], with environment set before the profile is applied (so the profile can still
+/// override it) and an optional working directory.
+pub fn exec_with(
+    id: &GameId,
+    command: &[String],
+    base_env: &BTreeMap<String, String>,
+    working_dir: Option<&Path>,
+) -> anyhow::Result<std::convert::Infallible> {
     let profile = Profile::load(id)?;
     let global = Global::load_or_import()?;
     let game_dir = paths::game_config_dir(id)?;
@@ -93,11 +107,18 @@ pub fn exec(id: &GameId, command: &[String]) -> anyhow::Result<std::convert::Inf
         std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
     }
 
+    let mut cmd = std::process::Command::new(&plan.argv[0]);
+    cmd.args(&plan.argv[1..]).envs(base_env).envs(&plan.env);
+    // Arkor's own UI sets DISABLE_MANGOHUD for itself; it must not leak into a game that
+    // is supposed to show the HUD.
+    if !plan.env.contains_key("DISABLE_MANGOHUD") {
+        cmd.env_remove("DISABLE_MANGOHUD");
+    }
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
     // exec (not spawn): Steam tracks the game by our PID, and we add no overhead while it runs.
-    let err = std::process::Command::new(&plan.argv[0])
-        .args(&plan.argv[1..])
-        .envs(&plan.env)
-        .exec();
+    let err = cmd.exec();
     Err(err).with_context(|| format!("failed to exec `{}`", plan.argv[0]))
 }
 

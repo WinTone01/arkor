@@ -6,7 +6,8 @@ const USAGE: &str = "\
 usage:
   arkor                         open the library window
   arkor open <global|store:id>  open the window on a page
-  arkor list                    print installed games
+  arkor list                    print all games (* = installed)
+  arkor launch <store:id>       start a game through its store with its profile
   arkor run <store:id> -- CMD   launch CMD with the game's profile
                                 (Steam launch options: arkor run steam:<appid> -- %command%)";
 
@@ -18,6 +19,13 @@ fn main() -> anyhow::Result<()> {
             args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.clone(),
         )),
         Some("list") => list(),
+        Some("launch") => {
+            let id: GameId = args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.parse()?;
+            match arkor_launch::start::start(&id) {
+                Ok(never) => match never {},
+                Err(e) => Err(e),
+            }
+        }
         Some("run") => {
             let id: GameId = args.get(1).ok_or_else(|| anyhow::anyhow!(USAGE))?.parse()?;
             let command = match args.get(2).map(String::as_str) {
@@ -38,9 +46,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn list() -> anyhow::Result<()> {
-    let (games, errors) = arkor_stores::steam::installed_games();
+    let (games, errors) = arkor_stores::all_games();
     for game in &games {
-        println!("{:<16} {}", game.id.to_string(), game.name);
+        let mark = if game.is_installed() { '*' } else { ' ' };
+        println!("{mark} {:<42} {}", game.id.to_string(), game.name);
     }
     for e in errors {
         eprintln!("warning: {e:#}");

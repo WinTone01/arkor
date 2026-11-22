@@ -7,3 +7,8 @@ license.workspace = true
 [dependencies]
 arkor-core.workspace = true
 anyhow.workspace = true
+arkor-stores.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
