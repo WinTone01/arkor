@@ -2,22 +2,38 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+/// Where a game was found. Arkor only lists installed games; it never downloads any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Store {
     Steam,
+    /// Epic Games Store, installed through legendary or Heroic.
     Epic,
     Gog,
-    Amazon,
+    /// Games added to Heroic by hand ("sideloaded").
+    Heroic,
+    /// Games added in Faugus Launcher.
+    Faugus,
+    /// Games imported into Arkor from a Wine prefix.
     Local,
 }
 
 impl Store {
+    pub const ALL: [Store; 6] = [
+        Store::Steam,
+        Store::Epic,
+        Store::Gog,
+        Store::Heroic,
+        Store::Faugus,
+        Store::Local,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Store::Steam => "steam",
             Store::Epic => "epic",
             Store::Gog => "gog",
-            Store::Amazon => "amazon",
+            Store::Heroic => "heroic",
+            Store::Faugus => "faugus",
             Store::Local => "local",
         }
     }
@@ -69,14 +85,10 @@ impl FromStr for GameId {
         let (store, id) = s
             .split_once(':')
             .ok_or_else(|| anyhow::anyhow!("game id must look like `store:id`, got `{s}`"))?;
-        let store = match store {
-            "steam" => Store::Steam,
-            "epic" => Store::Epic,
-            "gog" => Store::Gog,
-            "amazon" => Store::Amazon,
-            "local" => Store::Local,
-            other => anyhow::bail!("unknown store `{other}`"),
-        };
+        let store = Store::ALL
+            .into_iter()
+            .find(|s| s.as_str() == store)
+            .ok_or_else(|| anyhow::anyhow!("unknown store `{store}`"))?;
         anyhow::ensure!(!id.is_empty(), "empty game id");
         Ok(Self::new(store, id))
     }

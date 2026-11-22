@@ -78,53 +78,20 @@ impl Legendary {
         self.config_dir.join("user.json").is_file()
     }
 
-    /// Owned base games (DLC and non-game assets skipped), installed ones with their path.
+    /// Installed games (DLC skipped). Owned-but-not-installed games are not listed:
+    /// Arkor only shows what can be played right now.
     pub fn games(&self) -> anyhow::Result<Vec<Game>> {
-        let installed = self.installed()?;
-        let mut games: BTreeMap<String, Game> = BTreeMap::new();
-
-        let metadata_dir = self.config_dir.join("metadata");
-        if let Ok(entries) = std::fs::read_dir(&metadata_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_none_or(|e| e != "json") {
-                    continue;
-                }
-                // One unreadable entry should not hide the rest of the library.
-                let Ok(meta) = read_json::<Metadata>(&path) else {
-                    continue;
-                };
-                if !meta.is_base_game() {
-                    continue;
-                }
-                games.insert(
-                    meta.app_name.clone(),
-                    Game {
-                        id: GameId::new(Store::Epic, &meta.app_name),
-                        name: meta.app_title,
-                        install_dir: None,
-                        size_on_disk: None,
-                    },
-                );
-            }
-        }
-
-        // Installed entries win: they exist even if metadata is missing (e.g. offline install).
-        for (app_name, inst) in installed {
-            if inst.is_dlc {
-                continue;
-            }
-            games.insert(
-                app_name.clone(),
-                Game {
-                    id: GameId::new(Store::Epic, &app_name),
-                    name: inst.title,
-                    install_dir: Some(inst.install_path),
-                    size_on_disk: inst.install_size,
-                },
-            );
-        }
-        Ok(games.into_values().collect())
+        Ok(self
+            .installed()?
+            .into_iter()
+            .filter(|(_, inst)| !inst.is_dlc)
+            .map(|(app_name, inst)| Game {
+                id: GameId::new(Store::Epic, &app_name),
+                name: inst.title,
+                install_dir: Some(inst.install_path),
+                size_on_disk: inst.install_size,
+            })
+            .collect())
     }
 
     fn installed(&self) -> anyhow::Result<BTreeMap<String, Installed>> {
@@ -170,35 +137,6 @@ struct Installed {
     is_dlc: bool,
 }
 
-#[derive(Deserialize)]
-struct Metadata {
-    app_name: String,
-    app_title: String,
-    #[serde(default)]
-    metadata: MetadataInner,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct MetadataInner {
-    #[serde(default)]
-    main_game_item: Option<serde_json::Value>,
-    #[serde(default)]
-    categories: Vec<Category>,
-}
-
-#[derive(Deserialize)]
-struct Category {
-    path: String,
-}
-
-impl Metadata {
-    fn is_base_game(&self) -> bool {
-        self.metadata.main_game_item.is_none()
-            && self.metadata.categories.iter().any(|c| c.path == "games")
-    }
-}
-
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -239,29 +177,20 @@ mod tests {
     }
 
     #[test]
-    fn reads_library_and_installed() {
+    fn lists_installed_games_only() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = tmp.path();
+        // Owned-but-not-installed games live in metadata/ and must not be listed.
         write(
             cfg,
             "metadata/a.json",
-            r#"{"app_name":"Fish","app_title":"Shell Game","metadata":{"categories":[{"path":"games"},{"path":"applications"}]}}"#,
+            r#"{"app_name":"Fish","app_title":"Shell Game"}"#,
         );
-        write(
-            cfg,
-            "metadata/b.json",
-            r#"{"app_name":"FishDLC","app_title":"DLC","metadata":{"mainGameItem":{"id":"x"},"categories":[{"path":"games"}]}}"#,
-        );
-        write(
-            cfg,
-            "metadata/c.json",
-            r#"{"app_name":"Asset","app_title":"UE asset","metadata":{"categories":[{"path":"assets"}]}}"#,
-        );
-        write(cfg, "metadata/broken.json", "{");
         write(
             cfg,
             "installed.json",
-            r#"{"Owl":{"app_name":"Owl","title":"Owl Game","install_path":"/games/Owl","install_size":1024,"is_dlc":false,"executable":"Owl.exe"}}"#,
+            r#"{"Owl":{"app_name":"Owl","title":"Owl Game","install_path":"/games/Owl","install_size":1024,"is_dlc":false,"executable":"Owl.exe"},
+                "OwlDLC":{"app_name":"OwlDLC","title":"Owl DLC","install_path":"/games/Owl","is_dlc":true}}"#,
         );
 
         let leg = Legendary {
@@ -269,18 +198,12 @@ mod tests {
             config_dir: cfg.into(),
         };
         let games = leg.games().unwrap();
-        let names: Vec<_> = games
-            .iter()
-            .map(|g| (g.id.to_string(), g.name.as_str(), g.is_installed()))
-            .collect();
+        assert_eq!(games.len(), 1);
         assert_eq!(
-            names,
-            [
-                ("epic:Fish".to_string(), "Shell Game", false),
-                ("epic:Owl".to_string(), "Owl Game", true)
-            ]
+            (games[0].id.to_string(), games[0].name.as_str()),
+            ("epic:Owl".to_string(), "Owl Game")
         );
-        assert_eq!(games[1].size_on_disk, Some(1024));
+        assert_eq!(games[0].size_on_disk, Some(1024));
     }
 
     #[test]

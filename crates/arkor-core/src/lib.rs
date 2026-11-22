@@ -2,6 +2,7 @@
 //! Contains no UI or store-specific code.
 
 pub mod game;
+pub mod imported;
 pub mod mangohud;
 pub mod paths;
 pub mod profile;

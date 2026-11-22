@@ -143,7 +143,7 @@ fn read_toml<T: DeserializeOwned>(path: &Path) -> anyhow::Result<Option<T>> {
 }
 
 /// Writes via temp file + rename so a crash never leaves a half-written file.
-fn write_toml<T: Serialize>(path: &Path, value: &T) -> anyhow::Result<()> {
+pub(crate) fn write_toml<T: Serialize>(path: &Path, value: &T) -> anyhow::Result<()> {
     let dir = path.parent().context("path has no parent")?;
     std::fs::create_dir_all(dir)?;
     let tmp = path.with_extension("toml.tmp");

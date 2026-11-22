@@ -9,6 +9,9 @@ use anyhow::Context;
 use arkor_core::{Game, GameId, Store};
 use serde::Deserialize;
 
+use crate::heroic;
+use crate::target::ExeTarget;
+
 const HEROIC_CONFIGS: &[&str] = &[
     ".config/heroic",
     ".var/app/com.heroicgameslauncher.hgl/config/heroic",
@@ -30,16 +33,6 @@ struct Installed {
     platform: String,
     #[serde(default, rename = "is_dlc")]
     is_dlc: bool,
-}
-
-/// What to execute for an installed GOG game.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaunchTarget {
-    pub exe: PathBuf,
-    pub args: Vec<String>,
-    pub working_dir: PathBuf,
-    /// Linux build: run directly instead of through umu/Proton.
-    pub native: bool,
 }
 
 fn installed_files() -> Vec<PathBuf> {
@@ -130,7 +123,7 @@ fn read_info(install_dir: &Path, app_name: &str) -> anyhow::Result<Info> {
 }
 
 /// Resolves what to run for the installed game `app_name`.
-pub fn launch_target(app_name: &str) -> anyhow::Result<LaunchTarget> {
+pub fn launch_target(app_name: &str) -> anyhow::Result<ExeTarget> {
     for file in installed_files() {
         if let Some(inst) = read_installed(&file)?
             .into_iter()
@@ -142,17 +135,19 @@ pub fn launch_target(app_name: &str) -> anyhow::Result<LaunchTarget> {
     anyhow::bail!("GOG game `{app_name}` is not installed")
 }
 
-fn resolve(inst: &Installed) -> anyhow::Result<LaunchTarget> {
+fn resolve(inst: &Installed) -> anyhow::Result<ExeTarget> {
     let dir = &inst.install_path;
     if inst.platform == "linux" {
         // GOG Linux installers ship a start.sh that sets up the game's environment.
         let start = dir.join("start.sh");
         anyhow::ensure!(start.is_file(), "{} not found", start.display());
-        return Ok(LaunchTarget {
+        return Ok(ExeTarget {
             exe: start,
             args: Vec::new(),
             working_dir: dir.clone(),
             native: true,
+            prefix: None,
+            proton: None,
         });
     }
     let info = read_info(dir, &inst.app_name)?;
@@ -169,7 +164,7 @@ fn resolve(inst: &Installed) -> anyhow::Result<LaunchTarget> {
         .context("no playable task in goggame .info")?;
     // GOG paths are Windows-style and relative to the install dir.
     let rel = |p: &str| dir.join(p.replace('\\', "/"));
-    Ok(LaunchTarget {
+    Ok(ExeTarget {
         exe: rel(&task.path),
         args: split_args(&task.arguments),
         working_dir: if task.working_dir.is_empty() {
@@ -178,6 +173,9 @@ fn resolve(inst: &Installed) -> anyhow::Result<LaunchTarget> {
             rel(&task.working_dir)
         },
         native: false,
+        // Heroic installed it, so reuse its prefix (saves) and Proton choice.
+        prefix: heroic::wine_prefix(&inst.app_name),
+        proton: heroic::proton(&inst.app_name),
     })
 }
 
