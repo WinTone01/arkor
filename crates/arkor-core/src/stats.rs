@@ -67,6 +67,8 @@ pub fn format_duration(secs: u64) -> String {
     match (h, m) {
         (0, 0) => "<1 min".into(),
         (0, m) => format!("{m} min"),
+        // From ten hours on the minutes add nothing (and don't fit under a cover).
+        (h, _) if h >= 10 => format!("{h} h"),
         (h, 0) => format!("{h} h"),
         (h, m) => format!("{h} h {m} min"),
     }
@@ -82,5 +84,6 @@ mod tests {
         assert_eq!(format_duration(5 * 60), "5 min");
         assert_eq!(format_duration(2 * 3600 + 15 * 60), "2 h 15 min");
         assert_eq!(format_duration(3600), "1 h");
+        assert_eq!(format_duration(96 * 3600 + 20 * 60), "96 h");
     }
 }
