@@ -2,6 +2,7 @@
 //! right. Every change is saved immediately; `arkor run` picks it up on the next launch.
 
 mod add_game;
+mod app_icon;
 mod backdrop;
 mod bench_page;
 mod big_screen;
@@ -564,6 +565,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
         .run(move |cx: &mut App| {
             gpui::init(cx);
             style::load_fonts(cx);
+            app_icon::install();
             sync_kit_theme(&global.appearance, cx);
             text_input::bind_keys(cx);
             cx.bind_keys([gpui::KeyBinding::new("ctrl-h", ToggleHidden, None)]);

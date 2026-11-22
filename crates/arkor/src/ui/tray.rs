@@ -29,7 +29,13 @@ impl ksni::Tray for ArkorTray {
     }
 
     fn icon_name(&self) -> String {
-        "input-gaming".into()
+        super::app_icon::NAME.into()
+    }
+
+    fn icon_theme_path(&self) -> String {
+        super::app_icon::theme_root()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
@@ -120,7 +126,7 @@ pub fn set_autostart(enabled: bool) -> anyhow::Result<()> {
     std::fs::write(
         &path,
         format!(
-            "[Desktop Entry]\nType=Application\nName=Arkor\nComment=Game launcher\nExec=\"{}\" --tray\nIcon=input-gaming\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nName=Arkor\nComment=Game launcher\nExec=\"{}\" --tray\nIcon=arkor\nX-GNOME-Autostart-enabled=true\n",
             exe.display()
         ),
     )?;

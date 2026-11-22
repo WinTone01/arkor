@@ -246,7 +246,8 @@ pub fn accent_gradient() -> Background {
     )
 }
 
-/// The Arkor mark: an accent tile with an "A".
+/// The Arkor logo: the mark (an arch with a core) on an accent tile, so it follows the
+/// accent colour chosen in Settings.
 pub fn logo(size: f32) -> impl IntoElement {
     div()
         .size(px(size))
@@ -254,12 +255,14 @@ pub fn logo(size: f32) -> impl IntoElement {
         .flex_none()
         .items_center()
         .justify_center()
-        .rounded(px(size * 0.3))
+        .rounded(px(size * 0.26))
         .bg(accent_gradient())
-        .text_color(pal::on_accent())
-        .text_size(px(size * 0.55))
-        .font_weight(gpui::FontWeight::BOLD)
-        .child("A")
+        .child(
+            svg()
+                .path(super::icons::MARK)
+                .size(px(size * 0.74))
+                .text_color(pal::on_accent()),
+        )
 }
 
 /// Compact rounded button. `primary` is the filled look for a row's main action.

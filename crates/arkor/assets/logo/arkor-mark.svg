@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Arkor's mark alone, one colour (the app tints it): the arch and its core. -->
+  <path d="M128 46 L198 204 L164 204 L128 120 L92 204 L58 204 Z" fill="#ffffff"/>
+  <path d="M128 147 L145 166 L128 185 L111 166 Z" fill="#ffffff"/>
+</svg>

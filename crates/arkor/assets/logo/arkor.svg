@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Arkor</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="0.5" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#3b0f86"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f5d0fe" stop-opacity="0.9"/>
+      <stop offset="0.45" stop-color="#e879f9" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#e879f9" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="arch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ede9fe"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="url(#tile)"/>
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="url(#shine)"/>
+  <rect x="9.5" y="9.5" width="237" height="237" rx="58.5" fill="none" stroke="#ffffff" stroke-opacity="0.2" stroke-width="3"/>
+  <!-- Glow of the core -->
+  <circle cx="128" cy="166" r="46" fill="url(#glow)"/>
+  <!-- The arch: an A without its bar -->
+  <path d="M128 46 L198 204 L164 204 L128 120 L92 204 L58 204 Z" fill="url(#arch)"/>
+  <!-- The core, where the bar would be -->
+  <path d="M128 147 L145 166 L128 185 L111 166 Z" fill="#ffffff"/>
+</svg>
