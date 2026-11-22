@@ -358,7 +358,12 @@ impl Library {
             Some("system") => Selection::System,
             Some("library") => Selection::Grid,
             Some("benchmarks") => Selection::Bench,
-            Some("downloads") => Selection::Downloads,
+            Some("downloads") => {
+                if tab == Some("tools") {
+                    self.downloads_show_tools();
+                }
+                Selection::Downloads
+            }
             Some("big") => {
                 self.big_screen = true;
                 Selection::Grid
@@ -415,6 +420,13 @@ impl Library {
             Some(Selection::Game(ix)) => self.profile.save(&self.games[ix].id),
             _ => return,
         };
+        // Something switched on that is not installed yet (a layer, a "Latest" Proton):
+        // fetched right away in the download queue.
+        if result.is_ok() && matches!(self.selection, Some(Selection::Game(_))) {
+            for (key, _) in arkor_launch::downloads::needs(&self.profile) {
+                arkor_launch::downloads::enqueue(&key);
+            }
+        }
         self.report(result);
     }
 
@@ -758,12 +770,11 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
             cx.new(|cx| {
                 let mut lib = Library::new();
                 lib.open(open.as_deref());
-                // Only the real window installs components (not the headless tests).
-                lib.ensure_required(cx);
-                // A newer Arkor is looked for at start, like the components.
-                if !lib.global.no_auto_updates {
-                    lib.check_app_update(true, cx);
-                }
+                // Only the real window installs components and runs the download queue
+                // (not the headless tests).
+                arkor_launch::downloads::start();
+                lib.watch_progress(cx);
+                lib.startup_updates(cx);
                 lib
             })
         },

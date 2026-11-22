@@ -71,7 +71,7 @@ fn parse_listing(json: &str) -> anyhow::Result<Vec<Build>> {
     Ok(builds)
 }
 
-fn folder_name(version: &str) -> String {
+pub(crate) fn folder_name(version: &str) -> String {
     version.replace(' ', "-")
 }
 

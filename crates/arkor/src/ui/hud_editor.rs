@@ -67,7 +67,6 @@ const GROUPS: [&[Metric]; 4] = [
         GpuName,
         Arch,
         DisplayServer,
-        Gamemode,
         Vkbasalt,
         MediaPlayer,
         Fcat,
@@ -1207,7 +1206,11 @@ mod tests {
     fn groups_cover_every_metric_once() {
         let mut all: Vec<Metric> = GROUPS.iter().flat_map(|g| g.iter().copied()).collect();
         all.sort();
-        let mut expected = Metric::ALL.to_vec();
+        // GameMode's status is not offered: Arkor does not use GameMode.
+        let mut expected: Vec<Metric> = Metric::ALL
+            .into_iter()
+            .filter(|m| *m != Metric::Gamemode)
+            .collect();
         expected.sort();
         assert_eq!(all, expected);
     }

@@ -31,6 +31,8 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
                 .get(&id.id)
                 .with_context(|| format!("`{id}` is not in the library"))?
                 .clone();
+            // What the game's settings use but is missing (a layer, a "Latest" Proton).
+            crate::downloads::ensure_needs(&Profile::load(id).unwrap_or_default());
             match &game.kind {
                 GameKind::Steam { appid } => steam(appid),
                 GameKind::Epic { app_name } => epic_game(id, &game, app_name, &global),
@@ -58,7 +60,7 @@ fn epic_game(
     global: &Global,
 ) -> anyhow::Result<i32> {
     let (proton, latest) = chosen_proton(id, game.source_proton.clone());
-    crate::components::before_launch(!global.no_auto_updates, latest);
+    crate::components::before_launch(global.updates_on_launch(), latest);
     let legendary = epic::Legendary::locate()
         .context("legendary not found: install `legendary` or Heroic Games Launcher")?;
     anyhow::ensure!(
@@ -76,7 +78,7 @@ fn epic_game(
     let (argv, mut env) = legendary.launch_command(app_name, &wrapper);
     let prefix = game.effective_prefix(&global.prefixes_dir());
     env.extend(proton_env(Some("egs"), &prefix, proton, id));
-    if global.no_auto_updates {
+    if !global.updates_on_launch() {
         env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
     }
     let err = std::process::Command::new(&argv[0])
@@ -92,8 +94,8 @@ fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
         "{} not found (is its drive mounted?)",
         target.exe.display()
     );
-    let update = !Global::load_or_import()
-        .map(|g| g.no_auto_updates)
+    let update = Global::load_or_import()
+        .map(|g| g.updates_on_launch())
         .unwrap_or(false);
     if target.native {
         let profile = Profile::load(id).unwrap_or_default();

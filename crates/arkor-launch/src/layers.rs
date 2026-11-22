@@ -72,6 +72,34 @@ fn user_layer_dir() -> anyhow::Result<PathBuf> {
         .join("vulkan/implicit_layer.d"))
 }
 
+/// The release Arkor installed for `id` (written at install time).
+pub fn installed_version(id: &str) -> Option<String> {
+    let v = std::fs::read_to_string(layers_dir().ok()?.join(id).join("version")).ok()?;
+    Some(v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// The newest release of `tool` with a usable build. Blocking.
+pub fn latest_version(tool: &LayerTool) -> anyhow::Result<String> {
+    let releases: Vec<Release> = serde_json::from_str(&crate::tools::http_get(tool.releases_api)?)
+        .context("unexpected release response")?;
+    releases
+        .iter()
+        .find(|r| {
+            r.assets.iter().any(|a| {
+                a.name.starts_with(tool.asset_prefix)
+                    && a.name.ends_with(tool.asset_suffix)
+                    && !a.name.contains("debug")
+            })
+        })
+        .map(|r| r.tag_name.clone())
+        .with_context(|| format!("no {} release found", tool.name))
+}
+
+/// Whether a layer that `enable_key` switches on is installed (Arkor's copy or the system's).
+pub fn present(enable_key: &str) -> bool {
+    system_layers().iter().any(|l| l.enable.0 == enable_key)
+}
+
 /// Arkor's installed copy, if any.
 pub fn arkor_installed(id: &str) -> bool {
     user_layer_dir().is_ok_and(|d| {
@@ -138,6 +166,8 @@ pub fn install(tool: &LayerTool) -> anyhow::Result<String> {
     uninstall_json(tool.id)?;
     let count = register(tool.id, &dir)?;
     anyhow::ensure!(count > 0, "{} had no Vulkan layer manifest", tool.name);
+    // Remembered for update checks.
+    let _ = std::fs::write(dir.join("version"), &release.tag_name);
     Ok(release.tag_name.clone())
 }
 

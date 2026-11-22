@@ -31,6 +31,8 @@ pub struct Entry {
     /// Bytes per second, averaged since the transfer began.
     pub speed: f64,
     started: Option<Instant>,
+    /// Asked to stop (pause or cancel); the transfer ends at its next check.
+    stop: bool,
 }
 
 impl Entry {
@@ -68,8 +70,23 @@ pub fn list() -> Vec<Entry> {
     ENTRIES.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Marks a change elsewhere (e.g. the download queue) so the UI redraws.
+pub fn touch() {
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
+}
+
+/// Asks the running job `key` to stop (its download ends; a partial file is kept, so the
+/// next download of the same file continues where it stopped).
+pub fn stop(key: &str) {
+    with(|v| {
+        if let Some(e) = v.iter_mut().find(|e| e.key == key) {
+            e.stop = true;
+        }
+    });
 }
 
 /// Whether the job `key` is running.
@@ -107,6 +124,7 @@ pub fn job(key: &str, label: &str) -> Job {
             total: None,
             speed: 0.,
             started: None,
+            stop: false,
         });
     });
     let previous = CURRENT.with(|c| c.borrow_mut().replace(key.to_string()));
@@ -155,6 +173,7 @@ impl Transfer {
                         total,
                         speed: 0.,
                         started: Some(started),
+                        stop: false,
                     })
                 });
                 Transfer {
@@ -166,14 +185,17 @@ impl Transfer {
         }
     }
 
-    pub(crate) fn update(&self, done: u64) {
+    /// Reports `done` bytes; `false` when the job was asked to stop.
+    pub(crate) fn update(&self, done: u64) -> bool {
         let secs = self.started.elapsed().as_secs_f64().max(0.001);
-        with(|v| {
-            if let Some(e) = v.iter_mut().find(|e| e.key == self.key) {
+        with(|v| match v.iter_mut().find(|e| e.key == self.key) {
+            Some(e) => {
                 e.done = done;
                 e.speed = done as f64 / secs;
+                !e.stop
             }
-        });
+            None => true,
+        })
     }
 }
 

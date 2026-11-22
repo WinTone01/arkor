@@ -279,3 +279,50 @@ fn download_progress_shows_in_sidebar_and_downloads_page() {
     cx.run_until_parked();
     assert!(!arkor_launch::progress::running("optiscaler"));
 }
+
+#[test]
+fn download_queue_and_updates_render() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("downloads"));
+        lib
+    });
+    use arkor_launch::downloads;
+    // No worker runs in tests: queued items stay waiting.
+    downloads::enqueue("test-queued");
+    downloads::enqueue("test-paused");
+    downloads::pause("test-paused");
+    view.update(cx, |lib, cx| {
+        lib.downloads_set_updates(vec![downloads::Update {
+            key: "reshade".into(),
+            label: "ReShade".into(),
+            installed: "6.3.0".into(),
+            latest: "6.8.0".into(),
+        }]);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    // "Update all" puts every update in the queue.
+    view.update(cx, |lib, cx| lib.downloads_update_all(cx));
+    assert!(downloads::pending("reshade"));
+    // The Settings page shows the update interval.
+    view.update(cx, |lib, cx| {
+        lib.open(Some("settings"));
+        cx.notify();
+    });
+    cx.run_until_parked();
+    for key in ["test-queued", "test-paused", "reshade"] {
+        downloads::cancel(key);
+    }
+    assert!(downloads::items().is_empty());
+}

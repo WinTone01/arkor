@@ -96,7 +96,7 @@ impl Latest {
 }
 
 /// Makes the release tags and `version` files of one build comparable (Faugus' rules).
-fn normalize_version(v: &str) -> String {
+pub(crate) fn normalize_version(v: &str) -> String {
     v.trim_start_matches('v')
         .replace("GE-Proton", "")
         .replace("cachyos-wineland-", "")
@@ -107,6 +107,49 @@ fn normalize_version(v: &str) -> String {
         .trim_end_matches('+')
         .trim_matches('-')
         .to_string()
+}
+
+/// The newest release tag of a "Latest" build. Blocking.
+pub fn latest_tag(latest: Latest) -> anyhow::Result<String> {
+    let json = tools::http_get_quick(latest.api())?;
+    Ok(
+        proton_dl::parse_list(latest.variant(), &format!("[{json}]"))?
+            .into_iter()
+            .next()
+            .with_context(|| format!("no {} release found", latest.dir_name()))?
+            .tag,
+    )
+}
+
+/// Whether two version strings of one build name the same release.
+pub fn same_version(a: &str, b: &str) -> bool {
+    normalize_version(a) == normalize_version(b)
+}
+
+/// The newest umu-launcher release. Blocking.
+pub fn umu_latest() -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    struct Rel {
+        tag_name: String,
+    }
+    let releases: Vec<Rel> = serde_json::from_str(&tools::http_get_quick(UMU_API)?)
+        .context("unexpected umu-launcher release list")?;
+    Ok(releases
+        .into_iter()
+        .next()
+        .context("no umu-launcher release")?
+        .tag_name)
+}
+
+/// The newest anti-cheat runtimes release. Blocking.
+pub fn anticheat_latest() -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    struct Rel {
+        tag_name: String,
+    }
+    let rel: Rel = serde_json::from_str(&tools::http_get_quick(COMPONENTS_API)?)
+        .context("unexpected components release")?;
+    Ok(rel.tag_name)
 }
 
 /// Installs or updates a "Latest" build; returns its folder. With `update` false an

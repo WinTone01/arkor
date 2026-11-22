@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use arkor_core::profile::UpdateInterval;
 use arkor_launch::components::Latest;
 use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, Context, Div, div, prelude::*, px};
@@ -57,8 +58,8 @@ impl Library {
             .gap_2()
             .child(first)
             .child(widgets::label(self.tr(
-                "↻ = always the newest release, downloaded on first use and updated before each start.",
-                "↻ = hep en yeni sürüm; ilk kullanımda indirilir, her başlatmadan önce güncellenir.",
+                "↻ = always the newest release, downloaded when first chosen and kept up to date (see Updates below).",
+                "↻ = hep en yeni sürüm; ilk seçildiğinde indirilir ve güncel tutulur (aşağıdaki Güncellemeler bölümüne bak).",
             )))
             .when(any, |d| {
                 d.child(widgets::subheading(self.tr(
@@ -238,17 +239,6 @@ impl Library {
                     "Oyun eklenince ona kopyalanır; sonra oyunun sayfasında değiştirilebilir.",
                 )))
                 .child(widgets::setting_row(
-                    "GameMode",
-                    self.tr(
-                        "Feral's CPU and GPU tuning while the game runs.",
-                        "Oyun çalışırken Feral'ın CPU ve GPU ayarları.",
-                    ),
-                    switch("default-gamemode", d.gamemode, cx, |d| {
-                        d.gamemode = !d.gamemode
-                    }),
-                ))
-                .child(widgets::divider())
-                .child(widgets::setting_row(
                     self.tr("Keep the system awake", "Sistemi uyanık tut"),
                     self.tr(
                         "No sleep or screen blanking while playing.",
@@ -365,22 +355,33 @@ impl Library {
             )))
             .child(env);
 
-        let updates = widgets::section(self.tr("Updates", "Güncellemeler")).child(widgets::setting_row(
-            self.tr("Keep launch components up to date", "Başlatma bileşenlerini güncel tut"),
-            self.tr(
-                "Before a game starts: umu-launcher, the anti-cheat runtimes and its always-newest Proton. Off: only what is missing is downloaded.",
-                "Oyun başlamadan önce: umu-launcher, anti-cheat runtime'ları ve hep en yeni Proton'u. Kapalı: yalnızca eksik olan indirilir.",
-            ),
-            widgets::switch(!self.global.no_auto_updates)
-                .id("auto-updates-settings")
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.global.no_auto_updates = !this.global.no_auto_updates;
-                    let saved = this.global.save();
-                    this.report(saved);
-                    cx.notify();
-                })),
-        ));
+        let interval = self.global.update_interval();
+        let mut chips = div().flex().flex_wrap().gap_2();
+        for (ix, choice) in UpdateInterval::ALL.into_iter().enumerate() {
+            let name = match choice {
+                UpdateInterval::Daily => self.tr("Once a day", "Günde bir"),
+                UpdateInterval::Weekly => self.tr("Once a week", "Haftada bir"),
+                UpdateInterval::OnGameStart => self.tr("When a game starts", "Oyun başlarken"),
+                UpdateInterval::Never => self.tr("Never", "Asla"),
+            };
+            chips = chips.child(
+                widgets::chip(("update-interval", ix), name, interval == choice).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.global.no_auto_updates = false;
+                        this.global.update_interval = choice;
+                        let saved = this.global.save();
+                        this.report(saved);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        let updates = widgets::section(self.tr("Updates", "Güncellemeler"))
+            .child(widgets::label(self.tr(
+                "How often Arkor looks for new versions of umu-launcher, the Steam Runtime, anti-cheat, \"Latest\" Protons, downloaded tools and itself. Daily and weekly checks run when Arkor starts; \"When a game starts\" updates the launch components right before each game. Whatever a game needs but is missing is always downloaded.",
+                "Arkor'un umu-launcher, Steam Runtime, anti-cheat, \"Latest\" Proton'lar, indirilen araçlar ve kendisi için yeni sürüm arama sıklığı. Günlük ve haftalık denetim Arkor açılırken yapılır; \"Oyun başlarken\" seçeneği başlatma bileşenlerini her oyundan hemen önce günceller. Bir oyunun ihtiyaç duyup eksik olan şeyi her zaman indirilir.",
+            )))
+            .child(chips);
 
         div()
             .flex()

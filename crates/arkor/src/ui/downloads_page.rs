@@ -8,7 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use arkor_launch::bundles::{self, Bundle};
-use arkor_launch::components::{self, Latest};
+use arkor_launch::components::Latest;
+use arkor_launch::downloads::{self, State, Update};
 use arkor_launch::progress::{self, Phase};
 use arkor_launch::{dlss_enabler, layers, optiscaler, proton_dl, reshade, streamline, tools};
 use gpui::prelude::FluentBuilder;
@@ -36,6 +37,8 @@ pub(super) enum Filter {
     Proton,
     Layers,
     Mods,
+    /// Optional programs from the distribution (MangoHud, Gamescope, winetricks…).
+    Tools,
 }
 
 impl Kind {
@@ -115,50 +118,6 @@ impl Kind {
         }
     }
 
-    /// Fetches the newest version (keeping it if already there) and drops older copies.
-    /// Returns the newest version. Blocking.
-    fn update(self) -> anyhow::Result<String> {
-        let (newest, kept): (String, PathBuf) = match self {
-            Kind::Layer(ix) => return layers::install(&layers::TOOLS[ix]),
-            Kind::OptiScaler => {
-                let r = optiscaler::latest_release()?;
-                let dir = optiscaler::download(&r)?;
-                (r.tag, dir)
-            }
-            Kind::DlssEnabler => {
-                let builds = dlss_enabler::builds()?;
-                let b = builds
-                    .iter()
-                    .find(|b| b.stable)
-                    .or(builds.first())
-                    .ok_or_else(|| anyhow::anyhow!("no DLSS Enabler build found"))?;
-                let dir = dlss_enabler::download(b)?;
-                (b.version.clone(), dir)
-            }
-            Kind::ReShade => {
-                let v = reshade::latest_version()?;
-                let dir = reshade::download(&v)?;
-                (v, dir)
-            }
-            Kind::Streamline => {
-                let v = streamline::latest_version()?;
-                let dir = streamline::download(&v)?;
-                (v, dir)
-            }
-            Kind::Bundle(b) => bundles::download(b)?,
-        };
-        // Older copies are not needed: games keep the files they were given. Compared by
-        // folder, so the copy just downloaded is never the one removed.
-        let kept = std::fs::canonicalize(&kept).unwrap_or(kept);
-        for (_, dir) in self.downloaded() {
-            let same = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
-            if same != kept && !kept.starts_with(&same) && !same.starts_with(&kept) {
-                remove_dir(&dir)?;
-            }
-        }
-        Ok(newest)
-    }
-
     /// Removes the downloaded copy in `dir` (for layers: unregisters and deletes it).
     fn remove(self, dir: &Path) -> anyhow::Result<()> {
         match self {
@@ -187,6 +146,12 @@ pub(super) struct DownloadsState {
     filter: Filter,
     /// Bumped after each change so the list is read again.
     generation: u64,
+    /// Newer versions found by the last check.
+    updates: Vec<Update>,
+    checking: bool,
+    checked: bool,
+    /// `downloads::finished()` count last seen, to notice queue items ending.
+    finished: u64,
 }
 
 type Job = Box<dyn FnOnce() -> anyhow::Result<String> + Send + 'static>;
@@ -199,7 +164,8 @@ struct Row {
     title: String,
     detail: String,
     filter: Filter,
-    update: Option<Action>,
+    /// Queue key that brings it to its newest release (none for a fixed version).
+    update: Option<String>,
     remove: Option<Action>,
 }
 
@@ -260,6 +226,73 @@ pub(super) fn progress_bar(fraction: Option<f32>) -> Div {
 }
 
 impl Library {
+    /// Opens Downloads on its System tools section (from the System page).
+    pub(super) fn downloads_show_tools(&mut self) {
+        self.downloads.filter = Filter::Tools;
+    }
+
+    /// Queues every update found by the last check.
+    pub(super) fn downloads_update_all(&mut self, cx: &mut Context<Self>) {
+        for u in self.downloads.updates.clone() {
+            downloads::enqueue(&u.key);
+        }
+        self.watch_progress(cx);
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(super) fn downloads_set_updates(&mut self, updates: Vec<Update>) {
+        self.downloads.updates = updates;
+        self.downloads.checked = true;
+    }
+
+    /// Puts `key` in the download queue (see `arkor_launch::downloads`).
+    pub(super) fn enqueue_download(&mut self, key: &str, cx: &mut Context<Self>) {
+        downloads::enqueue(key);
+        self.watch_progress(cx);
+        cx.notify();
+    }
+
+    /// At start: when an update check is due (daily or weekly), brings the components to
+    /// their newest release and looks for a newer Arkor and newer tools; otherwise only
+    /// installs what is missing.
+    pub(super) fn startup_updates(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let due = self.global.updates_due(now);
+        self.ensure_required(due, cx);
+        if due {
+            self.global.last_update_check = Some(now);
+            if let Err(e) = self.global.save() {
+                eprintln!("arkor: saving the update time failed: {e:#}");
+            }
+            self.check_app_update(true, cx);
+            self.check_tool_updates(cx);
+        }
+    }
+
+    /// Looks for newer versions of what is downloaded, in the background.
+    pub(super) fn check_tool_updates(&mut self, cx: &mut Context<Self>) {
+        if self.downloads.checking {
+            return;
+        }
+        self.downloads.checking = true;
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let found = bg.spawn(async move { downloads::check_updates() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.downloads.checking = false;
+                this.downloads.checked = true;
+                this.downloads.updates = found;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Redraws while downloads move (one loop for the window's life).
     pub(super) fn watch_progress(&mut self, cx: &mut Context<Self>) {
         if self.downloads_watch {
@@ -276,7 +309,23 @@ impl Library {
                     continue;
                 }
                 seen = now;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                let alive = this.update(cx, |this, cx| {
+                    let (count, last) = downloads::finished();
+                    if count != this.downloads.finished {
+                        // A queued download ended: games read what is installed again.
+                        this.downloads.finished = count;
+                        this.downloads.generation += 1;
+                        if let Some(last) = last {
+                            if last.ok {
+                                this.downloads.updates.retain(|u| u.key != last.key);
+                            }
+                            this.status = Some(last.report.into());
+                        }
+                        this.tools = super::enhance::GameTools::scan();
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
                     return;
                 }
             }
@@ -315,7 +364,6 @@ impl Library {
     /// version does not. Arkor's own installs can be removed.
     fn proton_rows(&self) -> Vec<Row> {
         let user_root = proton_dl::install_root().ok();
-        let done = self.tr("Up to date:", "Güncel:");
         tools::installed_protons()
             .into_iter()
             .map(|(name, path)| {
@@ -328,20 +376,7 @@ impl Library {
                     ),
                     None => path.display().to_string(),
                 };
-                let update: Option<Action> = latest.map(|l| {
-                    let label = name.clone();
-                    std::rc::Rc::new(move || -> Job {
-                        let label = label.clone();
-                        Box::new(move || {
-                            components::ensure_latest(l, true).map(|_| {
-                                format!(
-                                    "{done} {label} {}",
-                                    l.installed_version().unwrap_or_default()
-                                )
-                            })
-                        })
-                    }) as Action
-                });
+                let update = latest.map(|l| format!("latest:{}", l.dir_name()));
                 let remove: Option<Action> = removable.then(|| {
                     let (p, label) = (path.clone(), name.clone());
                     std::rc::Rc::new(move || -> Job {
@@ -363,7 +398,6 @@ impl Library {
     }
 
     fn tool_rows(&self) -> Vec<Row> {
-        let done = self.tr("Up to date:", "Güncel:");
         let mut rows = Vec::new();
         for kind in Kind::all() {
             for (version, dir) in kind.downloaded() {
@@ -380,9 +414,7 @@ impl Library {
                     detail: dir.display().to_string(),
                     filter: kind.filter(),
                     // These tools always follow their newest release.
-                    update: Some(std::rc::Rc::new(move || -> Job {
-                        Box::new(move || kind.update().map(|v| format!("{done} {name} {v}")))
-                    })),
+                    update: Some(kind.key().to_string()),
                     remove: Some(std::rc::Rc::new(move || -> Job {
                         let d = d.clone();
                         Box::new(move || kind.remove(&d).map(|_| format!("{name} ✕")))
@@ -394,7 +426,7 @@ impl Library {
     }
 
     /// One active download as a large card: bar on top, then a strip of figures.
-    fn active_card(&self, e: &progress::Entry) -> Div {
+    fn active_card(&self, ix: usize, e: &progress::Entry, cx: &mut Context<Self>) -> Div {
         let stat = |title: &'static str, value: String| {
             div()
                 .flex_1()
@@ -489,7 +521,45 @@ impl Library {
                                 })
                                 .h(px(8.)),
                             ),
-                    ),
+                    )
+                    .when(downloads::items().iter().any(|i| i.key == e.key), |row| {
+                        // Queued downloads can be paused (the partial file is kept) or cancelled.
+                        let (pause, cancel) = (e.key.clone(), e.key.clone());
+                        row.child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .flex_none()
+                                .child(
+                                    style::button(
+                                        ("dl-pause", ix),
+                                        self.tr("Pause", "Duraklat"),
+                                        false,
+                                    )
+                                    .child(style::icon("pause", 13., pal::muted()))
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            downloads::pause(&pause);
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    style::button(
+                                        ("dl-cancel", ix),
+                                        self.tr("Cancel", "İptal"),
+                                        false,
+                                    )
+                                    .child(style::icon("x", 13., pal::muted()))
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            downloads::cancel(&cancel);
+                                            cx.notify();
+                                        },
+                                    )),
+                                ),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -503,12 +573,228 @@ impl Library {
             )
     }
 
+    /// Waiting, paused and failed downloads, in the order they will run.
+    fn queue_list(&mut self, items: Vec<downloads::Item>, cx: &mut Context<Self>) -> Div {
+        let mut list = style::card().overflow_hidden().flex().flex_col();
+        let n = items.len();
+        for (ix, item) in items.into_iter().enumerate() {
+            let (icon, color, state) = match &item.state {
+                State::Queued => (
+                    "clock",
+                    pal::muted(),
+                    self.tr("Waiting", "Bekliyor").to_string(),
+                ),
+                State::Paused => (
+                    "pause",
+                    pal::warning(),
+                    self.tr("Paused", "Duraklatıldı").to_string(),
+                ),
+                State::Failed(e) => (
+                    "circle-alert",
+                    pal::danger(),
+                    format!("{} · {e}", self.tr("Failed", "Başarısız")),
+                ),
+            };
+            let key = item.key.clone();
+            let main = match item.state {
+                State::Queued => {
+                    style::button(("q-pause", ix), self.tr("Pause", "Duraklat"), false)
+                        .child(style::icon("pause", 13., pal::muted()))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            downloads::pause(&key);
+                            cx.notify();
+                        }))
+                }
+                State::Paused => style::button(("q-resume", ix), self.tr("Resume", "Sürdür"), true)
+                    .child(style::icon("play", 13., pal::on_accent()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.enqueue_download(&key, cx))),
+                State::Failed(_) => {
+                    style::button(("q-retry", ix), self.tr("Try again", "Yeniden dene"), true)
+                        .child(style::icon("rotate-ccw", 13., pal::on_accent()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            downloads::retry(&key);
+                            this.watch_progress(cx);
+                            cx.notify();
+                        }))
+                }
+            };
+            let key = item.key.clone();
+            list = list.child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .when(ix + 1 < n, |d| {
+                        d.border_b_1().border_color(pal::glass_spec().border)
+                    })
+                    .child(
+                        div()
+                            .size(px(36.))
+                            .flex_none()
+                            .rounded(px(10.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(color.opacity(0.12))
+                            .child(style::icon(icon, 17., color)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(item.label),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(pal::muted())
+                                    .truncate()
+                                    .child(state),
+                            ),
+                    )
+                    .child(
+                        div().flex().gap_2().flex_none().child(main).child(
+                            style::button(("q-cancel", ix), self.tr("Remove", "Kaldır"), false)
+                                .child(style::icon("x", 13., pal::muted()))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    downloads::cancel(&key);
+                                    cx.notify();
+                                })),
+                        ),
+                    ),
+            );
+        }
+        list
+    }
+
+    /// "N updates available · Update all", with each update's versions.
+    fn updates_card(&mut self, cx: &mut Context<Self>) -> Div {
+        let st = &self.downloads;
+        let shown: Vec<Update> = st.updates.clone();
+        let waiting = shown.iter().filter(|u| !downloads::pending(&u.key)).count();
+        let (icon, color, title) = if st.checking {
+            (
+                "refresh-cw",
+                pal::muted(),
+                self.tr("Looking for updates…", "Güncellemeler aranıyor…")
+                    .to_string(),
+            )
+        } else if !shown.is_empty() {
+            let n = shown.len();
+            (
+                "sparkles",
+                pal::accent_light(),
+                match (n, self.global.language == super::Language::Tr) {
+                    (_, true) => format!("{n} güncelleme var"),
+                    (1, false) => "1 update available".to_string(),
+                    (_, false) => format!("{n} updates available"),
+                },
+            )
+        } else if st.checked {
+            (
+                "circle-check",
+                pal::success(),
+                self.tr("Everything is up to date", "Her şey güncel")
+                    .to_string(),
+            )
+        } else {
+            (
+                "refresh-cw",
+                pal::muted(),
+                self.tr("Updates", "Güncellemeler").to_string(),
+            )
+        };
+        let mut head = div()
+            .p_4()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(style::icon(icon, 18., color))
+            .child(
+                div()
+                    .flex_1()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child(title),
+            );
+        if waiting > 0 {
+            head = head.child(
+                style::button(
+                    "updates-all",
+                    self.tr("Update all", "Tümünü güncelle"),
+                    true,
+                )
+                .child(style::icon("download", 13., pal::on_accent()))
+                .on_click(cx.listener(|this, _, _, cx| this.downloads_update_all(cx))),
+            );
+        }
+        if !st.checking {
+            head = head.child(
+                style::button(
+                    "updates-check",
+                    self.tr("Check now", "Şimdi denetle"),
+                    false,
+                )
+                .child(style::icon("refresh-cw", 13., pal::muted()))
+                .on_click(cx.listener(|this, _, _, cx| this.check_tool_updates(cx))),
+            );
+        }
+        let mut card = style::card()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .child(head);
+        for (ix, u) in shown.into_iter().enumerate() {
+            let busy = downloads::pending(&u.key);
+            let key = u.key.clone();
+            card = card.child(
+                div()
+                    .px_4()
+                    .py_2p5()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .border_t_1()
+                    .border_color(pal::glass_spec().border)
+                    .child(div().flex_1().min_w_0().truncate().child(u.label))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(pal::muted())
+                            .child(format!("{} → {}", u.installed, u.latest)),
+                    )
+                    .child(if busy {
+                        div()
+                            .w(px(110.))
+                            .child(widgets::label(self.tr("In queue", "Sırada")))
+                    } else {
+                        div().child(
+                            style::button(("update-one", ix), self.tr("Update", "Güncelle"), false)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.enqueue_download(&key, cx)
+                                })),
+                        )
+                    }),
+            );
+        }
+        card
+    }
+
     /// Installed things as one framed list with a divider between rows.
     fn installed_list(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) -> Div {
         let mut list = style::card().overflow_hidden().flex().flex_col();
         let n = rows.len();
         for (ix, row) in rows.into_iter().enumerate() {
-            let busy = progress::running(&row.key);
+            let busy = progress::running(&row.key)
+                || row.update.as_deref().is_some_and(downloads::pending);
             let Row {
                 key,
                 icon,
@@ -531,7 +817,6 @@ impl Library {
                 );
             } else {
                 if let Some(update) = update {
-                    let (k, l) = (key.clone(), title.clone());
                     actions = actions.child(
                         style::button(
                             ("dl-update", ix),
@@ -539,9 +824,9 @@ impl Library {
                             false,
                         )
                         .child(style::icon("refresh-cw", 13., pal::muted()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.downloads_job(k.clone(), l.clone(), update(), cx)
-                        })),
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.enqueue_download(&update, cx)),
+                        ),
                     );
                 }
                 if let Some(remove) = remove {
@@ -638,15 +923,22 @@ impl Library {
         let active = progress::list();
 
         // Left menu, like a store's download page: an overview and one entry per kind.
-        let filters = [Filter::All, Filter::Proton, Filter::Layers, Filter::Mods];
+        let filters = [
+            Filter::All,
+            Filter::Proton,
+            Filter::Layers,
+            Filter::Mods,
+            Filter::Tools,
+        ];
         let mut entries = vec![
             style::NavEntry::new("layout-dashboard", self.tr("Overview", "Genel bakış")),
             style::NavEntry::new("wine", "Proton"),
             style::NavEntry::new("layers", self.tr("Vulkan layers", "Vulkan katmanları")),
             style::NavEntry::new("puzzle", self.tr("Game mods", "Oyun modları")),
+            style::NavEntry::new("toolbox", self.tr("System tools", "Sistem araçları")),
         ];
         entries[0].badge = Some(active.len().to_string()).filter(|n| n != "0");
-        for (i, f) in filters.iter().enumerate().skip(1) {
+        for (i, f) in filters.iter().enumerate().skip(1).take(3) {
             entries[i].badge = Some(count(*f).to_string());
         }
         let current = self.downloads.filter;
@@ -661,6 +953,18 @@ impl Library {
             },
         );
 
+        if current == Filter::Tools {
+            let tools = self.render_system_tools(cx);
+            return div()
+                .child(Self::header(
+                    self.tr("Downloads", "İndirilenler"),
+                    self.tr(
+                        "Optional programs Arkor works with, from your distribution's packages.",
+                        "Arkor'un birlikte çalıştığı, dağıtımının paketlerinden gelen isteğe bağlı programlar.",
+                    ),
+                ))
+                .child(style::with_side_nav(nav, tools));
+        }
         let mut content = div().flex().flex_col().gap_4();
         if current == Filter::All {
             content = content.child(section(self.tr("DOWNLOADING", "İNDİRİLİYOR")));
@@ -678,9 +982,19 @@ impl Library {
                         ))),
                 );
             }
-            for e in &active {
-                content = content.child(self.active_card(e));
+            for (ix, e) in active.iter().enumerate() {
+                content = content.child(self.active_card(ix, e, cx));
             }
+            let waiting: Vec<downloads::Item> = downloads::items()
+                .into_iter()
+                .filter(|i| !progress::running(&i.key))
+                .collect();
+            if !waiting.is_empty() {
+                content = content
+                    .child(section(self.tr("QUEUE", "SIRADA")))
+                    .child(self.queue_list(waiting, cx));
+            }
+            content = content.child(self.updates_card(cx));
             let protons = tools::installed_protons().len();
             content = content.child(self.render_required(protons, cx));
         }

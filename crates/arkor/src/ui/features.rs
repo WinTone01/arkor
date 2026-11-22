@@ -130,19 +130,19 @@ fn download_of(id: &str) -> Option<(Ready, Start)> {
     Some(match id {
         "vksumi" => (
             |l| l.tools.layer_tools[0] || l.layer_present("ENABLE_VKSUMI"),
-            |l, cx| l.layer_tool_action(0, false, cx),
+            |l, cx| l.enqueue_download("vksumi", cx),
         ),
         "vknemu" => (
             |l| l.tools.layer_tools[1] || l.layer_present("VKNEMU"),
-            |l, cx| l.layer_tool_action(1, false, cx),
+            |l, cx| l.enqueue_download("vknemu", cx),
         ),
         "mako" => (
             |l| l.tools.layer_tools[2] || l.layer_present("ENABLE_MAKO"),
-            |l, cx| l.layer_tool_action(2, false, cx),
+            |l, cx| l.enqueue_download("mako", cx),
         ),
         "afmf" => (
             |l| l.tools.layer_tools[3] || l.layer_present("AFMF_ENABLE"),
-            |l, cx| l.layer_tool_action(3, false, cx),
+            |l, cx| l.enqueue_download("afmf", cx),
         ),
         "optiscaler" => (
             |l| l.tools.downloaded.is_some() || l.tools.manifest.is_some(),
@@ -150,15 +150,15 @@ fn download_of(id: &str) -> Option<(Ready, Start)> {
         ),
         "dlss-enabler" => (
             |l| l.tools.de_downloaded.is_some() || l.tools.de_manifest.is_some(),
-            |l, cx| l.de_download(cx),
+            |l, cx| l.enqueue_download("dlss-enabler", cx),
         ),
         "reshade" => (
             |l| l.tools.rs_downloaded.is_some() || l.tools.rs_manifest.is_some(),
-            |l, cx| l.rs_download(cx),
+            |l, cx| l.enqueue_download("reshade", cx),
         ),
         "streamline" => (
             |l| l.tools.sl_downloaded.is_some() || l.tools.sl_manifest.is_some(),
-            |l, cx| l.download_streamline(cx),
+            |l, cx| l.enqueue_download("streamline", cx),
         ),
         _ => return None,
     })
@@ -367,18 +367,18 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     // Performance
     Feature {
-        id: "gamemode",
+        id: "sleep",
         tab: GameTab::Performance,
-        icon: "zap",
-        name: ("GameMode and sleep", "GameMode ve uyku"),
+        icon: "coffee",
+        name: ("Keep awake", "Uyku engelle"),
         desc: (
-            "CPU/GPU tuning while playing, and keeping the system awake.",
-            "Oynarken CPU/GPU ayarı ve sistemi uyanık tutma.",
+            "No sleep or screen blanking while playing.",
+            "Oynarken uyku ya da ekran kararması yok.",
         ),
-        keywords: "gamemode feral cpu governor sleep uyku inhibit awake",
+        keywords: "sleep uyku inhibit awake screen ekran blank",
         applies: always,
-        active: Some(|l| l.profile.gamemode || l.profile.no_sleep),
-        render: |l, cx| Some(l.render_gamemode(cx)),
+        active: Some(|l| l.profile.no_sleep),
+        render: |l, cx| Some(l.render_sleep(cx)),
     },
     Feature {
         id: "gamescope",
@@ -605,7 +605,7 @@ pub(super) const FEATURES: &[Feature] = &[
 /// Quick toggles on the Overview tab: (key, feature whose settings it opens, toggle).
 type Toggle = fn(&mut Library);
 
-const QUICK: [(&str, &str, Toggle); 6] = [
+const QUICK: [(&str, &str, Toggle); 5] = [
     ("mangohud", "mangohud", |l| {
         l.profile.mangohud.mode = match l.profile.mangohud.mode {
             HudMode::Off => {
@@ -626,9 +626,6 @@ const QUICK: [(&str, &str, Toggle); 6] = [
             l.profile.mangohud.mode = HudMode::Custom;
         }
     }),
-    ("gamemode", "gamemode", |l| {
-        l.profile.gamemode = !l.profile.gamemode
-    }),
     ("gamescope", "gamescope", |l| {
         l.profile.gamescope.enabled = !l.profile.gamescope.enabled
     }),
@@ -642,7 +639,7 @@ const QUICK: [(&str, &str, Toggle); 6] = [
     ("vkbasalt", "vkbasalt", |l| {
         l.profile.vkbasalt.enabled = !l.profile.vkbasalt.enabled
     }),
-    ("no-sleep", "gamemode", |l| {
+    ("no-sleep", "sleep", |l| {
         l.profile.no_sleep = !l.profile.no_sleep
     }),
 ];
@@ -686,7 +683,6 @@ impl Library {
                 "gauge",
                 (feature("mangohud").active.unwrap())(self),
             ),
-            "gamemode" => ("GameMode", "zap", p.gamemode),
             "gamescope" => ("Gamescope", "monitor", p.gamescope.enabled),
             "lsfg" => ("lsfg-vk", "layers", p.lsfg.mode == LsfgMode::On),
             "vkbasalt" => ("vkBasalt", "wand-sparkles", p.vkbasalt.enabled),
@@ -964,12 +960,15 @@ impl Library {
                 .when_some(download, |row, start| {
                     // Nothing to set up before it is downloaded: just the button.
                     // Only this tool's own download counts, not others running at the same time.
-                    let busy = arkor_launch::progress::running(id);
+                    let running = arkor_launch::progress::running(id);
+                    let busy = running || arkor_launch::downloads::pending(id);
                     row.child(
                         style::button(
                             ("panel-download", id.len() * 131 + id.as_bytes()[0] as usize),
-                            if busy {
+                            if running {
                                 self.tr("Downloading…", "İndiriliyor…")
+                            } else if busy {
+                                self.tr("In queue", "Sırada")
                             } else {
                                 self.tr("Download", "İndir")
                             },
@@ -982,7 +981,9 @@ impl Library {
                         ))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
-                            if !arkor_launch::progress::running(id) {
+                            if !arkor_launch::progress::running(id)
+                                && !arkor_launch::downloads::pending(id)
+                            {
                                 // Open the panel once the download is there.
                                 this.game_ui.expanded.insert(id, true);
                                 start(this, cx);

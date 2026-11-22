@@ -11,6 +11,7 @@ pub mod components;
 pub mod covers;
 pub mod discord;
 pub mod dlss_enabler;
+pub mod downloads;
 pub mod ea_fix;
 pub mod launchers;
 pub mod layers;
@@ -211,9 +212,6 @@ pub fn plan(
     }
     argv.extend(profile.tweak_wrappers());
     argv.extend(before);
-    if profile.gamemode {
-        argv.push("gamemoderun".to_string());
-    }
     if profile.gamescope.enabled {
         argv.push("gamescope".to_string());
         let args = profile.gamescope.to_args();
@@ -478,7 +476,6 @@ mod tests {
         assert_eq!(
             p.argv,
             [
-                "gamemoderun",
                 "gamescope",
                 "-f",
                 "--mangoapp",
@@ -619,7 +616,6 @@ mod tests {
                 "--",
                 "game-performance",
                 "strace",
-                "gamemoderun",
                 "proton",
                 "run",
                 "game.exe",

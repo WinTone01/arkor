@@ -61,8 +61,8 @@ Arkor uses `curl`, `tar` and `python` (for umu-run).
 
 </details>
 
-**Optional tools** — Arkor works with what you have and its **System** page shows what is
-missing: `mangohud`, `gamemode`, `gamescope`, `winetricks`, `steam`, `legendary` (or
+**Optional tools** — Arkor works with what you have and **Downloads → System tools** shows what is
+missing: `mangohud`, `gamescope`, `winetricks`, `steam`, `legendary` (or
 Heroic) for Epic games, `vkbasalt`.
 
 <a id="screenshots"></a>

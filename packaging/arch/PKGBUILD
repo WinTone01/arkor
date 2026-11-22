@@ -16,7 +16,6 @@ makedepends=('cargo' 'git')
 optdepends=(
   'umu-launcher: system umu-run (Arkor downloads its own otherwise)'
   'mangohud: performance overlay'
-  'gamemode: CPU/GPU tuning while playing'
   'gamescope: Valve’s gaming compositor'
   'winetricks: prefix tools'
   'steam: Steam games'

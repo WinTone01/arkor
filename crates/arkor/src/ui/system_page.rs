@@ -1,11 +1,14 @@
-//! "System": what Arkor sees on this machine, and which tools are present (with the Arch
-//! package to install when one is missing).
+//! "System": a short overview of this computer (OS, kernel, CPU, memory, GPU, driver,
+//! session, scheduler) with a copy button for bug reports. The optional tools Arkor works
+//! with are on the Downloads page (`render_system_tools`), next to everything else that
+//! gets installed.
 
 use arkor_launch::tools::{self, ToolStatus};
-use gpui::{Context, Div, div, prelude::*};
+use gpui::prelude::FluentBuilder;
+use gpui::{ClipboardItem, Context, Div, div, prelude::*, px};
 
-use super::Library;
-use super::widgets::{self, theme::*};
+use super::style::{self, pal};
+use super::{Library, widgets};
 
 type SystemInfo = (Vec<(&'static str, String)>, Vec<ToolStatus>);
 
@@ -18,8 +21,59 @@ pub(super) struct SystemState {
     installing: bool,
 }
 
+/// Shorter names for the tiles: "NVIDIA GeForce RTX 3060" instead of lspci's
+/// "NVIDIA Corporation GA106 [GeForce RTX 3060]", no (R)/(TM) in CPU names.
+fn tidy(key: &str, value: &str) -> String {
+    match key {
+        // The model is in the last [...] (AMD names have "[AMD/ATI]" first).
+        "GPU" => match (value.rfind('['), value.rfind(']')) {
+            (Some(a), Some(b)) if b > a => {
+                let maker = value.split_whitespace().next().unwrap_or("");
+                let maker = if maker.eq_ignore_ascii_case("Advanced") {
+                    "AMD"
+                } else {
+                    maker
+                };
+                format!("{maker} {}", &value[a + 1..b])
+            }
+            _ => value.to_string(),
+        },
+        "CPU" => value
+            .replace("(R)", "")
+            .replace("(TM)", "")
+            .replace("12th Gen ", "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => value.to_string(),
+    }
+}
+
+/// Icon and caption for a line of `tools::system_info`.
+fn info_look(key: &str, lib: &Library) -> (&'static str, &'static str) {
+    match key {
+        "OS" => ("monitor", lib.tr("Operating system", "İşletim sistemi")),
+        "Kernel" => ("terminal", lib.tr("Kernel", "Çekirdek")),
+        "CPU" => ("cpu", lib.tr("Processor", "İşlemci")),
+        "RAM" => ("memory-stick", lib.tr("Memory", "Bellek")),
+        "GPU" => ("gpu", lib.tr("Graphics card", "Ekran kartı")),
+        "Driver" => (
+            "microchip",
+            lib.tr("Graphics driver", "Ekran kartı sürücüsü"),
+        ),
+        "Session" => ("app-window", lib.tr("Desktop session", "Masaüstü oturumu")),
+        _ => (
+            "monitor-cog",
+            lib.tr("CPU scheduler (sched_ext)", "CPU zamanlayıcı (sched_ext)"),
+        ),
+    }
+}
+
 impl Library {
-    fn scan_system(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn scan_system(&mut self, cx: &mut Context<Self>) {
+        if self.system.loading {
+            return;
+        }
         self.system.loading = true;
         cx.notify();
         let bg = cx.background_executor().clone();
@@ -51,136 +105,330 @@ impl Library {
         if self.system.info.is_none() && !self.system.loading {
             self.scan_system(cx);
         }
-        let mut page = div().child(Self::header(
+        let page = div().child(Self::header(
             self.tr("System", "Sistem"),
             self.tr(
-                "What Arkor found on this computer.",
-                "Arkor'un bu bilgisayarda bulduğu.",
+                "What Arkor sees on this computer.",
+                "Arkor'un bu bilgisayarda gördükleri.",
             ),
         ));
-        let Some((info, tools)) = &self.system.info else {
+        let Some((info, _)) = self.system.info.clone() else {
             return page.child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
         };
-        let row = |label: String, value: Div| {
-            div()
+        let value = |key: &str| {
+            info.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| tidy(key, v))
+                .unwrap_or_default()
+        };
+
+        // The headline: the distribution and the graphics card, the two that matter most.
+        let hero = style::card()
+            .p_5()
+            .flex()
+            .items_center()
+            .gap_5()
+            .child(
+                div()
+                    .size(px(64.))
+                    .flex_none()
+                    .rounded(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(style::accent_gradient())
+                    .child(style::icon("monitor", 30., pal::on_accent())),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .truncate()
+                            .child(value("OS")),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(pal::muted())
+                            .truncate()
+                            .child(format!(
+                                "{} · {} {}",
+                                value("Session"),
+                                self.tr("kernel", "çekirdek"),
+                                value("Kernel")
+                            )),
+                    ),
+            )
+            .child(
+                style::button(
+                    "copy-system",
+                    self.tr("Copy details", "Bilgileri kopyala"),
+                    false,
+                )
+                .child(style::icon("copy", 13., pal::muted()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let text: String = this
+                        .system
+                        .info
+                        .as_ref()
+                        .map(|(i, _)| i.iter().map(|(k, v)| format!("{k}: {v}\n")).collect())
+                        .unwrap_or_default();
+                    cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                        "Arkor {}\n{text}",
+                        arkor_launch::self_update::current_version()
+                    )));
+                    this.status = Some(this.tr("Copied.", "Kopyalandı.").into());
+                    cx.notify();
+                })),
+            );
+
+        // One tile per fact, two per row.
+        let tile = |key: &'static str, val: String| {
+            let (icon, caption) = info_look(key, self);
+            style::card()
+                .flex_1()
+                .min_w(px(260.))
+                .p_4()
                 .flex()
                 .items_center()
                 .gap_3()
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .bg(super::style::pal::raised().opacity(0.45))
                 .child(
                     div()
-                        .w(gpui::px(220.))
-                        .text_sm()
-                        .text_color(MUTED())
-                        .child(label),
+                        .size(px(40.))
+                        .flex_none()
+                        .rounded(px(11.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(pal::accent().opacity(0.12))
+                        .child(style::icon(icon, 19., pal::accent_light())),
                 )
-                .child(value.flex_1().min_w_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(div().text_xs().text_color(pal::faint()).child(caption))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .truncate()
+                                .child(if val.is_empty() || val == "-" {
+                                    "—".to_string()
+                                } else {
+                                    val
+                                }),
+                        ),
+                )
         };
-        let mut sys = widgets::section(self.tr("Machine", "Makine"));
-        for (label, value) in info {
-            sys = sys.child(row(
-                label.to_string(),
-                div().truncate().text_sm().child(value.clone()),
-            ));
+        let mut grid = div().flex().flex_wrap().gap_3();
+        for key in ["CPU", "RAM", "GPU", "Driver", "Kernel", "sched_ext"] {
+            grid = grid.child(tile(key, value(key)));
         }
-        let missing = tools.iter().filter(|t| t.found.is_none()).count();
-        let mut tool_card = widgets::section(self.tr("Tools", "Araçlar"));
-        for t in tools {
-            let value = match &t.found {
-                Some(v) => div().text_sm().text_color(TEXT()).child(format!("✓ {v}")),
-                None => div().text_sm().text_color(ACCENT()).child(format!(
-                    "{} · sudo pacman -S {}",
-                    self.tr("missing", "eksik"),
-                    t.package
-                )),
-            };
-            tool_card = tool_card.child(row(t.name.to_string(), value));
+        page.child(div().flex().flex_col().gap_4().child(hero).child(grid).child(
+            div()
+                .id("system-to-tools")
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .text_color(pal::muted())
+                .cursor_pointer()
+                .hover(|s| s.text_color(pal::text()))
+                .child(style::icon("toolbox", 14., pal::accent_light()))
+                .child(self.tr(
+                    "Optional tools (MangoHud, Gamescope, winetricks…): Downloads → System tools",
+                    "İsteğe bağlı araçlar (MangoHud, Gamescope, winetricks…): İndirilenler → Sistem araçları",
+                ))
+                .child(style::icon("chevron-right", 14., pal::faint()))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.downloads_show_tools();
+                    this.go(super::shell::Nav::Downloads, cx);
+                })),
+        ))
+    }
+
+    fn install_missing(&mut self, pkgs: Vec<&'static str>, cx: &mut Context<Self>) {
+        if self.system.installing {
+            return;
         }
-        if missing > 0
-            && let Some((repo, other)) = &self.system.split
-        {
+        self.system.installing = true;
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move { tools::install_packages(&pkgs) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.system.installing = false;
+                this.status = Some(match result {
+                    Ok(()) => this.tr("Installed.", "Kuruldu.").into(),
+                    Err(e) => format!("{e:#}").into(),
+                });
+                this.scan_system(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Downloads → System tools: the optional programs Arkor works with, whether they are
+    /// installed (and which version), and the missing ones to install with pacman.
+    pub(super) fn render_system_tools(&mut self, cx: &mut Context<Self>) -> Div {
+        if self.system.info.is_none() && !self.system.loading {
+            self.scan_system(cx);
+        }
+        let Some((_, list)) = self.system.info.clone() else {
+            return div().child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
+        };
+        let (repo, other) = self.system.split.clone().unwrap_or_default();
+        let missing = list.iter().filter(|t| t.found.is_none()).count();
+
+        let mut out = div().flex().flex_col().gap_4();
+        // What can be installed in one go.
+        if missing > 0 {
+            let mut card =
+                style::card().p_4().flex().flex_col().gap_3().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(style::icon("package-x", 18., pal::warning()))
+                        .child(div().flex_1().font_weight(gpui::FontWeight::MEDIUM).child(
+                            format!(
+                                "{missing} {}",
+                                self.tr("tools are not installed", "araç kurulu değil")
+                            ),
+                        )),
+                );
             if !repo.is_empty() {
                 let pkgs = repo.clone();
-                tool_card = tool_card
-                    .child(widgets::label(self.tr(
-                        "Install the missing packages from the Arch repositories:",
-                        "Eksik paketleri Arch depolarından kur:",
-                    )))
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(super::style::pal::raised().opacity(0.45))
-                            .text_color(ACCENT())
-                            .text_sm()
-                            .child(format!("sudo pacman -S --needed {}", repo.join(" "))),
-                    )
-                    .child(
-                        div().flex().child(
-                            widgets::chip(
-                                "system-install",
-                                if self.system.installing {
-                                    self.tr("Installing…", "Kuruluyor…")
-                                } else {
-                                    self.tr(
-                                        "Install now (asks for your password)",
-                                        "Şimdi kur (parolanı sorar)",
-                                    )
-                                },
-                                false,
+                card = card.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .px_3()
+                                .py_2()
+                                .rounded(px(9.))
+                                .bg(pal::raised().opacity(0.6))
+                                .text_xs()
+                                .font_family("monospace")
+                                .text_color(pal::text_soft())
+                                .truncate()
+                                .child(format!("sudo pacman -S --needed {}", repo.join(" "))),
+                        )
+                        .child(if self.system.installing {
+                            widgets::label(self.tr("Installing…", "Kuruluyor…")).into_any_element()
+                        } else {
+                            style::button(
+                                "tools-install",
+                                self.tr("Install them", "Hepsini kur"),
+                                true,
                             )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    if this.system.installing {
-                                        return;
-                                    }
-                                    this.system.installing = true;
-                                    cx.notify();
-                                    let pkgs = pkgs.clone();
-                                    let bg = cx.background_executor().clone();
-                                    cx.spawn(async move |this, cx| {
-                                        let result = bg
-                                            .spawn(async move { tools::install_packages(&pkgs) })
-                                            .await;
-                                        let _ = this.update(cx, |this, cx| {
-                                            this.system.installing = false;
-                                            this.status = Some(match result {
-                                                Ok(()) => this.tr("Installed.", "Kuruldu.").into(),
-                                                Err(e) => format!("{e:#}").into(),
-                                            });
-                                            this.scan_system(cx);
-                                        });
-                                    })
-                                    .detach();
-                                },
-                            )),
-                        ),
-                    );
+                            .child(style::icon("download", 13., pal::on_accent()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.install_missing(pkgs.clone(), cx)
+                            }))
+                            .into_any_element()
+                        }),
+                );
             }
             if !other.is_empty() {
-                tool_card = tool_card.child(widgets::label(format!(
+                card = card.child(widgets::label(format!(
                     "{} {}",
                     self.tr(
-                        "Not in the repositories (AUR or another distribution's package):",
-                        "Depolarda yok (AUR ya da başka bir dağıtımın paketi):"
+                        "Not in the Arch repositories (AUR):",
+                        "Arch depolarında yok (AUR):"
                     ),
                     other.join(", ")
                 )));
             }
+            out = out.child(card);
         }
-        page = page.child(sys).child(tool_card).child(
+
+        let mut rows = style::card().overflow_hidden().flex().flex_col();
+        let n = list.len();
+        for (ix, t) in list.iter().enumerate() {
+            let ok = t.found.is_some();
+            rows = rows.child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .when(ix + 1 < n, |d| {
+                        d.border_b_1().border_color(pal::glass_spec().border)
+                    })
+                    .child(style::icon(
+                        if ok { "package-check" } else { "package" },
+                        17.,
+                        if ok { pal::success() } else { pal::faint() },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(t.name),
+                    )
+                    .child(match &t.found {
+                        Some(v) => div().text_sm().text_color(pal::muted()).child(v.clone()),
+                        None => style::tag(
+                            format!("{} · {}", self.tr("missing", "eksik"), t.package),
+                            pal::warning(),
+                        ),
+                    }),
+            );
+        }
+        out.child(rows).child(
             div().flex().child(
-                widgets::chip(
-                    "system-rescan",
+                style::button(
+                    "tools-rescan",
                     self.tr("Check again", "Tekrar kontrol et"),
                     false,
                 )
+                .child(style::icon("refresh-cw", 13., pal::muted()))
                 .on_click(cx.listener(|this, _, _, cx| this.scan_system(cx))),
             ),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tidies_hardware_names() {
+        assert_eq!(
+            super::tidy(
+                "GPU",
+                "NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash Rate] (rev a1)"
+            ),
+            "NVIDIA GeForce RTX 3060 Lite Hash Rate"
         );
-        page
+        assert_eq!(
+            super::tidy(
+                "GPU",
+                "Advanced Micro Devices, Inc. [AMD/ATI] Navi 48 [Radeon RX 9070 XT]"
+            ),
+            "AMD Radeon RX 9070 XT"
+        );
+        assert_eq!(
+            super::tidy("CPU", "12th Gen Intel(R) Core(TM) i5-12400F (12 threads)"),
+            "Intel Core i5-12400F (12 threads)"
+        );
     }
 }

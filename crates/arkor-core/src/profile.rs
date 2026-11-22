@@ -16,6 +16,9 @@ pub struct Profile {
     /// Extra environment variables, applied last (they override everything Arkor sets).
     pub env: BTreeMap<String, String>,
     pub mangohud: GameHud,
+    /// No longer used: Arkor does not start games through Feral GameMode (it clashes with
+    /// the tuning of distributions such as CachyOS). Read so older files still load.
+    #[serde(skip_serializing)]
     pub gamemode: bool,
     pub gamescope: Gamescope,
     /// Proton build for this game: a folder name from a compatibility tools dir
@@ -367,11 +370,64 @@ pub struct Global {
     pub steamgriddb_key: String,
     pub backup: crate::backup::BackupSettings,
     pub appearance: Appearance,
-    /// Don't look for new umu-launcher, anti-cheat and "Latest" Proton releases before a
-    /// game starts (missing ones are still downloaded).
+    /// Older switch: no automatic updates at all. Read as `UpdateInterval::Never`.
     pub no_auto_updates: bool,
+    /// How often Arkor looks for new versions of what it downloaded (umu-launcher, the
+    /// Steam Runtime, anti-cheat, "Latest" Protons, tools and Arkor itself).
+    pub update_interval: UpdateInterval,
+    /// When it last looked (Unix seconds).
+    pub last_update_check: Option<u64>,
     /// What new games start with, and the Proton for games left on "Automatic".
     pub defaults: GameDefaults,
+}
+
+/// How often to look for updates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateInterval {
+    #[default]
+    Daily,
+    Weekly,
+    /// Before each game (like Faugus Launcher).
+    OnGameStart,
+    Never,
+}
+
+impl UpdateInterval {
+    pub const ALL: [UpdateInterval; 4] = [
+        UpdateInterval::Daily,
+        UpdateInterval::Weekly,
+        UpdateInterval::OnGameStart,
+        UpdateInterval::Never,
+    ];
+}
+
+impl Global {
+    /// The update interval, with the older "no automatic updates" switch respected.
+    pub fn update_interval(&self) -> UpdateInterval {
+        if self.no_auto_updates {
+            UpdateInterval::Never
+        } else {
+            self.update_interval
+        }
+    }
+
+    /// Whether a check for updates is due at `now` (Unix seconds): daily or weekly since
+    /// the last one. "On game start" and "Never" are not checked on a timer.
+    pub fn updates_due(&self, now: u64) -> bool {
+        let period = match self.update_interval() {
+            UpdateInterval::Daily => 86_400,
+            UpdateInterval::Weekly => 7 * 86_400,
+            UpdateInterval::OnGameStart | UpdateInterval::Never => return false,
+        };
+        self.last_update_check
+            .is_none_or(|last| now.saturating_sub(last) >= period)
+    }
+
+    /// Whether to look for updates right before a game starts.
+    pub fn updates_on_launch(&self) -> bool {
+        self.update_interval() == UpdateInterval::OnGameStart
+    }
 }
 
 /// Defaults for games (Settings → Game defaults). `proton` applies at launch to every game
@@ -382,6 +438,8 @@ pub struct Global {
 pub struct GameDefaults {
     /// Proton build name (as in `Profile::proton`). `None` = pick automatically.
     pub proton: Option<String>,
+    /// No longer used (see `Profile::gamemode`); read so older files still load.
+    #[serde(skip_serializing)]
     pub gamemode: bool,
     pub no_sleep: bool,
     /// Tweak ids switched on for new games (see `tweaks::TWEAKS`).
@@ -392,7 +450,6 @@ pub struct GameDefaults {
 impl GameDefaults {
     /// Copies the defaults into a game's profile (its other settings stay).
     pub fn apply_to(&self, profile: &mut Profile) {
-        profile.gamemode = self.gamemode;
         profile.no_sleep = self.no_sleep;
         profile.tweaks.extend(self.tweaks.iter().cloned());
         if profile.launch_options.trim().is_empty() {
@@ -667,6 +724,23 @@ mod tests {
     }
 
     #[test]
+    fn update_interval_timing() {
+        let mut g = Global::default();
+        assert!(g.updates_due(1_000_000), "never checked: due");
+        g.last_update_check = Some(1_000_000);
+        assert!(!g.updates_due(1_000_000 + 3_600));
+        assert!(g.updates_due(1_000_000 + 86_400));
+        g.update_interval = UpdateInterval::Weekly;
+        assert!(!g.updates_due(1_000_000 + 86_400));
+        g.update_interval = UpdateInterval::OnGameStart;
+        assert!(!g.updates_due(9_999_999) && g.updates_on_launch());
+        g.update_interval = UpdateInterval::Daily;
+        g.no_auto_updates = true;
+        assert_eq!(g.update_interval(), UpdateInterval::Never);
+        assert!(!g.updates_due(9_999_999) && !g.updates_on_launch());
+    }
+
+    #[test]
     fn old_lsfg_default_reads_as_off() {
         // "default" (leave it to lsfg-vk's own config) is gone: Arkor manages lsfg-vk.
         let p: Profile = toml::from_str("[lsfg]\nmode = \"default\"\n").unwrap();
@@ -688,7 +762,8 @@ mod tests {
         };
         let mut fresh = Profile::default();
         defaults.apply_to(&mut fresh);
-        assert!(fresh.gamemode && fresh.no_sleep);
+        assert!(fresh.no_sleep);
+        assert!(!fresh.gamemode, "GameMode is no longer used");
         assert!(fresh.tweaks.contains("wayland"));
         assert_eq!(fresh.launch_options, "%command% -dx12");
         // The Proton default applies at launch, not by writing it into the game.
@@ -717,7 +792,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert!(p.gamemode);
+        // An old file with `gamemode` still loads; it is not written back.
+        assert!(!toml::to_string(&p).unwrap().contains("gamemode"));
         assert_eq!(p.env["PROTON_ENABLE_WAYLAND"], "1");
         let hud = p.mangohud.settings.as_ref().unwrap();
         assert_eq!(hud.metrics, [Metric::Fps].into());

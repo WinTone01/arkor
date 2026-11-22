@@ -175,15 +175,18 @@ fn content_length(url: &str) -> Option<u64> {
         .next_back()
 }
 
-/// Downloads `url` to `dest` (through a `.part` file, so a failed download leaves nothing).
-/// Progress goes to `progress` (the thread's job, or an entry of its own).
+/// The error a download returns when it was stopped (paused or cancelled).
+pub const STOPPED: &str = "download stopped";
+
+/// Downloads `url` to `dest` through a `.part` file. An earlier `.part` (a paused or broken
+/// download) is continued where it ended. Progress goes to `progress` (the thread's job, or
+/// an entry of its own); `progress::stop` ends it with `STOPPED`, keeping the `.part`.
 pub fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
     use anyhow::Context;
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let part = dest.with_extension("part");
-    let _ = std::fs::remove_file(&part);
     let label = url
         .rsplit('/')
         .next()
@@ -193,26 +196,39 @@ pub fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
         .unwrap_or(url)
         .replace("%20", " ");
     let transfer = crate::progress::Transfer::begin(&label, content_length(url));
-    let mut child = std::process::Command::new("curl")
-        .args(["-fsSL", "-A", "arkor", "-o"])
-        .arg(&part)
-        .arg(url)
-        .spawn()
-        .context("running curl")?;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+    for attempt in 0..2 {
+        let resume = attempt == 0 && part.is_file();
+        let mut cmd = std::process::Command::new("curl");
+        cmd.args(["-fsSL", "-A", "arkor", "-o"]).arg(&part);
+        if resume {
+            cmd.args(["-C", "-"]);
+        } else {
+            let _ = std::fs::remove_file(&part);
         }
-        transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    };
-    if !status.success() {
-        let _ = std::fs::remove_file(&part);
-        anyhow::bail!("download failed: {url}");
+        let mut child = cmd.arg(url).spawn().context("running curl")?;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if !transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)) {
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!(STOPPED);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        if status.success() {
+            transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
+            std::fs::rename(&part, dest)?;
+            return Ok(());
+        }
+        // A server that cannot continue: start over once.
+        if !resume {
+            break;
+        }
     }
-    transfer.update(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
-    std::fs::rename(&part, dest)?;
-    Ok(())
+    let _ = std::fs::remove_file(&part);
+    anyhow::bail!("download failed: {url}")
 }
 
 /// Anti-cheat runtimes Proton needs for EasyAntiCheat / BattlEye games.
@@ -306,7 +322,6 @@ pub fn tool_status() -> Vec<ToolStatus> {
             layer_installed("MangoHud") || in_path("mangohud"),
             "mangohud",
         ),
-        check("GameMode", in_path("gamemoderun"), "gamemode"),
         check("gamescope", in_path("gamescope"), "gamescope"),
         check("lsfg-vk", lsfg_layer_installed(), "lsfg-vk"),
         check("vkBasalt", layer_installed("vkBasalt"), "vkbasalt"),
@@ -483,4 +498,22 @@ pub fn gpus() -> Gpus {
         }
     }
     g
+}
+
+#[cfg(test)]
+mod download_tests {
+    #[test]
+    fn continues_a_partial_download() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("source.bin");
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&src, &data).unwrap();
+        let dest = tmp.path().join("out/file.bin");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        // A paused download left the first half.
+        std::fs::write(dest.with_extension("part"), &data[..100_000]).unwrap();
+        super::download(&format!("file://{}", src.display()), &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert!(!dest.with_extension("part").exists());
+    }
 }

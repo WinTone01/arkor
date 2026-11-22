@@ -87,15 +87,14 @@ impl Library {
         .detach();
     }
 
-    /// Installs what every Windows game needs (umu-launcher, anti-cheat, a first Proton)
-    /// in the background; updates them unless automatic updates are off.
-    pub(super) fn ensure_required(&mut self, cx: &mut Context<Self>) {
+    /// Installs what every game needs (umu-launcher, the Steam Runtime, anti-cheat, a first
+    /// Proton) in the background; with `update` also brings them to their newest release.
+    pub(super) fn ensure_required(&mut self, update: bool, cx: &mut Context<Self>) {
         if self.required.running {
             return;
         }
         self.required.running = true;
         self.required.error = None;
-        let update = !self.global.no_auto_updates;
         let default = self.global.defaults.proton.clone();
         let step = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -285,7 +284,9 @@ impl Library {
                 .child(
                     div().flex().child(
                         style::button("required-retry", self.tr("Try again", "Yeniden dene"), true)
-                            .on_click(cx.listener(|this, _, _, cx| this.ensure_required(cx))),
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.ensure_required(false, cx)),
+                            ),
                     ),
                 );
         }

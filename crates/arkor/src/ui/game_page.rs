@@ -790,47 +790,23 @@ impl Library {
         card
     }
 
-    /// GameMode and keeping the system awake.
-    pub(super) fn render_gamemode(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = self.t();
-        let switch = |id: &'static str,
-                      on: bool,
-                      f: fn(&mut arkor_core::Profile),
-                      cx: &mut Context<Self>| {
-            widgets::switch(on)
-                .id(id)
+    /// Keeping the system awake while playing.
+    pub(super) fn render_sleep(&mut self, cx: &mut Context<Self>) -> Div {
+        widgets::section(self.tr("Keep awake", "Uyku engelle")).child(widgets::setting_row(
+            self.tr("Keep the system awake", "Sistemi uyanık tut"),
+            self.tr(
+                "No sleep or screen blanking while playing.",
+                "Oynarken uyku ya da ekran kararması yok.",
+            ),
+            widgets::switch(self.profile.no_sleep)
+                .id("no-sleep")
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    f(&mut this.profile);
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.profile.no_sleep = !this.profile.no_sleep;
                     this.save();
                     cx.notify();
-                }))
-        };
-        widgets::section(self.tr("GameMode and sleep", "GameMode ve uyku"))
-            .child(widgets::setting_row(
-                "GameMode",
-                t.gamemode_hint,
-                switch(
-                    "gamemode",
-                    self.profile.gamemode,
-                    |p| p.gamemode = !p.gamemode,
-                    cx,
-                ),
-            ))
-            .child(widgets::divider())
-            .child(widgets::setting_row(
-                self.tr("Keep the system awake", "Sistemi uyanık tut"),
-                self.tr(
-                    "No sleep or screen blanking while playing.",
-                    "Oynarken uyku ya da ekran kararması yok.",
-                ),
-                switch(
-                    "no-sleep",
-                    self.profile.no_sleep,
-                    |p| p.no_sleep = !p.no_sleep,
-                    cx,
-                ),
-            ))
+                })),
+        ))
     }
 
     pub(super) fn render_protonfix(&mut self, cx: &mut Context<Self>) -> Div {
