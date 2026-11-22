@@ -9,6 +9,7 @@
 use arkor_core::HudMode;
 use arkor_core::library::{GameKind, LibraryGame};
 use arkor_core::profile::LsfgMode;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::style::{self, pal};
@@ -101,6 +102,75 @@ pub(super) struct Feature {
 
 fn always(_: &Library, _: &LibraryGame) -> bool {
     true
+}
+/// Sub-tabs of "Upscaling & frame gen", like Goverlay's pages: (icon, English, Turkish,
+/// feature ids). A sub-tab with nothing for this game or computer is left out.
+pub(super) const UPSCALE_GROUPS: [(&str, &str, &str, &[&str]); 3] = [
+    (
+        "layers",
+        "Frame generation",
+        "Kare üretimi",
+        &["lsfg", "mako", "afmf"],
+    ),
+    (
+        "scan-eye",
+        "Upscalers",
+        "Ölçekleyiciler",
+        &["optiscaler", "dlss-enabler", "streamline"],
+    ),
+    ("atom", "AMD", "AMD", &["amd-bundles"]),
+];
+
+type Ready = fn(&Library) -> bool;
+type Start = fn(&mut Library, &mut Context<Library>);
+
+/// Features that need a download before they can be used: whether it is there (Arkor's
+/// copy or a system one), and how to get it. Until then their panel is a Download button.
+fn download_of(id: &str) -> Option<(Ready, Start)> {
+    Some(match id {
+        "vksumi" => (
+            |l| l.tools.layer_tools[0] || l.layer_present("ENABLE_VKSUMI"),
+            |l, cx| l.layer_tool_action(0, false, cx),
+        ),
+        "vknemu" => (
+            |l| l.tools.layer_tools[1] || l.layer_present("VKNEMU"),
+            |l, cx| l.layer_tool_action(1, false, cx),
+        ),
+        "mako" => (
+            |l| l.tools.layer_tools[2] || l.layer_present("ENABLE_MAKO"),
+            |l, cx| l.layer_tool_action(2, false, cx),
+        ),
+        "afmf" => (
+            |l| l.tools.layer_tools[3] || l.layer_present("AFMF_ENABLE"),
+            |l, cx| l.layer_tool_action(3, false, cx),
+        ),
+        "optiscaler" => (
+            |l| l.tools.downloaded.is_some() || l.tools.manifest.is_some(),
+            |l, cx| l.download_optiscaler(cx),
+        ),
+        "dlss-enabler" => (
+            |l| l.tools.de_downloaded.is_some() || l.tools.de_manifest.is_some(),
+            |l, cx| l.de_download(cx),
+        ),
+        "reshade" => (
+            |l| l.tools.rs_downloaded.is_some() || l.tools.rs_manifest.is_some(),
+            |l, cx| l.rs_download(cx),
+        ),
+        "streamline" => (
+            |l| l.tools.sl_downloaded.is_some() || l.tools.sl_manifest.is_some(),
+            |l, cx| l.download_streamline(cx),
+        ),
+        _ => return None,
+    })
+}
+
+/// HelixSR and DLSS-NR run only on AMD Radeon cards.
+fn amd_wine_game(l: &Library, g: &LibraryGame) -> bool {
+    l.tools.gpus.amd && g.needs_prefix()
+}
+/// DLSS Enabler brings DLSS frame generation to AMD and Intel cards; NVIDIA has DLSS itself.
+fn non_nvidia_wine_game(l: &Library, g: &LibraryGame) -> bool {
+    (l.tools.gpus.amd || l.tools.gpus.intel) && g.needs_prefix()
 }
 fn wine_game(_: &Library, g: &LibraryGame) -> bool {
     g.needs_prefix()
@@ -404,7 +474,7 @@ pub(super) const FEATURES: &[Feature] = &[
             "AMD ve Intel GPU'larda DLSS kare üretimi.",
         ),
         keywords: "dlss enabler frame generation amd intel",
-        applies: wine_game,
+        applies: non_nvidia_wine_game,
         active: Some(|l| l.tools.de_manifest.is_some()),
         render: |l, cx| Some(l.render_dlss_enabler(cx)),
     },
@@ -432,7 +502,7 @@ pub(super) const FEATURES: &[Feature] = &[
             "AMD RDNA kartlar için yapay zekâ ölçekleyiciler.",
         ),
         keywords: "helixsr dlss-nr dlssnr amd rdna fsr4 neural",
-        applies: wine_game,
+        applies: amd_wine_game,
         active: Some(|l| l.tools.dlssnr.is_some()),
         render: |l, cx| Some(l.render_amd_bundles(cx)),
     },
@@ -560,7 +630,7 @@ const QUICK: [(&str, &str, Toggle); 6] = [
     }),
     ("lsfg", "lsfg", |l| {
         l.profile.lsfg.mode = if l.profile.lsfg.mode == LsfgMode::On {
-            LsfgMode::Default
+            LsfgMode::Off
         } else {
             LsfgMode::On
         }
@@ -788,12 +858,16 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let on = f.active.map(|a| a(self));
-        let open = self
-            .game_ui
-            .expanded
-            .get(f.id)
-            .copied()
-            .unwrap_or(default_open || on == Some(true));
+        let download = download_of(f.id)
+            .filter(|(ready, _)| !ready(self))
+            .map(|(_, start)| start);
+        let open = download.is_none()
+            && self
+                .game_ui
+                .expanded
+                .get(f.id)
+                .copied()
+                .unwrap_or(default_open || on == Some(true));
         let id = f.id;
         if open {
             let card = (f.render)(self, cx)?;
@@ -879,18 +953,48 @@ impl Library {
                                 .child(self.tr(f.desc.0, f.desc.1)),
                         ),
                 )
-                .children(on.map(|on| {
-                    if on {
-                        style::tag(self.tr("On", "Açık"), pal::accent_light())
-                    } else {
-                        style::tag(self.tr("Off", "Kapalı"), pal::faint())
-                    }
-                }))
-                .child(style::icon("chevron-down", 16., pal::faint()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.game_ui.expanded.insert(id, true);
-                    cx.notify();
-                }))
+                .when_some(download, |row, start| {
+                    // Nothing to set up before it is downloaded: just the button.
+                    let busy = self.tools.busy.is_some();
+                    row.child(
+                        style::button(
+                            ("panel-download", id.len() * 131 + id.as_bytes()[0] as usize),
+                            if busy {
+                                self.tr("Downloading…", "İndiriliyor…")
+                            } else {
+                                self.tr("Download", "İndir")
+                            },
+                            !busy,
+                        )
+                        .child(style::icon(
+                            "download",
+                            13.,
+                            if busy { pal::muted() } else { pal::on_accent() },
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if this.tools.busy.is_none() {
+                                // Open the panel once the download is there.
+                                this.game_ui.expanded.insert(id, true);
+                                start(this, cx);
+                            }
+                        })),
+                    )
+                })
+                .when(download.is_none(), |row| {
+                    row.children(on.map(|on| {
+                        if on {
+                            style::tag(self.tr("On", "Açık"), pal::accent_light())
+                        } else {
+                            style::tag(self.tr("Off", "Kapalı"), pal::faint())
+                        }
+                    }))
+                    .child(style::icon("chevron-down", 16., pal::faint()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.game_ui.expanded.insert(id, true);
+                        cx.notify();
+                    }))
+                })
                 .into_any_element(),
         )
     }
@@ -1190,8 +1294,43 @@ impl Library {
                 .child(self.render_quick(cx))
                 .child(self.render_summary(&entry, cx));
         }
-        let in_tab: Vec<&'static Feature> =
+        let mut in_tab: Vec<&'static Feature> =
             applicable.into_iter().filter(|f| f.tab == tab).collect();
+        if tab == GameTab::Upscaling {
+            // Sub-tabs at the top of the page, each with its own panels.
+            let groups: Vec<usize> = (0..UPSCALE_GROUPS.len())
+                .filter(|&g| in_tab.iter().any(|f| UPSCALE_GROUPS[g].3.contains(&f.id)))
+                .collect();
+            if !groups.is_empty() {
+                let current = if groups.contains(&self.game_ui.upscale_group) {
+                    self.game_ui.upscale_group
+                } else {
+                    groups[0]
+                };
+                let labels: Vec<(&'static str, &'static str)> = groups
+                    .iter()
+                    .map(|&g| {
+                        (
+                            UPSCALE_GROUPS[g].0,
+                            self.tr(UPSCALE_GROUPS[g].1, UPSCALE_GROUPS[g].2),
+                        )
+                    })
+                    .collect();
+                let selected = groups.iter().position(|&g| g == current).unwrap_or(0);
+                let map = groups.clone();
+                content = content.child(style::tab_strip(
+                    "upscale-group",
+                    &labels,
+                    selected,
+                    cx,
+                    move |this, i, cx| {
+                        this.game_ui.upscale_group = map[i];
+                        cx.notify();
+                    },
+                ));
+                in_tab.retain(|f| UPSCALE_GROUPS[current].3.contains(&f.id));
+            }
+        }
         // Few panels: all open. Otherwise the ones that are on (and the first, if it has no
         // on/off state) start open.
         let all_open = in_tab.len() <= 2;

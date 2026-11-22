@@ -16,6 +16,8 @@ use super::{Library, Selection};
 /// Page-local state of the game page (reset when another page is selected).
 #[derive(Default)]
 pub(super) struct GameUi {
+    /// Sub-tab of "Upscaling & frame gen" (index into `features::UPSCALE_GROUPS`).
+    pub(super) upscale_group: usize,
     confirm_delete: bool,
     delete_prefix: bool,
     umu_hits: Option<Result<Vec<umu_db::Entry>, String>>,
@@ -584,7 +586,7 @@ impl Library {
                     )
                     .child(
                         style::button("delete", self.tr("Delete…", "Sil…"), false)
-                            .child(style::icon("trash-2", 13., pal::danger()))
+                            .child(style::icon("trash", 13., pal::danger()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.game_ui.confirm_delete = true;
                                 cx.notify();
@@ -1212,7 +1214,7 @@ impl Library {
                     )
                     .child(
                         style::button("log-clear", self.tr("Clear", "Temizle"), false)
-                            .child(style::icon("trash-2", 13., pal::muted()))
+                            .child(style::icon("trash", 13., pal::muted()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let (Some(dir), Some(id)) = (this.log_dir(), this.selected_id()) {
                                     clear_logs(&dir, &id.file_stem());

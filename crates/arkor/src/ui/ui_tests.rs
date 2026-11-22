@@ -219,3 +219,33 @@ fn settings_overlay_and_hud_tabs_render() {
         Some(Selection::Grid)
     ));
 }
+
+#[test]
+fn upscaling_subtabs_and_downloads_page_render() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("local:test-game#upscaling"));
+        lib
+    });
+    cx.run_until_parked();
+    for group in 0..super::features::UPSCALE_GROUPS.len() {
+        view.update(cx, |l, cx| {
+            l.game_ui.upscale_group = group;
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+    view.update(cx, |l, cx| l.go(super::shell::Nav::Downloads, cx));
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |l, _| matches!(l.selection, Some(Selection::Downloads))));
+}

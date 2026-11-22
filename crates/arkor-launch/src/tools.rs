@@ -56,13 +56,76 @@ pub fn lsfg_layer_installed() -> bool {
     dirs.iter().any(|d| d.join(JSON).is_file())
 }
 
-/// `Lossless.dll` from the Steam install of Lossless Scaling, on any Steam library.
-pub fn lossless_dll() -> Option<PathBuf> {
+/// The Steam install folder of Lossless Scaling, on any Steam library.
+pub fn lossless_scaling_dir() -> Option<PathBuf> {
     let (games, _) = arkor_stores::steam::installed_games();
     let id = GameId::new(Store::Steam, LOSSLESS_SCALING_APPID);
-    let dir = games.into_iter().find(|g| g.id == id)?.install_dir?;
-    let dll = dir.join("Lossless.dll");
+    games.into_iter().find(|g| g.id == id)?.install_dir
+}
+
+/// `Lossless.dll` from the Steam install of Lossless Scaling (MAKO and lsfg-vk 1.x use it).
+pub fn lossless_dll() -> Option<PathBuf> {
+    let dll = lossless_scaling_dir()?.join("Lossless.dll");
     dll.is_file().then_some(dll)
+}
+
+/// The DLL to give lsfg-vk: `lsfg-vk.dll` (its shaders, shipped by Lossless Scaling's
+/// "lsfg-vk" beta branch on Steam, which lsfg-vk 2.x needs), else `Lossless.dll`.
+pub fn lsfg_dll() -> Option<PathBuf> {
+    let dir = lossless_scaling_dir()?;
+    ["lsfg-vk.dll", "Lossless.dll"]
+        .into_iter()
+        .map(|f| dir.join(f))
+        .find(|p| p.is_file())
+}
+
+/// An installed lsfg-vk Vulkan layer: its library, where it was installed and its version.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LsfgLayer {
+    pub library: PathBuf,
+    /// Installed in the user's folder (e.g. by lsfg-vk's install script), not by pacman.
+    pub user: bool,
+    /// Package version from pacman, or the layer's own implementation version.
+    pub version: Option<String>,
+}
+
+pub fn lsfg_layer() -> Option<LsfgLayer> {
+    const JSON: &str = "VkLayer_LSFGVK_frame_generation.json";
+    let mut dirs: Vec<(PathBuf, bool)> = vec![
+        ("/usr/share/vulkan/implicit_layer.d".into(), false),
+        ("/etc/vulkan/implicit_layer.d".into(), false),
+        ("/usr/local/share/vulkan/implicit_layer.d".into(), false),
+    ];
+    if let Some(data) = dirs::data_dir() {
+        dirs.insert(0, (data.join("vulkan/implicit_layer.d"), true));
+    }
+    let (dir, user) = dirs.into_iter().find(|(d, _)| d.join(JSON).is_file())?;
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(JSON)).ok()?).ok()?;
+    let lib = json["layer"]["library_path"].as_str().unwrap_or_default();
+    let library = if lib.starts_with('/') {
+        PathBuf::from(lib)
+    } else {
+        dir.join(lib)
+    };
+    let library = std::fs::canonicalize(&library).unwrap_or(library);
+    let version = std::process::Command::new("pacman")
+        .arg("-Qqo")
+        .arg(&library)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| pacman_version(String::from_utf8_lossy(&o.stdout).trim()))
+        .or_else(|| {
+            json["layer"]["implementation_version"]
+                .as_str()
+                .map(|v| format!("{v}.x"))
+        });
+    Some(LsfgLayer {
+        library,
+        user,
+        version,
+    })
 }
 
 /// GET `url` as text with curl (present on every Arch install).
@@ -358,4 +421,30 @@ pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
             .join("; ")
     );
     Ok(())
+}
+
+/// GPU makers present, from the kernel's DRM devices (PCI vendor ids).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Gpus {
+    pub amd: bool,
+    pub nvidia: bool,
+    pub intel: bool,
+}
+
+pub fn gpus() -> Gpus {
+    let mut g = Gpus::default();
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for e in entries.flatten() {
+            match std::fs::read_to_string(e.path().join("device/vendor"))
+                .map(|v| v.trim().to_string())
+                .as_deref()
+            {
+                Ok("0x1002") => g.amd = true,
+                Ok("0x10de") => g.nvidia = true,
+                Ok("0x8086") => g.intel = true,
+                _ => {}
+            }
+        }
+    }
+    g
 }

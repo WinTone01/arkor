@@ -151,22 +151,23 @@ pub struct Lsfg {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LsfgMode {
-    /// Leave it to lsfg-vk's own config file (its `active_in` profiles).
+    /// No frame generation, even if lsfg-vk's own config file has a profile for this game.
+    /// ("default", the old "leave it to lsfg-vk's config" choice, reads as this: Arkor
+    /// manages lsfg-vk for its games.)
     #[default]
-    Default,
-    /// Arkor's settings below, passed through the environment.
-    On,
-    /// Never, even if lsfg-vk's config file has a profile for this game.
+    #[serde(alias = "default")]
     Off,
+    /// Arkor's settings, given to lsfg-vk for this game only.
+    On,
 }
 
-pub const LSFG_MULTIPLIER_RANGE: (u32, u32) = (2, 4);
+pub const LSFG_MULTIPLIER_RANGE: (u32, u32) = (2, 5);
 pub const LSFG_FLOW_SCALE_RANGE: (u32, u32) = (25, 100);
 
 impl Default for Lsfg {
     fn default() -> Self {
         Self {
-            mode: LsfgMode::Default,
+            mode: LsfgMode::Off,
             multiplier: 2,
             flow_scale: 100,
             performance_mode: false,
@@ -634,6 +635,14 @@ pub(crate) fn write_toml<T: Serialize>(path: &Path, value: &T) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn old_lsfg_default_reads_as_off() {
+        // "default" (leave it to lsfg-vk's own config) is gone: Arkor manages lsfg-vk.
+        let p: Profile = toml::from_str("[lsfg]\nmode = \"default\"\n").unwrap();
+        assert_eq!(p.lsfg.mode, LsfgMode::Off);
+        assert_eq!(Profile::default().lsfg.mode, LsfgMode::Off);
+    }
+
     use super::*;
     use crate::mangohud::Metric;
 

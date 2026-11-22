@@ -349,7 +349,7 @@ impl Library {
                     controls =
                         controls.child(if removable {
                             style::button(("proton-remove", ix), self.tr("Remove", "Kaldır"), false)
-                                .child(style::icon("trash-2", 13., pal::danger()))
+                                .child(style::icon("trash", 13., pal::danger()))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.remove_proton(p.clone(), cx)
                                 }))

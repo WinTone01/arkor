@@ -2,11 +2,11 @@
 
 use std::path::PathBuf;
 
-use arkor_core::profile::{LSFG_FLOW_SCALE_RANGE, LSFG_MULTIPLIER_RANGE};
+use arkor_core::profile::LSFG_MULTIPLIER_RANGE;
 use arkor_core::{Game, LsfgMode, Store};
 use arkor_launch::optiscaler::{self, Manifest, PROXY_DLLS};
 use arkor_launch::tools;
-use gpui::{Context, Div, PathPromptOptions, div, prelude::*};
+use gpui::{Context, Div, PathPromptOptions, SharedString, Window, div, prelude::*, px};
 
 use super::widgets::{self, theme::*};
 use super::{Library, Selection};
@@ -27,8 +27,13 @@ pub(super) const HANDLED_LAYERS: [&str; 9] = [
 
 pub(super) struct GameTools {
     pub(super) protons: Vec<(String, PathBuf)>,
-    pub(super) lsfg_layer: bool,
     pub(super) lossless_dll: bool,
+    /// The installed lsfg-vk layer (library, user or system install, version).
+    pub(super) lsfg_info: Option<tools::LsfgLayer>,
+    /// Lossless Scaling's Steam folder.
+    pub(super) ls_dir: Option<PathBuf>,
+    /// GPU makers in this computer (AMD-only tools are hidden without an AMD card).
+    pub(super) gpus: tools::Gpus,
     pub(super) manifest: Option<Manifest>,
     pub(super) downloaded: Option<(String, PathBuf)>,
     pub(super) de_manifest: Option<Manifest>,
@@ -92,8 +97,10 @@ impl GameTools {
     pub(super) fn scan() -> Self {
         Self {
             protons: tools::installed_protons(),
-            lsfg_layer: tools::lsfg_layer_installed(),
             lossless_dll: tools::lossless_dll().is_some(),
+            lsfg_info: tools::lsfg_layer(),
+            ls_dir: tools::lossless_scaling_dir(),
+            gpus: tools::gpus(),
             manifest: None,
             downloaded: None,
             de_manifest: None,
@@ -174,6 +181,51 @@ impl Library {
     /// Executables the game likely runs as: the configured exe (if a real .exe), plus .exe
     /// files in its prefix named like the game (for shortcut / launcher entries such as
     /// Ubisoft's `.url` files, where the game process is something else).
+    /// For a game started through a shortcut (`.url` / `.lnk`, e.g. a launcher's), the
+    /// folder next to the shortcut is not the game's: look in its prefix for programs named
+    /// like the game and offer their folders for mods (OptiScaler, ReShade, HelixSR...).
+    pub(super) fn find_game_folders(&mut self) {
+        let Some(entry) = self.entry().cloned() else {
+            return;
+        };
+        let shortcut = entry
+            .exe
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("url") || e.eq_ignore_ascii_case("lnk"));
+        if !shortcut || !entry.needs_prefix() {
+            return;
+        }
+        let squash = |s: &str| {
+            s.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .map(|c| c.to_ascii_lowercase())
+                .collect::<String>()
+        };
+        let wanted = squash(&entry.name);
+        if wanted.len() < 3 {
+            return;
+        }
+        let prefix = entry.effective_prefix(&self.global.prefixes_dir());
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for exe in self.tools.prefix_exes(&prefix) {
+            let stem = exe
+                .file_stem()
+                .map(|s| squash(&s.to_string_lossy()))
+                .unwrap_or_default();
+            if (stem == wanted || stem.starts_with(&wanted))
+                && let Some(parent) = exe.parent()
+                && !folders.iter().any(|f| f == parent)
+            {
+                folders.push(parent.to_path_buf());
+            }
+        }
+        if !folders.is_empty() {
+            folders.truncate(4);
+            self.tools.target = folders.first().cloned();
+            self.tools.folders = folders;
+        }
+    }
+
     fn lsfg_suggestions(&self) -> Vec<String> {
         let Some(entry) = self.entry() else {
             return Vec::new();
@@ -596,7 +648,7 @@ impl Library {
         card
     }
 
-    fn download_streamline(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn download_streamline(&mut self, cx: &mut Context<Self>) {
         self.tools.busy = Some("Downloading…");
         self.tools.error = None;
         cx.notify();
@@ -637,7 +689,7 @@ impl Library {
             .or_else(|| self.selected_game()?.install_dir.clone())
     }
 
-    fn download_bundle(&mut self, ix: usize, cx: &mut Context<Self>) {
+    pub(super) fn download_bundle(&mut self, ix: usize, cx: &mut Context<Self>) {
         let b = arkor_launch::bundles::Bundle::ALL[ix];
         self.tools.busy = Some("Downloading…");
         self.tools.error = None;
@@ -935,7 +987,7 @@ impl Library {
         .detach();
     }
 
-    fn download_optiscaler(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn download_optiscaler(&mut self, cx: &mut Context<Self>) {
         self.tools.busy = Some(self.t().opti_downloading);
         self.tools.error = None;
         cx.notify();
@@ -1065,7 +1117,134 @@ impl Library {
         )
     }
 
+    /// One line of a status panel: a coloured mark, what it is, what was found, and a fix.
+    fn status_row(
+        &self,
+        ok: Option<bool>,
+        title: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+        action: Option<gpui::Stateful<Div>>,
+    ) -> Div {
+        use super::style::{self, pal};
+        let (icon, color) = match ok {
+            Some(true) => ("circle-check", pal::success()),
+            Some(false) => ("circle-x", pal::danger()),
+            None => ("triangle-alert", pal::warning()),
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .rounded(px(10.))
+            .bg(pal::raised().opacity(0.45))
+            .child(style::icon(icon, 16., color))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(title.into()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(pal::muted())
+                            .child(detail.into()),
+                    ),
+            )
+            .children(action)
+    }
+
+    /// What lsfg-vk needs, each with a way to fix it: the layer, Lossless Scaling on Steam,
+    /// and the shaders of Lossless Scaling's "lsfg-vk" beta branch (lsfg-vk 2.x).
+    fn lsfg_status(&self, cx: &mut Context<Self>) -> Div {
+        let open = |url: &'static str| {
+            move |_: &gpui::ClickEvent, _: &mut Window, _: &mut gpui::App| {
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            }
+        };
+        let _ = cx;
+        let layer = match &self.tools.lsfg_info {
+            Some(l) => self.status_row(
+                Some(true),
+                "lsfg-vk",
+                format!(
+                    "{} {} · {}",
+                    self.tr("Installed", "Kurulu"),
+                    l.version.clone().unwrap_or_default(),
+                    if l.user {
+                        self.tr("in your user folder", "kullanıcı klasöründe")
+                    } else {
+                        self.tr("system package", "sistem paketi")
+                    }
+                ),
+                None,
+            ),
+            None => self.status_row(
+                Some(false),
+                "lsfg-vk",
+                self.tr(
+                    "Not installed. Install it from the AUR (lsfg-vk) or with the script on lsfg-vk.dev.",
+                    "Kurulu değil. AUR'dan (lsfg-vk) ya da lsfg-vk.dev'deki betikle kur.",
+                ),
+                Some(widgets::chip("lsfg-site", "lsfg-vk.dev", false).on_click(open("https://lsfg-vk.dev"))),
+            ),
+        };
+        let ls = match &self.tools.ls_dir {
+            Some(dir) => self.status_row(
+                Some(true),
+                self.tr("Lossless Scaling (Steam)", "Lossless Scaling (Steam)"),
+                dir.display().to_string(),
+                None,
+            ),
+            None => self.status_row(
+                Some(false),
+                self.tr("Lossless Scaling (Steam)", "Lossless Scaling (Steam)"),
+                self.tr(
+                    "Not installed. lsfg-vk uses its files; buy and install it on Steam (or mount the drive with your Steam library).",
+                    "Kurulu değil. lsfg-vk onun dosyalarını kullanır; Steam'den al ve kur (ya da Steam kütüphanenin olduğu diski bağla).",
+                ),
+                Some(widgets::chip("ls-steam", self.tr("Open in Steam", "Steam'de aç"), false).on_click(open("steam://install/993090"))),
+            ),
+        };
+        let shaders = self.tools.ls_dir.as_ref().map(|dir| {
+            if dir.join("lsfg-vk.dll").is_file() {
+                self.status_row(
+                    Some(true),
+                    self.tr("lsfg-vk 2 shaders (beta branch)", "lsfg-vk 2 gölgelendiricileri (beta dalı)"),
+                    self.tr("lsfg-vk.dll found; Arkor gives it to lsfg-vk.", "lsfg-vk.dll bulundu; Arkor onu lsfg-vk'ye verir."),
+                    None,
+                )
+            } else {
+                self.status_row(
+                    None,
+                    self.tr("lsfg-vk 2 shaders (beta branch)", "lsfg-vk 2 gölgelendiricileri (beta dalı)"),
+                    self.tr(
+                        "lsfg-vk 2 needs lsfg-vk.dll: in Steam, Lossless Scaling → Properties → Betas → choose “lsfg-vk”.",
+                        "lsfg-vk 2, lsfg-vk.dll ister: Steam'de Lossless Scaling → Özellikler → Betalar → “lsfg-vk”yi seç.",
+                    ),
+                    Some(widgets::chip("ls-beta", self.tr("Open in Steam", "Steam'de aç"), false).on_click(open("steam://nav/games/details/993090"))),
+                )
+            }
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .child(layer)
+            .child(ls)
+            .children(shaders)
+    }
+
     pub(super) fn render_lsfg(&mut self, cx: &mut Context<Self>) -> Div {
+        use super::style::{self, pal};
         let process_field = self.submit_field(
             "lsfg-process",
             self.tr(
@@ -1083,76 +1262,132 @@ impl Library {
         );
         let suggestions = self.lsfg_suggestions();
         let t = self.t();
-        let lsfg = &self.profile.lsfg;
+        let status = self.lsfg_status(cx);
+        let lsfg = self.profile.lsfg.clone();
         let mode_chip = |ix: usize, mode: LsfgMode, text: &'static str, cx: &mut Context<Self>| {
             widgets::chip(("lsfg-mode", ix), text, lsfg.mode == mode)
                 .on_click(cx.listener(move |this, _, _, cx| this.edit_lsfg(cx, |l| l.mode = mode)))
         };
-        let mut card = widgets::section("lsfg-vk")
-            .child(widgets::label(t.lsfg_hint))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(mode_chip(0, LsfgMode::Default, t.lsfg_default, cx))
-                    .child(mode_chip(1, LsfgMode::On, t.lsfg_on, cx))
-                    .child(mode_chip(2, LsfgMode::Off, t.lsfg_off, cx)),
-            );
-        card = match lsfg.mode {
-            LsfgMode::Default => card.child(widgets::label(t.lsfg_default_note)),
-            LsfgMode::Off => card.child(widgets::label(t.lsfg_off_note)),
-            LsfgMode::On => {
-                let btn = |id: &'static str,
-                           glyph: &'static str,
-                           f: fn(&mut arkor_core::Lsfg),
-                           cx: &mut Context<Self>| {
-                    widgets::step_button(id, glyph)
-                        .on_click(cx.listener(move |this, _, _, cx| this.edit_lsfg(cx, f)))
-                };
-                card.child(
+        let mut card = widgets::section(self.tr(
+            "Lossless Scaling frame generation (lsfg-vk)",
+            "Lossless Scaling kare üretimi (lsfg-vk)",
+        ))
+        .child(widgets::label(t.lsfg_hint))
+        .child(status)
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .child(self.tr("For this game", "Bu oyun için")),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(mode_chip(2, LsfgMode::Off, self.tr("Off", "Kapalı"), cx))
+                .child(mode_chip(
+                    1,
+                    LsfgMode::On,
+                    self.tr("On, with the settings below", "Açık, aşağıdaki ayarlarla"),
+                    cx,
+                )),
+        );
+        match lsfg.mode {
+            LsfgMode::Off => {
+                card = card.child(widgets::label(t.lsfg_off_note));
+                return card;
+            }
+            LsfgMode::On => {}
+        }
+
+        // What happens in game, in plain numbers.
+        let m = lsfg.multiplier;
+        let target = if lsfg.processes.is_empty() {
+            self.tr(
+                "every program the launch starts",
+                "başlatmanın açtığı her program",
+            )
+            .to_string()
+        } else {
+            lsfg.processes.join(", ")
+        };
+        card = card.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .p_3()
+                .rounded(px(12.))
+                .bg(pal::accent().opacity(0.1))
+                .border_1()
+                .border_color(pal::accent().opacity(0.3))
+                .child(style::icon("sparkles", 18., pal::accent_light()))
+                .child(
                     div()
                         .flex()
-                        .flex_wrap()
-                        .gap_6()
-                        .child(widgets::stepper(
-                            t.lsfg_multiplier,
-                            format!("{}x", lsfg.multiplier),
-                            btn("lsfg-mult-", "−", |l| l.step_multiplier(false), cx)
-                                .when(lsfg.multiplier <= LSFG_MULTIPLIER_RANGE.0, |d| {
-                                    d.opacity(0.4)
-                                }),
-                            btn("lsfg-mult+", "+", |l| l.step_multiplier(true), cx)
-                                .when(lsfg.multiplier >= LSFG_MULTIPLIER_RANGE.1, |d| {
-                                    d.opacity(0.4)
-                                }),
-                        ))
-                        .child(widgets::stepper(
-                            t.lsfg_flow_scale,
-                            t.percent(lsfg.flow_scale),
-                            btn("lsfg-flow-", "−", |l| l.step_flow_scale(false), cx)
-                                .when(lsfg.flow_scale <= LSFG_FLOW_SCALE_RANGE.0, |d| {
-                                    d.opacity(0.4)
-                                }),
-                            btn("lsfg-flow+", "+", |l| l.step_flow_scale(true), cx)
-                                .when(lsfg.flow_scale >= LSFG_FLOW_SCALE_RANGE.1, |d| {
-                                    d.opacity(0.4)
-                                }),
-                        )),
+                        .flex_col()
+                        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(format!(
+                            "{m}x {} — 30 → {} · 60 → {} FPS",
+                            self.tr("frame generation", "kare üretimi"),
+                            30 * m,
+                            60 * m
+                        )))
+                        .child(div().text_sm().text_color(pal::muted()).child(format!(
+                            "{} {}% · {} · {}: {target}",
+                            self.tr("Flow scale", "Akış ölçeği"),
+                            lsfg.flow_scale,
+                            if lsfg.performance_mode {
+                                self.tr("performance mode", "performans modu")
+                            } else {
+                                self.tr("quality mode", "kalite modu")
+                            },
+                            self.tr("applies to", "uygulandığı yer"),
+                        ))),
+                ),
+        );
+
+        // Multiplier: one click per value.
+        let mut mults = div().flex().gap_2();
+        for v in LSFG_MULTIPLIER_RANGE.0..=LSFG_MULTIPLIER_RANGE.1 {
+            mults = mults.child(
+                widgets::chip(
+                    ("lsfg-mult", v as usize),
+                    format!("{v}x"),
+                    lsfg.multiplier == v,
                 )
-                .child(
-                    widgets::switch_row(
-                        "lsfg-perf",
-                        t.lsfg_performance,
-                        t.lsfg_performance_hint,
-                        lsfg.performance_mode,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.edit_lsfg(cx, |l| l.performance_mode = !l.performance_mode)
-                    })),
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.edit_lsfg(cx, |l| l.multiplier = v)),
+                ),
+            );
+        }
+        let mut flows = div().flex().flex_wrap().gap_2();
+        for v in [50u32, 65, 75, 85, 100] {
+            flows = flows.child(
+                widgets::chip(
+                    ("lsfg-flow", v as usize),
+                    format!("{v}%"),
+                    lsfg.flow_scale == v,
                 )
-            }
-        };
-        if lsfg.mode == LsfgMode::On {
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.edit_lsfg(cx, |l| l.flow_scale = v)),
+                ),
+            );
+        }
+        card = card
+            .child(div().flex().flex_col().gap_1().child(div().font_weight(gpui::FontWeight::MEDIUM).child(t.lsfg_multiplier)).child(widgets::label(self.tr(
+                "Frames shown for each real one: 2x doubles the frame rate. Higher adds more latency.",
+                "Her gerçek kare için gösterilen kare: 2x kare hızını ikiye katlar. Yüksek değer gecikmeyi artırır.",
+            ))).child(mults))
+            .child(div().flex().flex_col().gap_1().child(div().font_weight(gpui::FontWeight::MEDIUM).child(t.lsfg_flow_scale)).child(widgets::label(self.tr(
+                "Resolution of the motion estimate. Lower is faster on weak GPUs or at 4K, a little less accurate.",
+                "Hareket tahmininin çözünürlüğü. Düşük değer zayıf GPU'larda ya da 4K'da daha hızlıdır, biraz daha az isabetlidir.",
+            ))).child(flows))
+            .child(
+                widgets::switch_row("lsfg-perf", t.lsfg_performance, t.lsfg_performance_hint, lsfg.performance_mode)
+                    .on_click(cx.listener(|this, _, _, cx| this.edit_lsfg(cx, |l| l.performance_mode = !l.performance_mode))),
+            );
+        let lsfg = &lsfg;
+        {
             // Which process gets frame generation (the Ubisoft Connect / EA app case).
             let mut procs = div().flex().flex_wrap().gap_2();
             for (ix, p) in lsfg.processes.iter().enumerate() {
@@ -1248,11 +1483,11 @@ impl Library {
                         cx.listener(|this, _, _, cx| this.edit_lsfg(cx, |l| l.fp16 = !l.fp16)),
                     ),
                 );
-            if !self.tools.lsfg_layer {
-                card = card.child(warning(t.lsfg_missing_layer));
-            } else if !self.tools.lossless_dll {
-                card = card.child(warning(t.lsfg_missing_dll));
-            }
+        }
+        if self.tools.lsfg_info.is_none() {
+            card = card.child(warning(t.lsfg_missing_layer));
+        } else if self.tools.ls_dir.is_none() {
+            card = card.child(warning(t.lsfg_missing_dll));
         }
         card
     }
@@ -1447,7 +1682,7 @@ impl Library {
         rows
     }
 
-    fn de_download(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn de_download(&mut self, cx: &mut Context<Self>) {
         self.tools.busy = Some(self.tr("Downloading DLSS Enabler…", "DLSS Enabler indiriliyor…"));
         self.tools.error = None;
         cx.notify();
@@ -1561,7 +1796,7 @@ fn warning(text: impl Into<gpui::SharedString>) -> Div {
 }
 
 impl Library {
-    fn rs_download(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn rs_download(&mut self, cx: &mut Context<Self>) {
         self.tools.busy = Some(self.tr("Downloading ReShade…", "ReShade indiriliyor…"));
         cx.notify();
         let bg = cx.background_executor().clone();
@@ -1932,7 +2167,7 @@ impl Library {
     }
 
     /// True when the layer that `key` enables is present (Arkor's copy or a system one).
-    fn layer_present(&self, key: &str) -> bool {
+    pub(super) fn layer_present(&self, key: &str) -> bool {
         self.tools.system_layers.iter().any(|l| l.enable.0 == key)
     }
 

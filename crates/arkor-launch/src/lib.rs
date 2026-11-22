@@ -44,6 +44,8 @@ pub struct Plan {
 pub struct Host {
     /// Lossless Scaling's `Lossless.dll` (lsfg-vk needs it), if found.
     pub lossless_dll: Option<PathBuf>,
+    /// The DLL lsfg-vk loads its shaders from (`lsfg-vk.dll` for lsfg-vk 2.x).
+    pub lsfg_dll: Option<PathBuf>,
     /// Proxy DLL names of game-folder mods installed in this game (e.g. `dxgi`, `version`).
     pub proxy_dlls: Vec<String>,
     /// `WINEDLLOVERRIDES` already in the environment, kept when Arkor adds its own.
@@ -57,6 +59,7 @@ impl Host {
     pub fn detect(id: &GameId) -> Self {
         Self {
             lossless_dll: tools::lossless_dll(),
+            lsfg_dll: tools::lsfg_dll(),
             proxy_dlls: {
                 let mut dlls = optiscaler::installed_proxies(id);
                 // DLSS-NR's installer names the DLLs that must load from the game folder.
@@ -111,11 +114,10 @@ pub fn plan(
     }
 
     match profile.lsfg.mode {
-        LsfgMode::Default => {}
         LsfgMode::On => {
             let lsfg = &profile.lsfg;
             env.insert("ENABLE_LSFGVK".into(), "1".into());
-            match lsfg.render_config(host.lossless_dll.as_deref()) {
+            match lsfg.render_config(host.lsfg_dll.as_deref()) {
                 // A per-game config whose profile only matches the game's own process, so a
                 // launcher started first (e.g. Ubisoft Connect) does not get frame generation
                 // and the game itself does.
@@ -136,7 +138,7 @@ pub fn plan(
                         "LSFGVK_PERFORMANCE_MODE".into(),
                         if lsfg.performance_mode { "1" } else { "0" }.into(),
                     );
-                    if let Some(dll) = &host.lossless_dll {
+                    if let Some(dll) = &host.lsfg_dll {
                         env.insert("LSFGVK_DLL_PATH".into(), dll.display().to_string());
                     }
                 }
@@ -510,12 +512,14 @@ mod tests {
         let mut prof = Profile::default();
         let host = Host {
             lossless_dll: Some("/ls/Lossless.dll".into()),
+            lsfg_dll: Some("/ls/lsfg-vk.dll".into()),
             ..Default::default()
         };
         let p = plan(&prof, &global(false), &host, Path::new("/g"), &cmd()).unwrap();
-        assert!(
-            !p.env.keys().any(|k| k.contains("LSFG")),
-            "default leaves lsfg-vk alone"
+        assert_eq!(
+            p.env.get("DISABLE_LSFGVK").map(String::as_str),
+            Some("1"),
+            "off by default: Arkor manages lsfg-vk, its own config file cannot turn it on"
         );
 
         prof.lsfg.mode = LsfgMode::On;
@@ -527,7 +531,8 @@ mod tests {
         assert_eq!(p.env["LSFGVK_MULTIPLIER"], "3");
         assert_eq!(p.env["LSFGVK_FLOW_SCALE"], "0.75");
         assert_eq!(p.env["LSFGVK_PERFORMANCE_MODE"], "0");
-        assert_eq!(p.env["LSFGVK_DLL_PATH"], "/ls/Lossless.dll");
+        // lsfg-vk 2.x gets the beta branch's shader DLL, not Lossless.dll.
+        assert_eq!(p.env["LSFGVK_DLL_PATH"], "/ls/lsfg-vk.dll");
 
         prof.lsfg.mode = LsfgMode::Off;
         let p = plan(&prof, &global(false), &host, Path::new("/g"), &cmd()).unwrap();

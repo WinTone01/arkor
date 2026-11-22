@@ -82,6 +82,7 @@ pub(super) enum Nav {
     Protons,
     Overlay,
     Bench,
+    Downloads,
     System,
     Settings,
 }
@@ -96,6 +97,7 @@ impl Library {
             ) => true,
             (Nav::Protons, Some(Selection::Protons)) => true,
             (Nav::Bench, Some(Selection::Bench)) => true,
+            (Nav::Downloads, Some(Selection::Downloads)) => true,
             (Nav::System, Some(Selection::System)) => true,
             (Nav::Overlay, Some(Selection::Global)) => self.global_hud_tab,
             (Nav::Settings, Some(Selection::Global)) => !self.global_hud_tab,
@@ -109,6 +111,7 @@ impl Library {
             Nav::Add => Selection::Add,
             Nav::Protons => Selection::Protons,
             Nav::Bench => Selection::Bench,
+            Nav::Downloads => Selection::Downloads,
             Nav::System => Selection::System,
             Nav::Overlay | Nav::Settings => Selection::Global,
         };
@@ -123,6 +126,7 @@ impl Library {
             Nav::Protons => self.tr("Proton & Wine", "Proton ve Wine"),
             Nav::Overlay => self.tr("MangoHud overlay", "MangoHud overlay"),
             Nav::Bench => self.tr("Benchmarks", "Benchmark'lar"),
+            Nav::Downloads => self.tr("Downloads", "İndirilenler"),
             Nav::System => self.tr("System", "Sistem"),
             Nav::Settings => self.tr("Settings", "Ayarlar"),
         }
@@ -229,7 +233,8 @@ impl Library {
             .child(Self::section_label(self.tr("Tools", "Araçlar")))
             .child(self.nav_item(Nav::Protons, "wine", None, cx))
             .child(self.nav_item(Nav::Overlay, "gauge", None, cx))
-            .child(self.nav_item(Nav::Bench, "chart-line", None, cx));
+            .child(self.nav_item(Nav::Bench, "chart-line", None, cx))
+            .child(self.nav_item(Nav::Downloads, "hard-drive-download", None, cx));
 
         let recent = self.recent_games();
         if !recent.is_empty() {
@@ -368,6 +373,7 @@ impl Library {
             ),
             Some(Selection::Protons) => (self.nav_title(Nav::Protons), None),
             Some(Selection::Bench) => (self.nav_title(Nav::Bench), None),
+            Some(Selection::Downloads) => (self.nav_title(Nav::Downloads), None),
             Some(Selection::System) => (self.nav_title(Nav::System), None),
             Some(Selection::Global) if self.global_hud_tab => (self.nav_title(Nav::Overlay), None),
             Some(Selection::Global) => (self.nav_title(Nav::Settings), None),

@@ -7,6 +7,7 @@ mod backdrop;
 mod bench_page;
 mod big_screen;
 mod defaults_page;
+mod downloads_page;
 mod enhance;
 mod features;
 mod fields;
@@ -56,6 +57,7 @@ use widgets::theme::*;
 enum Selection {
     Grid,
     Bench,
+    Downloads,
     Global,
     System,
     Add,
@@ -120,6 +122,7 @@ pub struct Library {
     /// umu-launcher, anti-cheat and a first Proton, installed in the background at start.
     required: protons::RequiredState,
     settings_tab: global_page::SettingsTab,
+    downloads: downloads_page::DownloadsState,
     /// Move the keyboard focus back to the window on the next render.
     refocus: bool,
     accent_picker: Option<(
@@ -174,6 +177,7 @@ impl Library {
             synced_look: None,
             feature_query: String::new(),
             settings_tab: Default::default(),
+            downloads: Default::default(),
             refocus: false,
             accent_picker: None,
             backup_prefixes: false,
@@ -348,6 +352,7 @@ impl Library {
             Some("system") => Selection::System,
             Some("library") => Selection::Grid,
             Some("benchmarks") => Selection::Bench,
+            Some("downloads") => Selection::Downloads,
             Some("big") => {
                 self.big_screen = true;
                 Selection::Grid
@@ -393,6 +398,7 @@ impl Library {
                 Profile::default()
             });
             self.tools.select(&self.games[ix]);
+            self.find_game_folders();
         }
     }
 
@@ -509,6 +515,7 @@ impl Library {
             Some(Selection::Protons) => self.render_protons(cx),
             Some(Selection::Grid) => self.render_grid(cx),
             Some(Selection::Bench) => self.render_bench(cx),
+            Some(Selection::Downloads) => self.render_downloads(cx),
             Some(Selection::System) => self.render_system(cx),
             Some(Selection::Game(ix)) => {
                 let _ = ix;
