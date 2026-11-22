@@ -58,6 +58,8 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 pub enum InputEvent {
+    /// The text changed (typing, paste, cut, IME).
+    Changed(String),
     Submit(String),
     Cancel,
 }
@@ -65,6 +67,7 @@ pub enum InputEvent {
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
+    placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -83,6 +86,7 @@ impl TextInput {
             focus_handle: cx.focus_handle(),
             selected_range: 0..content.len(),
             content,
+            placeholder: SharedString::default(),
             selection_reversed: false,
             marked_range: None,
             last_layout: None,
@@ -91,8 +95,27 @@ impl TextInput {
         }
     }
 
+    /// A form field: cursor at the end, greyed hint shown while empty.
+    pub fn field(
+        text: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut input = Self::new(text, cx);
+        input.placeholder = placeholder.into();
+        input.selected_range = input.content.len()..input.content.len();
+        input
+    }
+
     pub fn text(&self) -> String {
         self.content.to_string()
+    }
+
+    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = text.into();
+        self.selected_range = self.content.len()..self.content.len();
+        self.marked_range = None;
+        cx.notify();
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -341,6 +364,7 @@ impl EntityInputHandler for TextInput {
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
+        cx.emit(InputEvent::Changed(self.text()));
         cx.notify();
     }
 
@@ -367,6 +391,7 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .map(|new_range| new_range.start + range.start..new_range.end + range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+        cx.emit(InputEvent::Changed(self.text()));
         cx.notify();
     }
 
@@ -457,7 +482,12 @@ impl Element for TextElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
-        let content = input.content.clone();
+        let showing_placeholder = input.content.is_empty() && !input.placeholder.is_empty();
+        let content = if showing_placeholder {
+            input.placeholder.clone()
+        } else {
+            input.content.clone()
+        };
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = window.text_style();
@@ -465,7 +495,11 @@ impl Element for TextElement {
         let run = TextRun {
             len: content.len(),
             font: style.font(),
-            color: style.color,
+            color: if showing_placeholder {
+                rgb(MUTED()).into()
+            } else {
+                style.color
+            },
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -500,8 +534,12 @@ impl Element for TextElement {
         let line = window
             .text_system()
             .shape_line(content, font_size, &runs, None);
-        let cursor_pos = line.x_for_index(cursor);
-        let (selection, cursor) = if selected_range.is_empty() {
+        let cursor_pos = if showing_placeholder {
+            px(0.)
+        } else {
+            line.x_for_index(cursor)
+        };
+        let (selection, cursor) = if selected_range.is_empty() || showing_placeholder {
             (
                 None,
                 Some(fill(
@@ -509,7 +547,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    rgb(ACCENT),
+                    rgb(ACCENT()),
                 )),
             )
         } else {
@@ -601,10 +639,11 @@ impl Render for TextInput {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(BG))
+            .bg(rgb(BG()))
             .border_1()
-            .border_color(rgb(ACCENT))
-            .text_color(rgb(TEXT))
+            .border_color(rgb(BORDER()))
+            .focus(|s| s.border_color(rgb(ACCENT())))
+            .text_color(rgb(TEXT()))
             .line_height(px(24.))
             .child(TextElement { input: cx.entity() })
     }

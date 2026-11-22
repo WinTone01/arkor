@@ -1,84 +1,120 @@
-//! `arkor launch <store:id>`: start a game the way its source needs, with the profile applied.
+//! `arkor launch <id>`: start a library game the way its kind needs, with its profile applied.
 //!
 //! - Steam: hand off to Steam (`steam://rungameid`); the profile applies through the
-//!   `arkor run ... %command%` launch option.
+//!   `arkor run <id> -- %command%` launch option.
 //! - Epic: `legendary launch` (login/ownership), with `arkor run <id> -- umu-run` as wrapper.
-//! - Everything else (GOG, Heroic sideloads, Faugus, imported prefixes): an [`ExeTarget`]
-//!   run through `arkor run`, with umu-run for Windows builds.
+//! - Windows: `umu-run <exe>` through `arkor run`, in the game's prefix with its Proton.
+//! - Linux: the executable itself, optionally inside a Steam Linux Runtime through umu.
 //!
-//! Windows games run through umu-launcher with a Proton build (see [`proton_env`]).
+//! Also the prefix tools (winecfg, winetricks, running a file in the prefix) and stopping a
+//! running game.
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use arkor_core::{GameId, Store};
+use arkor_core::library::{GameKind, Library, LibraryGame};
+use arkor_core::{GameId, Global, Profile, Store};
+use arkor_stores::epic;
 use arkor_stores::target::ExeTarget;
-use arkor_stores::{epic, heroic};
 
-pub fn start(id: &GameId) -> anyhow::Result<Infallible> {
+/// Starts the game; returns its exit code when Arkor waited for it (see `crate::run`).
+pub fn start(id: &GameId) -> anyhow::Result<i32> {
     match id.store {
-        Store::Steam => {
-            let err = std::process::Command::new("steam")
-                .arg(format!("steam://rungameid/{}", id.id))
-                .exec();
-            Err(err).context("failed to start Steam")
+        // Legacy ids from before the library: still startable directly.
+        Store::Steam => steam(&id.id),
+        Store::Local => {
+            let global = Global::load_or_import()?;
+            let library = Library::load()?;
+            let game = library
+                .get(&id.id)
+                .with_context(|| format!("`{id}` is not in the library"))?
+                .clone();
+            match &game.kind {
+                GameKind::Steam { appid } => steam(appid),
+                GameKind::Epic { app_name } => epic_game(id, &game, app_name, &global),
+                GameKind::Windows | GameKind::Linux => {
+                    let target = arkor_stores::launch_target(id, &global.prefixes_dir())?;
+                    run_target(id, target)
+                }
+            }
         }
-        Store::Epic => {
-            let legendary = epic::Legendary::locate()
-                .context("legendary not found: install `legendary` or Heroic Games Launcher")?;
-            anyhow::ensure!(
-                legendary.is_logged_in(),
-                "not logged in to Epic: run `legendary auth` or log in with Heroic"
-            );
-            let me = std::env::current_exe().context("locating the arkor binary")?;
-            let wrapper = [
-                me.display().to_string(),
-                "run".into(),
-                id.to_string(),
-                "--".into(),
-                umu_run()?,
-            ];
-            let (argv, mut env) = legendary.launch_command(&id.id, &wrapper);
-            env.extend(proton_env(
-                id,
-                Some("egs"),
-                heroic::wine_prefix(&id.id),
-                chosen_proton(id, heroic::proton(&id.id)),
-            ));
-            let err = std::process::Command::new(&argv[0])
-                .args(&argv[1..])
-                .envs(&env)
-                .exec();
-            Err(err).with_context(|| format!("failed to exec `{}`", argv[0]))
-        }
-        Store::Gog | Store::Heroic | Store::Faugus | Store::Lutris | Store::Local => {
-            let target = arkor_stores::launch_target(id)?;
-            // umu's STORE selects store-specific protonfixes; only GOG is a store umu knows.
-            let umu_store = (id.store == Store::Gog).then_some("gog");
-            run_target(id, target, umu_store)
-        }
+        _ => anyhow::bail!("`{id}` is not a library game: add it to the library first"),
     }
 }
 
-fn run_target(
+fn steam(appid: &str) -> anyhow::Result<i32> {
+    let err = std::process::Command::new("steam")
+        .arg(format!("steam://rungameid/{appid}"))
+        .exec();
+    Err(err).context("failed to start Steam")
+}
+
+fn epic_game(
     id: &GameId,
-    target: ExeTarget,
-    umu_store: Option<&str>,
-) -> anyhow::Result<Infallible> {
-    if target.native {
-        let command: Vec<String> = std::iter::once(target.exe.display().to_string())
-            .chain(target.args)
-            .collect();
-        return crate::exec_with(id, &command, &BTreeMap::new(), Some(&target.working_dir));
-    }
+    game: &LibraryGame,
+    app_name: &str,
+    global: &Global,
+) -> anyhow::Result<i32> {
+    let legendary = epic::Legendary::locate()
+        .context("legendary not found: install `legendary` or Heroic Games Launcher")?;
+    anyhow::ensure!(
+        legendary.is_logged_in(),
+        "not logged in to Epic: run `legendary auth` or log in with Heroic"
+    );
+    let me = std::env::current_exe().context("locating the arkor binary")?;
+    let wrapper = [
+        me.display().to_string(),
+        "run".into(),
+        id.to_string(),
+        "--".into(),
+        umu_run()?,
+    ];
+    let (argv, mut env) = legendary.launch_command(app_name, &wrapper);
+    let prefix = game.effective_prefix(&global.prefixes_dir());
+    env.extend(proton_env(
+        Some("egs"),
+        &prefix,
+        chosen_proton(id, game.source_proton.clone()),
+    ));
+    let err = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .envs(&env)
+        .exec();
+    Err(err).with_context(|| format!("failed to exec `{}`", argv[0]))
+}
+
+fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
     anyhow::ensure!(
         target.needs_start() || target.exe.is_file(),
         "{} not found (is its drive mounted?)",
         target.exe.display()
     );
+    if target.native {
+        let profile = Profile::load(id).unwrap_or_default();
+        let mut command = Vec::new();
+        let mut env = BTreeMap::new();
+        if let Some(runtime) = profile.linux_runtime.filter(|r| !r.is_empty()) {
+            // umu runs native games inside the chosen Steam Linux Runtime container.
+            command.push(umu_run()?);
+            env.insert("PROTONPATH".into(), runtime);
+            env.insert("GAMEID".into(), "umu-default".into());
+            env.insert("UMU_NO_PROTON".into(), "1".into());
+        }
+        command.push(target.exe.display().to_string());
+        command.extend(target.args);
+        return crate::run(id, &command, &env, Some(&target.working_dir));
+    }
+    let prefix = target
+        .prefix
+        .clone()
+        .context("Windows game without a prefix")?;
+    std::fs::create_dir_all(&prefix)
+        .with_context(|| format!("creating prefix {}", prefix.display()))?;
+    if crate::ea_fix::apply(&prefix, &target.exe).unwrap_or(false) {
+        eprintln!("arkor: updated the EA app's launcher path");
+    }
     let mut command = vec![umu_run()?];
     if target.needs_start() {
         // Shortcuts open through Wine's `start`, which resolves .lnk/.url inside the prefix.
@@ -86,16 +122,20 @@ fn run_target(
     }
     command.push(target.exe.display().to_string());
     command.extend(target.args.iter().cloned());
-    let proton = chosen_proton(id, target.proton.clone());
-    let env = proton_env(id, umu_store, target.prefix.clone(), proton);
-    crate::exec_with(id, &command, &env, Some(&target.working_dir))
+    let env = proton_env(None, &prefix, chosen_proton(id, target.proton.clone()));
+    crate::run(id, &command, &env, Some(&target.working_dir))
 }
+
+/// Profile value meaning "newest GE-Proton, managed by umu".
+pub const GE_LATEST: &str = "GE-Proton";
 
 /// The game's Proton: the profile's choice if set and installed, else the source launcher's.
 fn chosen_proton(id: &GameId, from_source: Option<PathBuf>) -> Option<PathBuf> {
     // An unreadable profile must not lose the source launcher's Proton.
-    let wanted = arkor_core::Profile::load(id).ok().and_then(|p| p.proton);
+    let wanted = Profile::load(id).ok().and_then(|p| p.proton);
     match wanted {
+        // umu's own token: it downloads the newest GE-Proton and keeps it updated.
+        Some(name) if name == GE_LATEST => Some(PathBuf::from(GE_LATEST)),
         Some(name) => match crate::tools::resolve_proton(&name) {
             Some(path) => Some(path),
             None => {
@@ -107,7 +147,7 @@ fn chosen_proton(id: &GameId, from_source: Option<PathBuf>) -> Option<PathBuf> {
     }
 }
 
-fn umu_run() -> anyhow::Result<String> {
+pub(crate) fn umu_run() -> anyhow::Result<String> {
     find_in_path("umu-run")
         .map(|p| p.display().to_string())
         .context("umu-run not found: install umu-launcher")
@@ -121,22 +161,17 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 
 /// Environment for umu-launcher. Anything here can be overridden from the game's profile
 /// (`[env]`), e.g. `PROTONPATH` to pick another Proton build.
-///
-/// `prefix` / `proton` are what the game's source launcher uses (kept so saves and the
-/// tested Proton stay the same); otherwise one prefix per game and Arkor's default Proton.
 pub fn proton_env(
-    id: &GameId,
     umu_store: Option<&str>,
-    prefix: Option<PathBuf>,
+    prefix: &Path,
     proton: Option<PathBuf>,
 ) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
-    let prefix = prefix.unwrap_or_else(|| default_prefix(id));
     env.insert("WINEPREFIX".into(), prefix.display().to_string());
     if let Some(store) = umu_store {
         env.insert("STORE".into(), store.into());
     }
-    // umu requires a GAMEID; this is umu's own default (no per-game protonfixes yet).
+    // umu requires a GAMEID; the profile's umu id (protonfixes) replaces this default.
     env.insert("GAMEID".into(), "umu-default".into());
     if std::env::var_os("PROTONPATH").is_none() {
         let proton = proton
@@ -147,9 +182,88 @@ pub fn proton_env(
     env
 }
 
-fn default_prefix(id: &GameId) -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-    home.join("Games/Arkor/Prefixes").join(id.file_stem())
+/// What a prefix tool runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrefixTool {
+    Winecfg,
+    /// winetricks with these verbs (none = its GUI).
+    Winetricks(Vec<String>),
+    /// Any .exe/.msi/.bat/.reg file (installers, patches, registry files).
+    Run(PathBuf),
+}
+
+/// Environment and prefix a library game's tools run with.
+pub fn game_wine_env(id: &GameId) -> anyhow::Result<(PathBuf, BTreeMap<String, String>)> {
+    let global = Global::load_or_import()?;
+    let library = Library::load()?;
+    let game = library
+        .get(&id.id)
+        .with_context(|| format!("`{id}` is not in the library"))?;
+    anyhow::ensure!(game.needs_prefix(), "{} has no Wine prefix", game.name);
+    let prefix = game.effective_prefix(&global.prefixes_dir());
+    let env = proton_env(None, &prefix, chosen_proton(id, game.source_proton.clone()));
+    Ok((prefix, env))
+}
+
+/// Runs a prefix tool for a library game and waits for it. Blocking.
+pub fn run_prefix_tool(id: &GameId, tool: &PrefixTool) -> anyhow::Result<std::process::ExitStatus> {
+    let (prefix, mut env) = game_wine_env(id)?;
+    std::fs::create_dir_all(&prefix)?;
+    let mut cmd = std::process::Command::new(umu_run()?);
+    match tool {
+        PrefixTool::Winecfg => {
+            cmd.arg("winecfg");
+        }
+        PrefixTool::Winetricks(verbs) => {
+            // umu special-cases GAMEID=winetricks: it fetches and runs winetricks itself.
+            env.insert("GAMEID".into(), "winetricks".into());
+            cmd.arg("winetricks").args(verbs);
+        }
+        PrefixTool::Run(file) => {
+            let ext = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match ext.as_str() {
+                "msi" => cmd.args(["msiexec", "/i"]).arg(file),
+                "reg" => cmd.args(["regedit", "/S"]).arg(file),
+                "bat" | "cmd" | "lnk" | "url" => {
+                    cmd.args(["start.exe", "/wait", "/unix"]).arg(file)
+                }
+                _ => cmd.arg(file),
+            };
+            if let Some(dir) = file.parent() {
+                cmd.current_dir(dir);
+            }
+        }
+    }
+    cmd.envs(&env)
+        .env_remove("DISABLE_MANGOHUD")
+        .env("MANGOHUD", "0");
+    cmd.status().context("running umu-run")
+}
+
+/// Stops everything running in a Windows game's prefix (`wineserver -k`).
+pub fn kill_prefix(id: &GameId) -> anyhow::Result<()> {
+    let (prefix, env) = game_wine_env(id)?;
+    let proton = env.get("PROTONPATH").map(PathBuf::from);
+    let wineserver = proton
+        .map(|p| p.join("files/bin/wineserver"))
+        .filter(|p| p.is_file())
+        .or_else(|| find_in_path("wineserver"))
+        .context("wineserver not found")?;
+    // Proton keeps the actual Wine prefix in `pfx/` inside the compat data folder.
+    let wine_prefix = if prefix.join("pfx").is_dir() {
+        prefix.join("pfx")
+    } else {
+        prefix
+    };
+    std::process::Command::new(wineserver)
+        .arg("-k")
+        .env("WINEPREFIX", wine_prefix)
+        .status()?;
+    Ok(())
 }
 
 /// Picks a Proton build: an installed one if any (system packages first, e.g. CachyOS's
@@ -250,18 +364,13 @@ mod tests {
 
     #[test]
     fn proton_env_sets_umu_vars() {
-        let id = GameId::new(Store::Gog, "no-such-heroic-game-123");
-        let env = proton_env(&id, Some("gog"), None, None);
+        let env = proton_env(Some("gog"), Path::new("/pfx"), Some("/tools/GE".into()));
         assert_eq!(env["STORE"], "gog");
         assert_eq!(env["GAMEID"], "umu-default");
-        assert!(env["WINEPREFIX"].ends_with("Games/Arkor/Prefixes/gog-no-such-heroic-game-123"));
-
-        let local = GameId::new(Store::Local, "x");
-        let env = proton_env(&local, None, Some("/pfx".into()), Some("/tools/GE".into()));
         assert_eq!(env["WINEPREFIX"], "/pfx");
-        assert!(!env.contains_key("STORE"));
         if std::env::var_os("PROTONPATH").is_none() {
             assert_eq!(env["PROTONPATH"], "/tools/GE");
         }
+        assert!(!proton_env(None, Path::new("/p"), None).contains_key("STORE"));
     }
 }

@@ -1,19 +1,32 @@
 //! The single launch pipeline every game goes through:
-//! `arkor run <store:id> -- <command...>` (for Steam: launch options `arkor run steam:<appid> -- %command%`).
+//! `arkor run <store:id> -- <command...>` (for Steam: launch options `arkor run <id> -- %command%`).
 //!
 //! `plan` is pure (profile + command in, final argv + env out) so it can be unit-tested;
-//! `exec` performs side effects (writes generated configs, replaces the process).
-//! `start` (see [`start`]) is the store-aware entry point behind `arkor launch` / Play.
+//! `run` performs side effects: writes generated configs, runs hooks and the extra app,
+//! and either replaces the process with the game or waits for it.
+//! `start` (see [`start`]) is the library-aware entry point behind `arkor launch` / Play.
 
+pub mod bundles;
+pub mod covers;
+pub mod discord;
+pub mod dlss_enabler;
+pub mod ea_fix;
+pub mod launchers;
+pub mod layers;
 pub mod optiscaler;
+pub mod proton_dl;
+pub mod reshade;
+pub mod shortcuts;
 pub mod start;
+pub mod streamline;
 pub mod tools;
+pub mod umu_db;
 
 use std::collections::BTreeMap;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use arkor_core::profile::parse_launch_options;
 use arkor_core::{GameId, Global, LsfgMode, Profile, paths};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,23 +43,32 @@ pub struct Plan {
 pub struct Host {
     /// Lossless Scaling's `Lossless.dll` (lsfg-vk needs it), if found.
     pub lossless_dll: Option<PathBuf>,
-    /// Proxy DLL name OptiScaler is installed as in this game (e.g. `dxgi`), if installed.
-    pub optiscaler_dll: Option<String>,
+    /// Proxy DLL names of game-folder mods installed in this game (e.g. `dxgi`, `version`).
+    pub proxy_dlls: Vec<String>,
     /// `WINEDLLOVERRIDES` already in the environment, kept when Arkor adds its own.
     pub inherited_dll_overrides: Option<String>,
+    /// Folder for Proton's own logs when the profile asks for them.
+    pub log_dir: Option<PathBuf>,
+    pub anticheat: tools::AntiCheat,
 }
 
 impl Host {
     pub fn detect(id: &GameId) -> Self {
         Self {
             lossless_dll: tools::lossless_dll(),
-            optiscaler_dll: optiscaler::Manifest::load(id)
-                .ok()
-                .flatten()
-                .map(|m| m.dll_stem()),
+            proxy_dlls: {
+                let mut dlls = optiscaler::installed_proxies(id);
+                // DLSS-NR's installer names the DLLs that must load from the game folder.
+                dlls.extend(bundles::dlssnr(id).map(|d| d.overrides).unwrap_or_default());
+                dlls
+            },
             inherited_dll_overrides: std::env::var("WINEDLLOVERRIDES")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            log_dir: paths::launch_log(id)
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+            anticheat: tools::anticheat(),
         }
     }
 }
@@ -63,7 +85,8 @@ pub fn plan(
         "no command to run (did you forget `-- %command%`?)"
     );
 
-    let mut env = BTreeMap::new();
+    // Lowest priority first: global env, Arkor's own settings, launch options, game env.
+    let mut env: BTreeMap<String, String> = global.env.clone();
     let mut files = Vec::new();
     let mut argv = Vec::new();
 
@@ -79,6 +102,7 @@ pub fn plan(
                 disable_layer(&mut env);
             } else {
                 env.insert("MANGOHUD".into(), "1".into());
+                env.remove("DISABLE_MANGOHUD");
             }
         }
         // Explicitly off, so a system-wide MANGOHUD=1 (e.g. environment.d) cannot re-enable it.
@@ -90,19 +114,31 @@ pub fn plan(
         LsfgMode::On => {
             let lsfg = &profile.lsfg;
             env.insert("ENABLE_LSFGVK".into(), "1".into());
-            // Take settings from the variables below instead of lsfg-vk's conf.toml.
-            env.insert("LSFGVK_ENV".into(), "1".into());
-            env.insert("LSFGVK_MULTIPLIER".into(), lsfg.multiplier.to_string());
-            env.insert(
-                "LSFGVK_FLOW_SCALE".into(),
-                format!("{:.2}", lsfg.flow_scale as f32 / 100.0),
-            );
-            env.insert(
-                "LSFGVK_PERFORMANCE_MODE".into(),
-                if lsfg.performance_mode { "1" } else { "0" }.into(),
-            );
-            if let Some(dll) = &host.lossless_dll {
-                env.insert("LSFGVK_DLL_PATH".into(), dll.display().to_string());
+            match lsfg.render_config(host.lossless_dll.as_deref()) {
+                // A per-game config whose profile only matches the game's own process, so a
+                // launcher started first (e.g. Ubisoft Connect) does not get frame generation
+                // and the game itself does.
+                Some(config) => {
+                    let path = game_dir.join("lsfg-vk.toml");
+                    env.insert("LSFGVK_CONFIG".into(), path.display().to_string());
+                    files.push((path, config));
+                }
+                // Process unknown: lsfg-vk's environment profile, applied to every process.
+                None => {
+                    env.insert("LSFGVK_ENV".into(), "1".into());
+                    env.insert("LSFGVK_MULTIPLIER".into(), lsfg.multiplier.to_string());
+                    env.insert(
+                        "LSFGVK_FLOW_SCALE".into(),
+                        format!("{:.2}", lsfg.flow_scale as f32 / 100.0),
+                    );
+                    env.insert(
+                        "LSFGVK_PERFORMANCE_MODE".into(),
+                        if lsfg.performance_mode { "1" } else { "0" }.into(),
+                    );
+                    if let Some(dll) = &host.lossless_dll {
+                        env.insert("LSFGVK_DLL_PATH".into(), dll.display().to_string());
+                    }
+                }
             }
         }
         LsfgMode::Off => {
@@ -110,9 +146,14 @@ pub fn plan(
         }
     }
 
-    if let Some(dll) = &host.optiscaler_dll {
-        // Wine must load OptiScaler's proxy DLL from the game folder instead of its builtin.
-        let ours = format!("{dll}=n,b");
+    if !host.proxy_dlls.is_empty() {
+        // Wine must load the mods' proxy DLLs from the game folder instead of its builtins.
+        let ours = host
+            .proxy_dlls
+            .iter()
+            .map(|d| format!("{d}=n,b"))
+            .collect::<Vec<_>>()
+            .join(";");
         let overrides = match &host.inherited_dll_overrides {
             Some(existing) => format!("{existing};{ours}"),
             None => ours,
@@ -120,22 +161,69 @@ pub fn plan(
         env.insert("WINEDLLOVERRIDES".into(), overrides);
     }
 
+    if profile.proton_log
+        && let Some(dir) = &host.log_dir
+    {
+        env.insert("PROTON_LOG".into(), "1".into());
+        env.insert("PROTON_LOG_DIR".into(), dir.display().to_string());
+    }
+    // Proton loads these only for games that ship EasyAntiCheat / BattlEye.
+    if let Some(eac) = &host.anticheat.eac {
+        env.insert("PROTON_EAC_RUNTIME".into(), eac.display().to_string());
+    }
+    if let Some(be) = &host.anticheat.battleye {
+        env.insert("PROTON_BATTLEYE_RUNTIME".into(), be.display().to_string());
+    }
+    if let Some(umu_id) = profile.umu_id.as_ref().filter(|id| !id.is_empty()) {
+        env.insert("GAMEID".into(), umu_id.clone());
+    }
+    env.extend(profile.tweaks_env());
+    env.extend(profile.layers.env(host.lossless_dll.as_deref()));
+    if profile.layers.afmf.enabled && profile.gamescope.enabled {
+        // afmf-linux needs to know it runs inside gamescope (more images, skip gamescope itself).
+        env.insert("AFMF_GAMESCOPE".into(), "1".into());
+    }
+    if profile.vkbasalt.enabled {
+        let conf = game_dir.join("vkBasalt.conf");
+        env.insert("ENABLE_VKBASALT".into(), "1".into());
+        env.insert("VKBASALT_CONFIG_FILE".into(), conf.display().to_string());
+        files.push((conf, profile.vkbasalt.render()));
+    }
+
+    let (option_env, before, after) = parse_launch_options(&profile.launch_options);
+
+    if profile.no_sleep {
+        argv.extend(
+            [
+                "systemd-inhibit",
+                "--what=idle:sleep",
+                "--who=Arkor",
+                "--why=Playing a game",
+                "--",
+            ]
+            .map(String::from),
+        );
+    }
+    argv.extend(profile.tweak_wrappers());
+    argv.extend(before);
     if profile.gamemode {
         argv.push("gamemoderun".to_string());
     }
-
     if profile.gamescope.enabled {
         argv.push("gamescope".to_string());
-        argv.extend(profile.gamescope.args.iter().cloned());
-        if hud.is_some() && !profile.gamescope.args.iter().any(|a| a == "--mangoapp") {
+        let args = profile.gamescope.to_args();
+        let has_mangoapp = args.iter().any(|a| a == "--mangoapp");
+        argv.extend(args);
+        if hud.is_some() && !has_mangoapp {
             argv.push("--mangoapp".to_string());
         }
         argv.push("--".to_string());
     }
-
     argv.extend(command.iter().cloned());
+    argv.extend(after);
 
-    // User env last so it can override anything above.
+    env.extend(option_env);
+    // The game's own env last so it can override anything above.
     env.extend(profile.env.clone());
 
     Ok(Plan { argv, env, files })
@@ -146,20 +234,20 @@ fn disable_layer(env: &mut BTreeMap<String, String>) {
     env.insert("DISABLE_MANGOHUD".into(), "1".into());
 }
 
-/// Loads the game's profile, writes generated configs and replaces this process with the game.
-/// Only returns on error.
-pub fn exec(id: &GameId, command: &[String]) -> anyhow::Result<std::convert::Infallible> {
-    exec_with(id, command, &BTreeMap::new(), None)
+/// Loads the game's profile, writes generated configs, runs the game and waits for it
+/// (hooks, extra app, Discord, play time). Returns the game's exit code.
+pub fn exec(id: &GameId, command: &[String]) -> anyhow::Result<i32> {
+    run(id, command, &BTreeMap::new(), None)
 }
 
 /// Like [`exec`], with environment set before the profile is applied (so the profile can still
 /// override it) and an optional working directory.
-pub fn exec_with(
+pub fn run(
     id: &GameId,
     command: &[String],
     base_env: &BTreeMap<String, String>,
     working_dir: Option<&Path>,
-) -> anyhow::Result<std::convert::Infallible> {
+) -> anyhow::Result<i32> {
     let profile = Profile::load(id)?;
     let global = Global::load_or_import()?;
     let game_dir = paths::game_config_dir(id)?;
@@ -182,10 +270,114 @@ pub fn exec_with(
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
-    // exec (not spawn): Steam tracks the game by our PID, and we add no overhead while it runs.
-    let err = cmd.exec();
-    Err(err).with_context(|| format!("failed to exec `{}`", plan.argv[0]))
+
+    let discord = global.discord.enabled && !global.discord.app_id.trim().is_empty();
+    let shell_env: BTreeMap<String, String> = base_env
+        .iter()
+        .chain(&plan.env)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if !profile.pre_launch.trim().is_empty() {
+        let status = shell(&profile.pre_launch, &shell_env, working_dir)?;
+        anyhow::ensure!(status.success(), "pre-launch command failed ({status})");
+    }
+
+    let extra = profile
+        .extra_app
+        .path
+        .clone()
+        .map(|path| (path, profile.extra_app.clone()));
+    let mut extra_child = None;
+    if let Some((path, cfg)) = &extra
+        && cfg.before_game
+    {
+        extra_child = spawn_extra(path, &shell_env)?;
+        std::thread::sleep(std::time::Duration::from_secs(cfg.delay_secs.into()));
+    }
+
+    // MangoHud only writes benchmark logs into a folder that exists.
+    if let Some(dir) = arkor_core::bench::default_dir() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Arkor waits for the game (instead of exec'ing it) to run the hooks and count play time.
+    let started = arkor_core::stats::now();
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("failed to start `{}`", plan.argv[0]))?;
+    let presence = discord
+        .then(|| discord::Presence::start(&global.discord.app_id, &game_name(id), child.id()));
+
+    if let Some((path, cfg)) = &extra
+        && !cfg.before_game
+    {
+        std::thread::sleep(std::time::Duration::from_secs(cfg.delay_secs.into()));
+        extra_child = spawn_extra(path, &shell_env)?;
+    }
+
+    let status = child.wait()?;
+    drop(presence);
+    if let Err(e) = arkor_core::stats::Stats::record(id, started, arkor_core::stats::now()) {
+        eprintln!("arkor: could not save play time: {e:#}");
+    }
+    if let Some(mut extra) = extra_child {
+        let _ = extra.kill();
+    }
+    if !profile.post_launch.trim().is_empty() {
+        shell(&profile.post_launch, &shell_env, working_dir)?;
+    }
+    Ok(status.code().unwrap_or(1))
 }
+
+fn shell(
+    command: &str,
+    env: &BTreeMap<String, String>,
+    dir: Option<&Path>,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c").arg(command).envs(env);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    cmd.status().with_context(|| format!("running `{command}`"))
+}
+
+/// Windows programs (.exe/.bat/.msi) go through umu-run with the game's environment
+/// (same prefix and Proton); anything else runs directly.
+fn spawn_extra(
+    path: &Path,
+    env: &BTreeMap<String, String>,
+) -> anyhow::Result<Option<std::process::Child>> {
+    let windows = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["exe", "bat", "msi"].contains(&e.to_ascii_lowercase().as_str()));
+    let mut cmd = if windows {
+        let mut c = std::process::Command::new(start::umu_run()?);
+        c.arg(path);
+        c
+    } else {
+        std::process::Command::new(path)
+    };
+    cmd.envs(env);
+    if let Some(dir) = path.parent() {
+        cmd.current_dir(dir);
+    }
+    Ok(Some(
+        cmd.spawn()
+            .with_context(|| format!("starting {}", path.display()))?,
+    ))
+}
+
+fn game_name(id: &GameId) -> String {
+    arkor_core::library::Library::load()
+        .ok()
+        .and_then(|l| l.get(&id.id).map(|g| g.name.clone()))
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Tests that point XDG_CONFIG_HOME somewhere else take this, so they don't race.
+#[cfg(test)]
+pub(crate) static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -345,7 +537,7 @@ mod tests {
     #[test]
     fn optiscaler_override_keeps_existing() {
         let host = Host {
-            optiscaler_dll: Some("dxgi".into()),
+            proxy_dlls: vec!["dxgi".into(), "version".into()],
             inherited_dll_overrides: Some("d3d11=n".into()),
             ..Default::default()
         };
@@ -357,7 +549,83 @@ mod tests {
             &cmd(),
         )
         .unwrap();
-        assert_eq!(p.env["WINEDLLOVERRIDES"], "d3d11=n;dxgi=n,b");
+        assert_eq!(p.env["WINEDLLOVERRIDES"], "d3d11=n;dxgi=n,b;version=n,b");
+    }
+
+    #[test]
+    fn lsfg_with_game_process_uses_per_game_config() {
+        let mut prof = Profile::default();
+        prof.lsfg.mode = LsfgMode::On;
+        prof.lsfg.processes = vec!["FarCry6.exe".into()];
+        let p = plan(
+            &prof,
+            &global(false),
+            &Host::default(),
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
+        assert_eq!(p.env["ENABLE_LSFGVK"], "1");
+        assert_eq!(p.env["LSFGVK_CONFIG"], "/g/lsfg-vk.toml");
+        assert!(
+            !p.env.contains_key("LSFGVK_ENV"),
+            "env profile would hit the launcher too"
+        );
+        let (path, text) = p
+            .files
+            .iter()
+            .find(|(path, _)| path.ends_with("lsfg-vk.toml"))
+            .unwrap();
+        assert_eq!(path, &PathBuf::from("/g/lsfg-vk.toml"));
+        assert!(
+            text.contains(r#"active_in = ["FarCry6.exe", "farcry6.exe"]"#),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn options_wrappers_and_env_priority() {
+        let mut g = global(false);
+        g.env.insert("A".into(), "global".into());
+        g.env.insert("B".into(), "global".into());
+        let mut prof = Profile {
+            no_sleep: true,
+            gamemode: true,
+            ..Default::default()
+        };
+        prof.tweaks.insert("game_performance".into());
+        prof.tweaks.insert("wayland".into());
+        prof.launch_options = "B=options C=options strace %command% -dx12".into();
+        prof.env.insert("C".into(), "game".into());
+        prof.umu_id = Some("umu-1086940".into());
+        let p = plan(&prof, &g, &Host::default(), Path::new("/g"), &cmd()).unwrap();
+        assert_eq!(
+            p.argv,
+            [
+                "systemd-inhibit",
+                "--what=idle:sleep",
+                "--who=Arkor",
+                "--why=Playing a game",
+                "--",
+                "game-performance",
+                "strace",
+                "gamemoderun",
+                "proton",
+                "run",
+                "game.exe",
+                "-dx12"
+            ]
+        );
+        assert_eq!(
+            (
+                p.env["A"].as_str(),
+                p.env["B"].as_str(),
+                p.env["C"].as_str()
+            ),
+            ("global", "options", "game")
+        );
+        assert_eq!(p.env["PROTON_ENABLE_WAYLAND"], "1");
+        assert_eq!(p.env["GAMEID"], "umu-1086940");
     }
 
     #[test]

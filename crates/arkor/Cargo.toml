@@ -9,5 +9,12 @@ arkor-core.workspace = true
 arkor-stores.workspace = true
 arkor-launch.workspace = true
 anyhow.workspace = true
+dirs.workspace = true
 gpui.workspace = true
 unicode-segmentation.workspace = true
+libc.workspace = true
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
+gilrs = "0.11.2"
+
+[dev-dependencies]
+tempfile.workspace = true

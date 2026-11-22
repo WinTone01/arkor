@@ -64,3 +64,320 @@ pub fn lossless_dll() -> Option<PathBuf> {
     let dll = dir.join("Lossless.dll");
     dll.is_file().then_some(dll)
 }
+
+/// GET `url` as text with curl (present on every Arch install).
+pub fn http_get(url: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "60", "-A", "arkor", url])
+        .output()
+        .context("running curl")?;
+    anyhow::ensure!(
+        out.status.success(),
+        "request failed: {url}: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Downloads `url` to `dest` (through a `.part` file, so a failed download leaves nothing).
+pub fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
+    use anyhow::Context;
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let part = dest.with_extension("part");
+    let status = std::process::Command::new("curl")
+        .args(["-fsSL", "-A", "arkor", "-o"])
+        .arg(&part)
+        .arg(url)
+        .status()
+        .context("running curl")?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&part);
+        anyhow::bail!("download failed: {url}");
+    }
+    std::fs::rename(&part, dest)?;
+    Ok(())
+}
+
+/// Anti-cheat runtimes Proton needs for EasyAntiCheat / BattlEye games.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AntiCheat {
+    pub eac: Option<PathBuf>,
+    pub battleye: Option<PathBuf>,
+}
+
+const EAC_APPID: &str = "1826330";
+const BATTLEYE_APPID: &str = "1161040";
+const COMPONENTS_API: &str = "https://api.github.com/repos/Faugus/components/releases/latest";
+
+/// Arkor's own copy of the runtimes (downloaded when Steam's aren't installed).
+pub fn components_dir() -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+    Ok(dirs::data_dir()
+        .context("no XDG data dir")?
+        .join("arkor/components"))
+}
+
+/// Steam's "Proton EasyAntiCheat/BattlEye Runtime" if installed, else Arkor's download.
+pub fn anticheat() -> AntiCheat {
+    let ours = components_dir().ok();
+    let pick = |appid: &str, sub: &str| {
+        arkor_stores::steam::app_dir(appid)
+            .or_else(|| ours.as_ref().map(|d| d.join(sub)).filter(|p| p.is_dir()))
+    };
+    AntiCheat {
+        eac: pick(EAC_APPID, "eac"),
+        battleye: pick(BATTLEYE_APPID, "be"),
+    }
+}
+
+/// Downloads both runtimes (Faugus' redistribution of them) into `components_dir`. Blocking.
+pub fn download_anticheat() -> anyhow::Result<AntiCheat> {
+    use anyhow::Context;
+    #[derive(serde::Deserialize)]
+    struct Rel {
+        assets: Vec<Asset>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Asset {
+        name: String,
+        browser_download_url: String,
+    }
+    let rel: Rel =
+        serde_json::from_str(&http_get(COMPONENTS_API)?).context("unexpected release response")?;
+    let dir = components_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    for name in ["eac.tar.gz", "be.tar.gz"] {
+        let asset = rel
+            .assets
+            .iter()
+            .find(|a| a.name == name)
+            .with_context(|| format!("{name} missing in release"))?;
+        let archive = dir.join(name);
+        download(&asset.browser_download_url, &archive)?;
+        let status = std::process::Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&dir)
+            .status()?;
+        let _ = std::fs::remove_file(&archive);
+        anyhow::ensure!(status.success(), "could not unpack {name}");
+    }
+    Ok(anticheat())
+}
+
+/// A tool Arkor can use, whether it's present, and the Arch package that provides it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolStatus {
+    pub name: &'static str,
+    /// Version (from pacman) or "installed"; `None` = missing.
+    pub found: Option<String>,
+    pub package: &'static str,
+}
+
+fn in_path(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+}
+
+fn layer_installed(json: &str) -> bool {
+    let mut dirs: Vec<PathBuf> = vec![
+        "/usr/share/vulkan/implicit_layer.d".into(),
+        "/usr/share/vulkan/explicit_layer.d".into(),
+        "/etc/vulkan/implicit_layer.d".into(),
+    ];
+    if let Some(data) = dirs::data_dir() {
+        dirs.push(data.join("vulkan/implicit_layer.d"));
+        dirs.push(data.join("vulkan/explicit_layer.d"));
+    }
+    dirs.iter().any(|d| {
+        std::fs::read_dir(d).is_ok_and(|e| {
+            e.flatten()
+                .any(|f| f.file_name().to_string_lossy().contains(json))
+        })
+    })
+}
+
+fn pacman_version(pkg: &str) -> Option<String> {
+    let out = std::process::Command::new("pacman")
+        .args(["-Q", pkg])
+        .output()
+        .ok()?;
+    out.status.success().then(|| {
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("")
+            .to_string()
+    })
+}
+
+/// Status of every external tool Arkor integrates with.
+pub fn tool_status() -> Vec<ToolStatus> {
+    let check = |name: &'static str, present: bool, package: &'static str| ToolStatus {
+        name,
+        found: present.then(|| pacman_version(package).unwrap_or_else(|| "installed".into())),
+        package,
+    };
+    vec![
+        check("umu-launcher", in_path("umu-run"), "umu-launcher"),
+        check(
+            "MangoHud",
+            layer_installed("MangoHud") || in_path("mangohud"),
+            "mangohud",
+        ),
+        check("GameMode", in_path("gamemoderun"), "gamemode"),
+        check("gamescope", in_path("gamescope"), "gamescope"),
+        check("lsfg-vk", lsfg_layer_installed(), "lsfg-vk"),
+        check("vkBasalt", layer_installed("vkBasalt"), "vkbasalt"),
+        check(
+            "OBS Vulkan capture",
+            layer_installed("obs_vkcapture") || layer_installed("obs-vkcapture"),
+            "obs-vkcapture",
+        ),
+        check("winetricks", in_path("winetricks"), "winetricks"),
+        check("protontricks", in_path("protontricks"), "protontricks"),
+        check(
+            "legendary (Epic)",
+            in_path("legendary") || arkor_stores::epic::Legendary::locate().is_some(),
+            "legendary",
+        ),
+        check(
+            "game-performance (CachyOS)",
+            in_path("game-performance"),
+            "cachyos-settings",
+        ),
+        check("7-Zip", in_path("7z"), "7zip"),
+        check("bsdtar", in_path("bsdtar"), "libarchive"),
+        check("curl", in_path("curl"), "curl"),
+    ]
+}
+
+/// (label, value) rows describing the machine.
+pub fn system_info() -> Vec<(&'static str, String)> {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let os = read("/etc/os-release")
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("PRETTY_NAME=")
+                .map(|v| v.trim_matches('"').to_string())
+        })
+        .unwrap_or_default();
+    let kernel = read("/proc/sys/kernel/osrelease").trim().to_string();
+    let cpu = read("/proc/cpuinfo")
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("model name")
+                .map(|v| v.trim_start_matches([' ', '\t', ':']).to_string())
+        })
+        .unwrap_or_default();
+    let threads = read("/proc/cpuinfo")
+        .lines()
+        .filter(|l| l.starts_with("processor"))
+        .count();
+    let ram_kb: u64 = read("/proc/meminfo")
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("MemTotal:")
+                .and_then(|v| v.split_whitespace().next()?.parse().ok())
+        })
+        .unwrap_or(0);
+    let nvidia = read("/proc/driver/nvidia/version");
+    let driver = nvidia
+        .lines()
+        .next()
+        .and_then(|l| {
+            l.split_whitespace().find(|w| {
+                w.chars().filter(|c| *c == '.').count() >= 1
+                    && w.chars().all(|c| c.is_ascii_digit() || c == '.')
+            })
+        })
+        .map(|v| format!("NVIDIA {v}"))
+        .or_else(|| pacman_version("mesa").map(|v| format!("Mesa {v}")))
+        .unwrap_or_default();
+    let gpu = gpu_name().unwrap_or_default();
+    let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let scheduler = read("/sys/kernel/sched_ext/root/ops").trim().to_string();
+    vec![
+        ("OS", os),
+        ("Kernel", kernel),
+        ("CPU", format!("{cpu} ({threads} threads)")),
+        ("RAM", format!("{:.1} GiB", ram_kb as f64 / 1024.0 / 1024.0)),
+        ("GPU", gpu),
+        ("Driver", driver),
+        ("Session", format!("{desktop} ({session})")),
+        (
+            "sched_ext",
+            if scheduler.is_empty() {
+                "-".into()
+            } else {
+                scheduler
+            },
+        ),
+    ]
+}
+
+/// GPU name from `lspci` (VGA/3D controller line).
+fn gpu_name() -> Option<String> {
+    let out = std::process::Command::new("lspci").output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find(|l| l.contains("VGA compatible controller") || l.contains("3D controller"))
+        .and_then(|l| l.split_once(": "))
+        .map(|(_, name)| name.trim().to_string())
+}
+
+/// GET `url` with an `Authorization: Bearer` header.
+pub fn http_get_bearer(url: &str, token: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "60", "-A", "arkor", "-H"])
+        .arg(format!("Authorization: Bearer {token}"))
+        .arg(url)
+        .output()
+        .context("running curl")?;
+    anyhow::ensure!(
+        out.status.success(),
+        "request failed: {url}: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Splits `packages` into those in the configured pacman repositories and the rest (AUR or
+/// not packaged for this distribution).
+pub fn split_repo_packages<'a>(packages: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
+    packages.iter().partition(|p| {
+        std::process::Command::new("pacman")
+            .args(["-Si", "--", p])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    })
+}
+
+/// Installs repository packages with pacman through pkexec (the desktop's polkit agent asks
+/// for the password). Blocking.
+pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
+    use anyhow::Context;
+    anyhow::ensure!(!packages.is_empty(), "nothing to install");
+    let out = std::process::Command::new("pkexec")
+        .args(["pacman", "-S", "--needed", "--noconfirm", "--"])
+        .args(packages)
+        .output()
+        .context("running pkexec (is polkit installed?)")?;
+    anyhow::ensure!(
+        out.status.success(),
+        "pacman failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .chain(String::from_utf8_lossy(&out.stdout).lines())
+            .filter(|l| l.contains("error"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    Ok(())
+}

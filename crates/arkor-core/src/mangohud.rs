@@ -6,50 +6,119 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 /// Variant order is the on-screen order (see module docs), so keep it grouped by hardware.
+/// Each variant's snake_case name is its MangoHud config key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Metric {
     GpuStats,
     GpuTemp,
+    GpuJunctionTemp,
+    GpuMemTemp,
     GpuCoreClock,
     GpuMemClock,
     GpuPower,
+    GpuPowerLimit,
+    GpuVoltage,
+    GpuFan,
+    ThrottlingStatus,
+    ThrottlingStatusGraph,
     Vram,
     CpuStats,
     CpuTemp,
     CpuMhz,
     CpuPower,
+    CoreLoad,
+    CoreBars,
     Ram,
+    Swap,
+    Procmem,
+    IoRead,
+    IoWrite,
+    Network,
+    Fan,
     Battery,
+    BatteryWatt,
+    BatteryTime,
     Fps,
     Frametime,
     FrameTiming,
+    FrameTimingDetailed,
+    FrameCount,
+    ShowFpsLimit,
     Resolution,
+    RefreshRate,
+    PresentMode,
+    Fsr,
+    Hdr,
     Wine,
+    Winesync,
     EngineVersion,
+    VulkanDriver,
+    GpuName,
+    Arch,
+    DisplayServer,
+    Gamemode,
+    Vkbasalt,
+    MediaPlayer,
+    Fcat,
+    Version,
     Time,
 }
 
 impl Metric {
-    pub const ALL: [Metric; 19] = [
+    pub const ALL: [Metric; 53] = [
         Metric::GpuStats,
         Metric::GpuTemp,
+        Metric::GpuJunctionTemp,
+        Metric::GpuMemTemp,
         Metric::GpuCoreClock,
         Metric::GpuMemClock,
         Metric::GpuPower,
+        Metric::GpuPowerLimit,
+        Metric::GpuVoltage,
+        Metric::GpuFan,
+        Metric::ThrottlingStatus,
+        Metric::ThrottlingStatusGraph,
         Metric::Vram,
         Metric::CpuStats,
         Metric::CpuTemp,
         Metric::CpuMhz,
         Metric::CpuPower,
+        Metric::CoreLoad,
+        Metric::CoreBars,
         Metric::Ram,
+        Metric::Swap,
+        Metric::Procmem,
+        Metric::IoRead,
+        Metric::IoWrite,
+        Metric::Network,
+        Metric::Fan,
         Metric::Battery,
+        Metric::BatteryWatt,
+        Metric::BatteryTime,
         Metric::Fps,
         Metric::Frametime,
         Metric::FrameTiming,
+        Metric::FrameTimingDetailed,
+        Metric::FrameCount,
+        Metric::ShowFpsLimit,
         Metric::Resolution,
+        Metric::RefreshRate,
+        Metric::PresentMode,
+        Metric::Fsr,
+        Metric::Hdr,
         Metric::Wine,
+        Metric::Winesync,
         Metric::EngineVersion,
+        Metric::VulkanDriver,
+        Metric::GpuName,
+        Metric::Arch,
+        Metric::DisplayServer,
+        Metric::Gamemode,
+        Metric::Vkbasalt,
+        Metric::MediaPlayer,
+        Metric::Fcat,
+        Metric::Version,
         Metric::Time,
     ];
 
@@ -58,22 +127,56 @@ impl Metric {
         match self {
             Metric::GpuStats => "gpu_stats",
             Metric::GpuTemp => "gpu_temp",
+            Metric::GpuJunctionTemp => "gpu_junction_temp",
+            Metric::GpuMemTemp => "gpu_mem_temp",
             Metric::GpuCoreClock => "gpu_core_clock",
             Metric::GpuMemClock => "gpu_mem_clock",
             Metric::GpuPower => "gpu_power",
+            Metric::GpuPowerLimit => "gpu_power_limit",
+            Metric::GpuVoltage => "gpu_voltage",
+            Metric::GpuFan => "gpu_fan",
+            Metric::ThrottlingStatus => "throttling_status",
+            Metric::ThrottlingStatusGraph => "throttling_status_graph",
             Metric::Vram => "vram",
             Metric::CpuStats => "cpu_stats",
             Metric::CpuTemp => "cpu_temp",
             Metric::CpuMhz => "cpu_mhz",
             Metric::CpuPower => "cpu_power",
+            Metric::CoreLoad => "core_load",
+            Metric::CoreBars => "core_bars",
             Metric::Ram => "ram",
+            Metric::Swap => "swap",
+            Metric::Procmem => "procmem",
+            Metric::IoRead => "io_read",
+            Metric::IoWrite => "io_write",
+            Metric::Network => "network",
+            Metric::Fan => "fan",
             Metric::Battery => "battery",
+            Metric::BatteryWatt => "battery_watt",
+            Metric::BatteryTime => "battery_time",
             Metric::Fps => "fps",
             Metric::Frametime => "frametime",
             Metric::FrameTiming => "frame_timing",
+            Metric::FrameTimingDetailed => "frame_timing_detailed",
+            Metric::FrameCount => "frame_count",
+            Metric::ShowFpsLimit => "show_fps_limit",
             Metric::Resolution => "resolution",
+            Metric::RefreshRate => "refresh_rate",
+            Metric::PresentMode => "present_mode",
+            Metric::Fsr => "fsr",
+            Metric::Hdr => "hdr",
             Metric::Wine => "wine",
+            Metric::Winesync => "winesync",
             Metric::EngineVersion => "engine_version",
+            Metric::VulkanDriver => "vulkan_driver",
+            Metric::GpuName => "gpu_name",
+            Metric::Arch => "arch",
+            Metric::DisplayServer => "display_server",
+            Metric::Gamemode => "gamemode",
+            Metric::Vkbasalt => "vkbasalt",
+            Metric::MediaPlayer => "media_player",
+            Metric::Fcat => "fcat",
+            Metric::Version => "version",
             Metric::Time => "time",
         }
     }
@@ -181,10 +284,28 @@ impl Preset {
             ]
             .into(),
             Preset::BasicHorizontal => [GpuStats, CpuStats, Vram, Ram, Fps, FrameTiming].into(),
-            Preset::Full => Metric::ALL
-                .into_iter()
-                .filter(|m| !matches!(m, Battery | Time))
-                .collect(),
+            Preset::Full => [
+                GpuStats,
+                GpuTemp,
+                GpuCoreClock,
+                GpuMemClock,
+                GpuPower,
+                Vram,
+                CpuStats,
+                CpuTemp,
+                CpuMhz,
+                CpuPower,
+                Ram,
+                Swap,
+                Fps,
+                Frametime,
+                FrameTiming,
+                Resolution,
+                Wine,
+                EngineVersion,
+                VulkanDriver,
+            ]
+            .into(),
         }
     }
 
@@ -210,6 +331,8 @@ pub struct HudSettings {
     pub background_alpha: u32,
     /// 0 = unlimited.
     pub fps_limit: u32,
+    /// More limits to cycle through with the `toggle_fps_limit` key (0 = unlimited).
+    pub fps_limit_more: Vec<u32>,
     /// Any other MangoHud keys (colors, toggle keys, blacklist, ...), written verbatim.
     /// A value of `""` writes a bare flag.
     pub extra: BTreeMap<String, String>,
@@ -224,6 +347,7 @@ impl Default for HudSettings {
             font_size: 24,
             background_alpha: 40,
             fps_limit: 0,
+            fps_limit_more: Vec::new(),
             extra: [("toggle_hud".to_string(), "Shift_R+F12".to_string())].into(),
         };
         s.apply_preset(Preset::Basic);
@@ -244,6 +368,38 @@ impl HudSettings {
         Preset::ALL
             .into_iter()
             .find(|p| p.metrics() == self.metrics && p.orientation() == self.orientation)
+    }
+
+    /// A raw MangoHud key kept in `extra` (colors, toggle keys, offsets, …).
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.extra.get(key).map(String::as_str)
+    }
+
+    /// Sets (or with `None`/empty value removes) a raw key.
+    pub fn set(&mut self, key: &str, value: Option<&str>) {
+        match value.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(v) => {
+                self.extra.insert(key.to_string(), v.to_string());
+            }
+            None => {
+                self.extra.remove(key);
+            }
+        }
+    }
+
+    /// Whether a bare flag key (`text_outline`, `hud_compact`, …) is on.
+    pub fn flag(&self, key: &str) -> bool {
+        self.extra
+            .get(key)
+            .is_some_and(|v| v.is_empty() || v == "1")
+    }
+
+    pub fn toggle_flag(&mut self, key: &str) {
+        if self.flag(key) {
+            self.extra.remove(key);
+        } else {
+            self.extra.insert(key.to_string(), String::new());
+        }
     }
 
     pub fn toggle_metric(&mut self, metric: Metric) {
@@ -310,8 +466,18 @@ impl HudSettings {
         if self.orientation == Orientation::Horizontal {
             line("horizontal", "");
         }
-        if self.fps_limit > 0 {
-            line("fps_limit", &self.fps_limit.to_string());
+        if self.fps_limit > 0 || !self.fps_limit_more.is_empty() {
+            let all: Vec<String> = std::iter::once(self.fps_limit)
+                .chain(self.fps_limit_more.iter().copied())
+                .map(|v| v.to_string())
+                .collect();
+            line("fps_limit", &all.join(","));
+        }
+        // MangoHud only logs when it has a folder; default to Arkor's benchmarks folder.
+        if !self.extra.contains_key("output_folder")
+            && let Some(dir) = crate::bench::default_dir()
+        {
+            line("output_folder", &dir.display().to_string());
         }
         for (k, v) in &self.extra {
             line(k, v);
@@ -366,11 +532,9 @@ impl HudSettings {
                 }
                 // MangoHud allows a list (`60,144`) cycled with a hotkey; Arkor keeps the first.
                 "fps_limit" => {
-                    s.fps_limit = value
-                        .split(',')
-                        .next()
-                        .and_then(|v| v.trim().parse().ok())
-                        .unwrap_or(0)
+                    let mut values = value.split(',').filter_map(|v| v.trim().parse().ok());
+                    s.fps_limit = values.next().unwrap_or(0);
+                    s.fps_limit_more = values.collect();
                 }
                 _ => {
                     s.extra.insert(key.to_string(), value.to_string());
@@ -404,7 +568,17 @@ mod tests {
         s.metrics = [Metric::Fps, Metric::CpuStats, Metric::GpuStats].into();
         s.orientation = Orientation::Horizontal;
         s.fps_limit = 144;
-        let body: Vec<_> = s.render().lines().skip(1).map(str::to_owned).collect();
+        let rendered = s.render();
+        assert!(
+            rendered.contains("\noutput_folder="),
+            "logging needs a default folder"
+        );
+        let body: Vec<_> = rendered
+            .lines()
+            .skip(1)
+            .filter(|l| !l.starts_with("output_folder="))
+            .map(str::to_owned)
+            .collect();
         assert_eq!(
             body,
             [
@@ -442,6 +616,7 @@ mod tests {
     fn steppers_clamp() {
         let mut s = HudSettings {
             fps_limit: 0,
+            fps_limit_more: Vec::new(),
             ..Default::default()
         };
         s.step_fps_limit(false);
@@ -460,6 +635,36 @@ mod tests {
         s.background_alpha = 100;
         s.step_alpha(true);
         assert_eq!(s.background_alpha, 100);
+    }
+
+    #[test]
+    fn fps_limit_list_and_flags() {
+        let mut s = HudSettings::import("fps_limit=144,60,0\ntext_outline\noffset_x=10\n");
+        assert_eq!((s.fps_limit, s.fps_limit_more.clone()), (144, vec![60, 0]));
+        assert!(s.render().contains("\nfps_limit=144,60,0\n"));
+        assert!(s.flag("text_outline"));
+        s.toggle_flag("text_outline");
+        assert!(!s.flag("text_outline"));
+        assert_eq!(s.get("offset_x"), Some("10"));
+        s.set("offset_x", Some("  "));
+        assert_eq!(s.get("offset_x"), None);
+    }
+
+    /// Every metric key must exist in MangoHud (checked against its example config when present).
+    #[test]
+    fn metric_keys_exist_in_mangohud() {
+        let Ok(example) = std::fs::read_to_string("/usr/share/doc/mangohud/MangoHud.conf.example")
+        else {
+            return;
+        };
+        for m in Metric::ALL {
+            let key = m.key();
+            let known = example.lines().any(|l| {
+                let l = l.trim_start_matches('#').trim();
+                l == key || l.starts_with(&format!("{key}="))
+            });
+            assert!(known, "`{key}` is not a MangoHud option");
+        }
     }
 
     #[test]

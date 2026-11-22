@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::de::DeserializeOwned;
@@ -23,6 +23,105 @@ pub struct Profile {
     /// Not used for Steam games, where Steam picks the Proton.
     pub proton: Option<String>,
     pub lsfg: Lsfg,
+    /// Steam-style launch options: `KEY=VALUE` words become environment, other words wrap
+    /// the game (e.g. `strace -f %command% -dx12`); `%command%` marks where the game goes.
+    pub launch_options: String,
+    /// Shell command run before the game starts (waited for).
+    pub pre_launch: String,
+    /// Shell command run after the game exits.
+    pub post_launch: String,
+    pub extra_app: ExtraApp,
+    /// Keep the system from sleeping while the game runs (systemd-inhibit).
+    pub no_sleep: bool,
+    /// Write Proton's own log (PROTON_LOG) next to Arkor's launch log.
+    pub proton_log: bool,
+    /// umu database id (e.g. `umu-1086940`) so Proton applies the game's protonfixes.
+    pub umu_id: Option<String>,
+    /// Linux games only: run inside a Steam Linux Runtime through umu
+    /// (`umu-sniper`, `umu-soldier`, `umu-scout`, `umu-steamrt4`). `None` = run directly.
+    pub linux_runtime: Option<String>,
+    /// Enabled one-click switches, by id (see `tweaks::TWEAKS`).
+    pub tweaks: std::collections::BTreeSet<String>,
+    pub vkbasalt: crate::vkbasalt::VkBasalt,
+    pub layers: crate::layers::Layers,
+}
+
+/// A second program started together with the game (e.g. a trainer or mod manager).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExtraApp {
+    pub path: Option<PathBuf>,
+    /// Seconds to wait between the game and the extra app.
+    pub delay_secs: u32,
+    /// Start the extra app first, then the game.
+    pub before_game: bool,
+}
+
+/// Split launch options into (environment, words before the game, words after the game).
+pub fn parse_launch_options(text: &str) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
+    let mut env = Vec::new();
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    let mut seen_command = false;
+    let mut in_env_section = true;
+    for word in shell_words(text) {
+        if word == "%command%" {
+            seen_command = true;
+            in_env_section = false;
+            continue;
+        }
+        if in_env_section
+            && let Some((k, v)) = word.split_once('=')
+            && !k.is_empty()
+            && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            env.push((k.to_string(), v.to_string()));
+            continue;
+        }
+        in_env_section = false;
+        if seen_command {
+            after.push(word)
+        } else {
+            before.push(word)
+        }
+    }
+    (env, before, after)
+}
+
+/// Minimal POSIX-like word splitting: spaces separate words, single/double quotes group,
+/// backslash escapes the next character.
+pub fn shell_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut has_word = false;
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some('"'), '\\') | (None, '\\') => {
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
+            (Some(_), c) => cur.push(c),
+            (None, '\'') | (None, '"') => {
+                quote = Some(c);
+                has_word = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if has_word || !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+    if has_word || !cur.is_empty() {
+        words.push(cur);
+    }
+    words
 }
 
 /// lsfg-vk (Lossless Scaling frame generation on Linux) for this game.
@@ -36,6 +135,17 @@ pub struct Lsfg {
     pub flow_scale: u32,
     /// Lighter model: faster, slightly lower quality.
     pub performance_mode: bool,
+    /// Executable names the game runs as (e.g. `FarCry6.exe`). When set, Arkor gives lsfg-vk a
+    /// per-game config whose profile matches only these processes, so a launcher started
+    /// first (Ubisoft Connect, EA app, ...) is left alone and the game itself gets frame
+    /// generation. Empty = every Vulkan process of the launch.
+    pub processes: Vec<String>,
+    /// Frame pacing: `vsync` (default) or `none`.
+    pub pacing: Option<String>,
+    /// Let lsfg-vk choose the present mode (recommended).
+    pub override_present_mode: bool,
+    /// Half-precision math: faster, may glitch on some GPUs.
+    pub fp16: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,11 +170,66 @@ impl Default for Lsfg {
             multiplier: 2,
             flow_scale: 100,
             performance_mode: false,
+            processes: Vec::new(),
+            pacing: None,
+            override_present_mode: true,
+            fp16: true,
         }
     }
 }
 
 impl Lsfg {
+    /// lsfg-vk 2.x config with one profile active only in `processes`; `None` if no process
+    /// names are set.
+    pub fn render_config(&self, dll: Option<&Path>) -> Option<String> {
+        let names: Vec<String> = self
+            .processes
+            .iter()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .flat_map(|p| {
+                // lsfg-vk compares names as written; cover the common case variants.
+                let mut v = vec![p.to_string()];
+                if p.to_lowercase() != p {
+                    v.push(p.to_lowercase());
+                }
+                v
+            })
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+        let mut out = String::from(
+            "# Generated by Arkor for one game. Change it from Arkor.\nversion = 2\n\n[global]\n",
+        );
+        if let Some(dll) = dll {
+            out.push_str(&format!("dll = {}\n", q(&dll.display().to_string())));
+        }
+        out.push_str(&format!(
+            "allow_fp16 = {}\n\n[[profile]]\nname = \"arkor\"\n",
+            self.fp16
+        ));
+        out.push_str(&format!(
+            "active_in = [{}]\n",
+            names.iter().map(|n| q(n)).collect::<Vec<_>>().join(", ")
+        ));
+        out.push_str(&format!("multiplier = {}\n", self.multiplier));
+        out.push_str(&format!(
+            "flow_scale = {:.2}\n",
+            self.flow_scale as f32 / 100.0
+        ));
+        out.push_str(&format!("performance_mode = {}\n", self.performance_mode));
+        out.push_str(&format!(
+            "override_present_mode = {}\n",
+            self.override_present_mode
+        ));
+        if let Some(p) = &self.pacing {
+            out.push_str(&format!("pacing_mode = {}\n", q(p)));
+        }
+        Some(out)
+    }
+
     pub fn step_multiplier(&mut self, up: bool) {
         let (min, max) = LSFG_MULTIPLIER_RANGE;
         self.multiplier = if up {
@@ -110,8 +275,54 @@ pub struct GameHud {
 #[serde(default, deny_unknown_fields)]
 pub struct Gamescope {
     pub enabled: bool,
-    /// Raw gamescope arguments, e.g. `["-W", "2560", "-H", "1440", "-f"]`.
+    /// Output (window/screen) size.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// Size the game renders at; gamescope upscales it to the output size.
+    pub game_width: Option<u32>,
+    pub game_height: Option<u32>,
+    pub refresh: Option<u32>,
+    pub fullscreen: bool,
+    pub borderless: bool,
+    /// Upscaling filter: `fsr`, `nis`, `linear`, `nearest` or `pixel`.
+    pub filter: Option<String>,
+    pub hdr: bool,
+    /// Extra raw gamescope arguments.
     pub args: Vec<String>,
+}
+
+pub const GAMESCOPE_FILTERS: [&str; 5] = ["fsr", "nis", "linear", "nearest", "pixel"];
+
+impl Gamescope {
+    pub fn to_args(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut num = |flag: &str, v: Option<u32>| {
+            if let Some(v) = v.filter(|v| *v > 0) {
+                out.push(flag.to_string());
+                out.push(v.to_string());
+            }
+        };
+        num("-W", self.width);
+        num("-H", self.height);
+        num("-w", self.game_width);
+        num("-h", self.game_height);
+        num("-r", self.refresh);
+        if self.fullscreen {
+            out.push("-f".into());
+        }
+        if self.borderless {
+            out.push("-b".into());
+        }
+        if let Some(f) = &self.filter {
+            out.push("-F".into());
+            out.push(f.clone());
+        }
+        if self.hdr {
+            out.push("--hdr-enabled".into());
+        }
+        out.extend(self.args.iter().cloned());
+        out
+    }
 }
 
 /// Settings that apply to every game unless the game's profile overrides them.
@@ -121,6 +332,76 @@ pub struct Gamescope {
 pub struct Global {
     pub language: Language,
     pub mangohud: GlobalHud,
+    /// Where per-game Wine prefixes are created. `None` = `~/Games/Arkor/Prefixes`.
+    pub prefixes_dir: Option<PathBuf>,
+    /// Environment for every game (each game's own `env` overrides it).
+    pub env: BTreeMap<String, String>,
+    /// Close Arkor's window after starting a game.
+    pub close_on_launch: bool,
+    /// Show a small "Starting <game>…" window while a game starts.
+    pub splash: bool,
+    /// Keep running in the system tray when the window is closed.
+    pub tray: bool,
+    /// Start with the desktop session (minimized to the tray).
+    pub autostart: bool,
+    pub discord: Discord,
+    /// SteamGridDB API key (steamgriddb.com/profile/preferences/api) for cover art.
+    pub steamgriddb_key: String,
+    pub backup: crate::backup::BackupSettings,
+    pub appearance: Appearance,
+}
+
+/// Look and feel of Arkor's window.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Appearance {
+    pub theme: Theme,
+    /// Accent colour as 0xRRGGBB. `None` = Arkor's ember orange.
+    pub accent: Option<u32>,
+    pub grid_size: GridSize,
+    /// Short sounds when a game starts or stops, a download finishes, or something fails.
+    pub sounds: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    Dark,
+    Light,
+    /// Follow the desktop's light / dark setting.
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GridSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl GridSize {
+    pub const ALL: [GridSize; 3] = [GridSize::Small, GridSize::Medium, GridSize::Large];
+
+    /// Cover width in pixels (covers are 2:3).
+    pub fn cover_width(self) -> f32 {
+        match self {
+            GridSize::Small => 110.,
+            GridSize::Medium => 150.,
+            GridSize::Large => 210.,
+        }
+    }
+}
+
+/// Discord "Playing …" activity while a game runs, through Discord's local IPC socket.
+/// Needs a Discord application id (create one at discord.com/developers).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Discord {
+    pub enabled: bool,
+    pub app_id: String,
 }
 
 /// UI language. English is the default; Turkish is the other supported language.
@@ -140,6 +421,24 @@ pub struct GlobalHud {
 }
 
 impl Profile {
+    /// Environment variables of the enabled tweaks.
+    pub fn tweaks_env(&self) -> Vec<(String, String)> {
+        self.tweaks
+            .iter()
+            .filter_map(|id| crate::tweaks::find(id))
+            .flat_map(|t| t.env.iter().map(|(k, v)| (k.to_string(), v.to_string())))
+            .collect()
+    }
+
+    /// Wrapper commands of the enabled tweaks (e.g. `game-performance`).
+    pub fn tweak_wrappers(&self) -> Vec<String> {
+        self.tweaks
+            .iter()
+            .filter_map(|id| crate::tweaks::find(id)?.wrapper)
+            .map(String::from)
+            .collect()
+    }
+
     pub fn path_for(id: &GameId) -> anyhow::Result<std::path::PathBuf> {
         Ok(paths::profiles_dir()?.join(format!("{}.toml", id.file_stem())))
     }
@@ -170,6 +469,14 @@ impl Profile {
 }
 
 impl Global {
+    pub fn prefixes_dir(&self) -> PathBuf {
+        self.prefixes_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join("Games/Arkor/Prefixes")
+        })
+    }
+
     pub fn path() -> anyhow::Result<std::path::PathBuf> {
         Ok(paths::config_dir()?.join("global.toml"))
     }
@@ -241,6 +548,82 @@ mod tests {
         let hud = p.mangohud.settings.as_ref().unwrap();
         assert_eq!(hud.metrics, [Metric::Fps].into());
         assert_eq!(hud.font_size, 24, "missing fields take defaults");
+    }
+
+    #[test]
+    fn launch_options_split() {
+        let (env, before, after) = parse_launch_options(
+            r#"DXVK_ASYNC=1 PROTON_LOG="1 2" strace -f %command% -dx12 'a b'"#,
+        );
+        assert_eq!(
+            env,
+            [
+                ("DXVK_ASYNC".into(), "1".into()),
+                ("PROTON_LOG".into(), "1 2".into())
+            ]
+        );
+        assert_eq!(before, ["strace", "-f"]);
+        assert_eq!(after, ["-dx12", "a b"]);
+        let (env, before, after) = parse_launch_options("gamemoderun FOO=1");
+        assert!(env.is_empty() && after.is_empty());
+        assert_eq!(
+            before,
+            ["gamemoderun", "FOO=1"],
+            "KEY=VALUE after a command word is an argument"
+        );
+        assert_eq!(shell_words(r#"a\ b "c\"d" ''"#), ["a b", "c\"d", ""]);
+    }
+
+    #[test]
+    fn lsfg_config_targets_game_process() {
+        let mut l = Lsfg {
+            multiplier: 3,
+            flow_scale: 75,
+            processes: vec!["FarCry6.exe".into(), " ".into()],
+            ..Lsfg::default()
+        };
+        let text = l
+            .render_config(Some(Path::new("/ls/Lossless.dll")))
+            .unwrap();
+        let parsed: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(parsed["version"].as_integer(), Some(2));
+        assert_eq!(parsed["global"]["dll"].as_str(), Some("/ls/Lossless.dll"));
+        let profile = &parsed["profile"].as_array().unwrap()[0];
+        let active: Vec<_> = profile["active_in"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(active, ["FarCry6.exe", "farcry6.exe"]);
+        assert_eq!(profile["multiplier"].as_integer(), Some(3));
+        assert_eq!(profile["flow_scale"].as_float(), Some(0.75));
+        l.processes.clear();
+        assert!(l.render_config(None).is_none());
+    }
+
+    #[test]
+    fn gamescope_args_and_tweaks() {
+        let g = Gamescope {
+            width: Some(2560),
+            height: Some(1440),
+            game_width: Some(1920),
+            game_height: Some(1080),
+            fullscreen: true,
+            filter: Some("fsr".into()),
+            args: vec!["--expose-wayland".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            g.to_args().join(" "),
+            "-W 2560 -H 1440 -w 1920 -h 1080 -f -F fsr --expose-wayland"
+        );
+        let mut p = Profile::default();
+        p.tweaks.insert("hdr".into());
+        p.tweaks.insert("game_performance".into());
+        p.tweaks.insert("unknown".into());
+        assert!(p.tweaks_env().contains(&("DXVK_HDR".into(), "1".into())));
+        assert_eq!(p.tweak_wrappers(), ["game-performance"]);
     }
 
     #[test]

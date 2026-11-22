@@ -2,7 +2,7 @@
 //! English is the default (see `arkor_core::Language`).
 
 use arkor_core::Language;
-use arkor_core::mangohud::{Metric, Preset};
+use arkor_core::mangohud::Preset;
 
 pub struct Strings {
     pub lang: Language,
@@ -42,11 +42,7 @@ pub struct Strings {
     pub play: &'static str,
     pub launching: &'static str,
     pub launch_failed: &'static str,
-    pub arkor_launches_note: &'static str,
     pub steam_launches_note: &'static str,
-    pub store_local: &'static str,
-    pub remove_imported: &'static str,
-    pub remove_imported_note: &'static str,
     pub prefix_label: &'static str,
     pub proton_section: &'static str,
     pub proton_auto: &'static str,
@@ -77,18 +73,13 @@ pub struct Strings {
     pub opti_proxy: &'static str,
     pub opti_proxy_hint: &'static str,
     pub opti_in_game: &'static str,
-    pub rename: &'static str,
-    pub save: &'static str,
     pub name_label: &'static str,
 
     // Import from a Wine prefix
-    pub import_prefix: &'static str,
     pub import_intro: &'static str,
     pub choose_prefix: &'static str,
-    pub choose_file: &'static str,
     pub not_a_prefix: &'static str,
     pub scanning: &'static str,
-    pub pick_exe: &'static str,
     pub no_exes_found: &'static str,
 
     // HUD editor
@@ -110,8 +101,6 @@ pub struct Strings {
     pub group_other: &'static str,
     /// Indexed like `Preset::ALL`.
     pub presets: [&'static str; 4],
-    /// Indexed like `Metric::ALL`.
-    pub metrics: [&'static str; 19],
 }
 
 impl Strings {
@@ -120,13 +109,6 @@ impl Strings {
             .iter()
             .position(|&x| x == p)
             .expect("preset is in ALL")]
-    }
-
-    pub fn metric(&self, m: Metric) -> &'static str {
-        self.metrics[Metric::ALL
-            .iter()
-            .position(|&x| x == m)
-            .expect("metric is in ALL")]
     }
 
     /// "40%" in English, "%40" in Turkish.
@@ -178,11 +160,7 @@ pub static EN: Strings = Strings {
     play: "Play",
     launching: "Starting…",
     launch_failed: "Launch failed",
-    arkor_launches_note: "Arkor starts this game itself, so these settings always apply.",
     steam_launches_note: "Steam starts this game. Set the launch option below in Steam so these settings apply.",
-    store_local: "Imported",
-    remove_imported: "Remove from Arkor",
-    remove_imported_note: "Only removes it from Arkor's list. The game files and the prefix stay.",
     prefix_label: "Prefix",
     proton_section: "Proton",
     proton_auto: "Automatic",
@@ -213,16 +191,11 @@ pub static EN: Strings = Strings {
     opti_proxy: "Load as",
     opti_proxy_hint: "dxgi works for most DirectX 11/12 games. Try another if the game already uses dxgi.dll.",
     opti_in_game: "In game: press Insert to open OptiScaler's menu.",
-    rename: "Rename",
-    save: "Save",
     name_label: "Name",
-    import_prefix: "Import from prefix",
     import_intro: "Add a game Arkor didn't find on its own: choose its Wine prefix, then the game's executable or shortcut. Nothing is copied or changed.",
     choose_prefix: "Choose prefix folder…",
-    choose_file: "Choose a file manually…",
     not_a_prefix: "Not a Wine prefix (no drive_c folder found)",
     scanning: "Looking for games…",
-    pick_exe: "Pick the game's executable",
     no_exes_found: "No game executables found in this prefix. Choose the file manually.",
     presets_section: "Preset",
     custom_badge: "Custom",
@@ -241,27 +214,6 @@ pub static EN: Strings = Strings {
     group_frame: "Frame",
     group_other: "Other",
     presets: ["FPS only", "Basic", "Basic horizontal", "Full"],
-    metrics: [
-        "Usage",
-        "Temperature",
-        "Core clock",
-        "Memory clock",
-        "Power",
-        "VRAM",
-        "Usage",
-        "Temperature",
-        "Frequency",
-        "Power",
-        "RAM",
-        "Battery",
-        "FPS",
-        "Frametime (ms)",
-        "Frametime graph",
-        "Resolution",
-        "Wine/Proton version",
-        "DXVK/VKD3D version",
-        "Clock",
-    ],
 };
 
 pub static TR: Strings = Strings {
@@ -294,11 +246,7 @@ pub static TR: Strings = Strings {
     play: "Oyna",
     launching: "Başlatılıyor…",
     launch_failed: "Başlatılamadı",
-    arkor_launches_note: "Bu oyunu Arkor kendisi başlatır, bu ayarlar her zaman uygulanır.",
     steam_launches_note: "Bu oyunu Steam başlatır. Ayarların uygulanması için aşağıdaki başlatma seçeneğini Steam'e ekle.",
-    store_local: "İçe aktarılan",
-    remove_imported: "Arkor'dan kaldır",
-    remove_imported_note: "Sadece Arkor'un listesinden kaldırır. Oyun dosyaları ve prefix yerinde kalır.",
     prefix_label: "Prefix",
     proton_section: "Proton",
     proton_auto: "Otomatik",
@@ -329,16 +277,11 @@ pub static TR: Strings = Strings {
     opti_proxy: "Yükleme adı",
     opti_proxy_hint: "Çoğu DirectX 11/12 oyununda dxgi çalışır. Oyun zaten dxgi.dll kullanıyorsa başkasını dene.",
     opti_in_game: "Oyun içinde: OptiScaler menüsü için Insert'e bas.",
-    rename: "Yeniden adlandır",
-    save: "Kaydet",
     name_label: "Ad",
-    import_prefix: "Prefix'ten içe aktar",
     import_intro: "Arkor'un kendiliğinden bulamadığı bir oyunu ekle: önce Wine prefix'ini, sonra oyunun exe'sini ya da kısayolunu seç. Hiçbir şey kopyalanmaz ya da değiştirilmez.",
     choose_prefix: "Prefix klasörünü seç…",
-    choose_file: "Dosyayı elle seç…",
     not_a_prefix: "Bu bir Wine prefix'i değil (drive_c klasörü yok)",
     scanning: "Oyunlar aranıyor…",
-    pick_exe: "Oyunun exe dosyasını seç",
     no_exes_found: "Bu prefix'te oyun exe'si bulunamadı. Dosyayı elle seç.",
     presets_section: "Hazır düzen",
     custom_badge: "Özel",
@@ -357,25 +300,4 @@ pub static TR: Strings = Strings {
     group_frame: "Kare",
     group_other: "Diğer",
     presets: ["Sadece FPS", "Temel", "Temel yatay", "Tam"],
-    metrics: [
-        "Kullanım",
-        "Sıcaklık",
-        "Çekirdek saati",
-        "Bellek saati",
-        "Güç",
-        "VRAM",
-        "Kullanım",
-        "Sıcaklık",
-        "Frekans",
-        "Güç",
-        "RAM",
-        "Pil",
-        "FPS",
-        "Frametime (ms)",
-        "Frametime grafiği",
-        "Çözünürlük",
-        "Wine/Proton sürümü",
-        "DXVK/VKD3D sürümü",
-        "Saat",
-    ],
 };

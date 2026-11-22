@@ -90,6 +90,28 @@ fn parse_manifest(library: &Path, path: &Path) -> anyhow::Result<Option<Game>> {
     }))
 }
 
+/// Install folder of any installed Steam app (tools and runtimes included).
+pub fn app_dir(appid: &str) -> Option<PathBuf> {
+    for root in steam_roots() {
+        for library in library_folders(&root).unwrap_or_default() {
+            let manifest = library
+                .join("steamapps")
+                .join(format!("appmanifest_{appid}.acf"));
+            let Ok(text) = std::fs::read_to_string(&manifest) else {
+                continue;
+            };
+            let Ok(doc) = vdf::parse(&text) else { continue };
+            if let Some(dir) = doc.obj("appstate").and_then(|a| a.str("installdir")) {
+                let path = library.join("steamapps/common").join(dir);
+                if path.is_dir() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// All installed Steam games across every root and library.
 /// Unreadable libraries (e.g. an unmounted drive) are skipped and reported in the second value.
 pub fn installed_games() -> (Vec<Game>, Vec<anyhow::Error>) {
@@ -131,4 +153,44 @@ pub fn installed_games() -> (Vec<Game>, Vec<anyhow::Error>) {
     games.sort_by_key(|g| g.name.to_lowercase());
     games.dedup_by(|a, b| a.id == b.id);
     (games, errors)
+}
+
+/// Steam's own play time (minutes) and last-played time for an app, summed / maxed over all
+/// local Steam users (`userdata/<id>/config/localconfig.vdf`).
+pub fn playtime(appid: &str) -> Option<(u64, u64)> {
+    let mut total = 0u64;
+    let mut last = 0u64;
+    let mut found = false;
+    for root in steam_roots() {
+        let Ok(users) = std::fs::read_dir(root.join("userdata")) else {
+            continue;
+        };
+        for user in users.flatten() {
+            let Ok(text) = std::fs::read_to_string(user.path().join("config/localconfig.vdf"))
+            else {
+                continue;
+            };
+            let Ok(doc) = vdf::parse(&text) else { continue };
+            let app = doc
+                .obj("UserLocalConfigStore")
+                .and_then(|o| o.obj("Software"))
+                .and_then(|o| o.obj("Valve"))
+                .and_then(|o| o.obj("Steam"))
+                .and_then(|o| o.obj("apps"))
+                .and_then(|o| o.obj(appid));
+            if let Some(app) = app {
+                found = true;
+                total += app
+                    .str("Playtime")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0);
+                last = last.max(
+                    app.str("LastPlayed")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+                );
+            }
+        }
+    }
+    found.then_some((total, last))
 }
