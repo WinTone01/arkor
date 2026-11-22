@@ -11,7 +11,8 @@ license = "GPL-3.0-or-later"
 arkor-core = { path = "crates/arkor-core" }
 arkor-stores = { path = "crates/arkor-stores" }
 arkor-launch = { path = "crates/arkor-launch" }
-gpui = "=0.2.2"
+# gpui-kit (gpui-pre + gpui-component), the toolkit Modus uses; imported under the name `gpui`.
+gpui = { package = "gpui-kit", version = "=0.8.1" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 serde_json = "1"
@@ -20,8 +21,3 @@ unicode-segmentation = "1"
 libc = "0.2"
 anyhow = "1"
 dirs = "6"
-
-# gpui 0.2.2 -> zed-async-tar -> xattr 0.2.3 does not build with libc >= 0.2.190
-# (ENOATTR removed on Linux). Drop this once gpui stops depending on xattr 0.2.
-[patch.crates-io]
-xattr = { path = "patches/xattr" }

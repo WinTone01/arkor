@@ -8,11 +8,6 @@ pub struct Strings {
     pub lang: Language,
 
     // Sidebar / navigation
-    pub global_settings: &'static str,
-    pub games_header: &'static str,
-    pub on: &'static str,
-    pub off: &'static str,
-    pub pick_something: &'static str,
     pub not_found: &'static str,
 
     // Status messages (followed by ": <error>" where an error exists)
@@ -22,7 +17,6 @@ pub struct Strings {
     pub global_load_failed: &'static str,
 
     // Global page
-    pub global_subtitle: &'static str,
     pub hud_default_hint: &'static str,
     pub language: &'static str,
 
@@ -132,17 +126,11 @@ pub const LANGUAGES: [(Language, &str); 2] = [(Language::En, "English"), (Langua
 
 pub static EN: Strings = Strings {
     lang: Language::En,
-    global_settings: "Global settings",
-    games_header: "GAMES",
-    on: "on",
-    off: "off",
-    pick_something: "Select a game or Global settings",
     not_found: "not found",
     saved: "Saved",
     save_failed: "Couldn't save",
     profile_load_failed: "Couldn't read profile, showing defaults",
     global_load_failed: "Couldn't read global settings, using defaults",
-    global_subtitle: "Applies to every game set to “Use global” that has no settings of its own.",
     hud_default_hint: "Show in games by default",
     language: "Language",
     mode_global: "Use global",
@@ -218,17 +206,11 @@ pub static EN: Strings = Strings {
 
 pub static TR: Strings = Strings {
     lang: Language::Tr,
-    global_settings: "Global ayarlar",
-    games_header: "OYUNLAR",
-    on: "açık",
-    off: "kapalı",
-    pick_something: "Bir oyun ya da Global ayarlar'ı seç",
     not_found: "bulunamadı",
     saved: "Kaydedildi",
     save_failed: "Kaydedilemedi",
     profile_load_failed: "Profil okunamadı, varsayılan gösteriliyor",
     global_load_failed: "Global ayarlar okunamadı, varsayılanlar kullanılıyor",
-    global_subtitle: "Kendi ayarı olmayan, “Global'i kullan” modundaki tüm oyunlara uygulanır.",
     hud_default_hint: "Oyunlarda varsayılan olarak göster",
     language: "Dil",
     mode_global: "Global'i kullan",

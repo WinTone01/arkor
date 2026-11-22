@@ -6,49 +6,62 @@ use arkor_core::profile::{LSFG_FLOW_SCALE_RANGE, LSFG_MULTIPLIER_RANGE};
 use arkor_core::{Game, LsfgMode, Store};
 use arkor_launch::optiscaler::{self, Manifest, PROXY_DLLS};
 use arkor_launch::tools;
-use gpui::{Context, Div, PathPromptOptions, div, prelude::*, rgb};
+use gpui::{Context, Div, PathPromptOptions, div, prelude::*};
 
 use super::widgets::{self, theme::*};
 use super::{Library, Selection};
 
 /// Machine facts (scanned once) plus OptiScaler state for the selected game.
+/// Layers that have their own card; "Other Vulkan layers" lists the rest.
+pub(super) const HANDLED_LAYERS: [&str; 9] = [
+    "AFMF_ENABLE",
+    "VKNEMU",
+    "ENABLE_MAKO",
+    "ENABLE_MAKO_SPATIAL_SCALING",
+    "ENABLE_VKSUMI",
+    "ENABLE_VKBASALT",
+    "MANGOHUD",
+    "LSFGVK_ENV",
+    "ENABLE_LSFG",
+];
+
 pub(super) struct GameTools {
-    protons: Vec<(String, PathBuf)>,
-    lsfg_layer: bool,
-    lossless_dll: bool,
-    manifest: Option<Manifest>,
-    downloaded: Option<(String, PathBuf)>,
-    de_manifest: Option<Manifest>,
-    rs_manifest: Option<Manifest>,
-    rs_downloaded: Option<(String, PathBuf)>,
-    rs_proxy: &'static str,
-    rs_32bit: bool,
-    vkbasalt_installed: bool,
+    pub(super) protons: Vec<(String, PathBuf)>,
+    pub(super) lsfg_layer: bool,
+    pub(super) lossless_dll: bool,
+    pub(super) manifest: Option<Manifest>,
+    pub(super) downloaded: Option<(String, PathBuf)>,
+    pub(super) de_manifest: Option<Manifest>,
+    pub(super) rs_manifest: Option<Manifest>,
+    pub(super) rs_downloaded: Option<(String, PathBuf)>,
+    pub(super) rs_proxy: &'static str,
+    pub(super) rs_32bit: bool,
+    pub(super) vkbasalt_installed: bool,
     /// Arkor-installed copies of `layers::TOOLS`, in order.
-    layer_tools: [bool; 4],
-    opti_channel: optiscaler::Channel,
-    sl_manifest: Option<Manifest>,
-    sl_downloaded: Option<(String, PathBuf)>,
+    pub(super) layer_tools: [bool; 4],
+    pub(super) opti_channel: optiscaler::Channel,
+    pub(super) sl_manifest: Option<Manifest>,
+    pub(super) sl_downloaded: Option<(String, PathBuf)>,
     /// Streamline / DLSS DLLs the game ships that the downloaded SDK can replace.
-    sl_replaceable: usize,
-    fsr4: Option<Manifest>,
+    pub(super) sl_replaceable: usize,
+    pub(super) fsr4: Option<Manifest>,
     /// Downloaded AMD bundles, per `bundles::Bundle::ALL`.
-    bundles: [Option<(String, PathBuf)>; 3],
-    dlssnr: Option<arkor_launch::bundles::DlssNr>,
-    dlssnr_model: &'static str,
-    optipatcher: bool,
+    pub(super) bundles: [Option<(String, PathBuf)>; 3],
+    pub(super) dlssnr: Option<arkor_launch::bundles::DlssNr>,
+    pub(super) dlssnr_model: &'static str,
+    pub(super) optipatcher: bool,
     /// Implicit layers on the system that a variable switches on.
-    system_layers: Vec<arkor_launch::layers::SystemLayer>,
+    pub(super) system_layers: Vec<arkor_launch::layers::SystemLayer>,
     /// The game's OptiScaler.ini text (when installed), cached for the settings chips.
-    ini: Option<(PathBuf, String)>,
-    de_downloaded: Option<(String, PathBuf)>,
+    pub(super) ini: Option<(PathBuf, String)>,
+    pub(super) de_downloaded: Option<(String, PathBuf)>,
     /// Folders holding the game's likely main executables, best first.
-    folders: Vec<PathBuf>,
-    target: Option<PathBuf>,
-    proxy: &'static str,
-    busy: Option<&'static str>,
-    error: Option<String>,
-    exe_cache: std::cell::RefCell<std::collections::HashMap<PathBuf, Vec<PathBuf>>>,
+    pub(super) folders: Vec<PathBuf>,
+    pub(super) target: Option<PathBuf>,
+    pub(super) proxy: &'static str,
+    pub(super) busy: Option<&'static str>,
+    pub(super) error: Option<String>,
+    pub(super) exe_cache: std::cell::RefCell<std::collections::HashMap<PathBuf, Vec<PathBuf>>>,
 }
 
 impl GameTools {
@@ -1586,7 +1599,7 @@ impl Library {
 }
 
 fn warning(text: impl Into<gpui::SharedString>) -> Div {
-    div().text_sm().text_color(rgb(ACCENT())).child(text.into())
+    div().text_sm().text_color(ACCENT()).child(text.into())
 }
 
 impl Library {
@@ -2003,9 +2016,11 @@ impl Library {
             )
     }
 
-    pub(super) fn render_layers(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_vknemu(&mut self, cx: &mut Context<Self>) -> Div {
+        #[allow(unused_imports)]
         use arkor_launch::layers::TOOLS;
         let l = self.profile.layers.clone();
+        #[allow(unused_variables)]
         let step = |id: &'static str,
                     glyph: &'static str,
                     f: fn(&mut arkor_core::layers::Layers),
@@ -2013,11 +2028,10 @@ impl Library {
             widgets::step_button(id, glyph)
                 .on_click(cx.listener(move |this, _, _, cx| this.edit_layers(cx, f)))
         };
-        let mut card = widgets::section(self.tr("More Vulkan layers", "Diğer Vulkan katmanları"));
+        let mut card = widgets::section("vkNemu");
         if let Some(err) = &self.tools.error {
             card = card.child(warning(err.clone()));
         }
-
         // vkNemu
         card = card.child(
             widgets::switch_row(
@@ -2087,7 +2101,25 @@ impl Library {
                     ),
             );
         }
+        card
+    }
 
+    pub(super) fn render_mako(&mut self, cx: &mut Context<Self>) -> Div {
+        #[allow(unused_imports)]
+        use arkor_launch::layers::TOOLS;
+        let l = self.profile.layers.clone();
+        #[allow(unused_variables)]
+        let step = |id: &'static str,
+                    glyph: &'static str,
+                    f: fn(&mut arkor_core::layers::Layers),
+                    cx: &mut Context<Self>| {
+            widgets::step_button(id, glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.edit_layers(cx, f)))
+        };
+        let mut card = widgets::section("MAKO");
+        if let Some(err) = &self.tools.error {
+            card = card.child(warning(err.clone()));
+        }
         // MAKO
         card = card.child(
             widgets::switch_row(
@@ -2195,7 +2227,25 @@ impl Library {
             }
             card = card.child(row);
         }
+        card
+    }
 
+    pub(super) fn render_vksumi(&mut self, cx: &mut Context<Self>) -> Div {
+        #[allow(unused_imports)]
+        use arkor_launch::layers::TOOLS;
+        let l = self.profile.layers.clone();
+        #[allow(unused_variables)]
+        let step = |id: &'static str,
+                    glyph: &'static str,
+                    f: fn(&mut arkor_core::layers::Layers),
+                    cx: &mut Context<Self>| {
+            widgets::step_button(id, glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.edit_layers(cx, f)))
+        };
+        let mut card = widgets::section("vkSumi");
+        if let Some(err) = &self.tools.error {
+            card = card.child(warning(err.clone()));
+        }
         // vkSumi
         card = card.child(
             widgets::switch_row(
@@ -2212,7 +2262,25 @@ impl Library {
         if l.vksumi {
             card = card.child(widgets::label(self.tr("Settings come from ~/.config/vkSumi/vkSumi.conf; vksumi-toggle switches it in game.", "Ayarlar ~/.config/vkSumi/vkSumi.conf dosyasından gelir; oyun içinde vksumi-toggle ile açılıp kapanır.")));
         }
+        card
+    }
 
+    pub(super) fn render_afmf(&mut self, cx: &mut Context<Self>) -> Div {
+        #[allow(unused_imports)]
+        use arkor_launch::layers::TOOLS;
+        let l = self.profile.layers.clone();
+        #[allow(unused_variables)]
+        let step = |id: &'static str,
+                    glyph: &'static str,
+                    f: fn(&mut arkor_core::layers::Layers),
+                    cx: &mut Context<Self>| {
+            widgets::step_button(id, glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.edit_layers(cx, f)))
+        };
+        let mut card = widgets::section("AFMF");
+        if let Some(err) = &self.tools.error {
+            card = card.child(warning(err.clone()));
+        }
         // AFMF
         card = card.child(
             widgets::switch_row(
@@ -2272,24 +2340,32 @@ impl Library {
                 "Bu oyunda birden fazla kare üretici açık; yalnızca birini bırak.",
             )));
         }
+        card
+    }
 
+    pub(super) fn render_other_layers(&mut self, cx: &mut Context<Self>) -> Div {
+        #[allow(unused_imports)]
+        use arkor_launch::layers::TOOLS;
+        let l = self.profile.layers.clone();
+        #[allow(unused_variables)]
+        let step = |id: &'static str,
+                    glyph: &'static str,
+                    f: fn(&mut arkor_core::layers::Layers),
+                    cx: &mut Context<Self>| {
+            widgets::step_button(id, glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.edit_layers(cx, f)))
+        };
+        let mut card = widgets::section(self.tr("Other Vulkan layers", "Diğer Vulkan katmanları"));
+        if let Some(err) = &self.tools.error {
+            card = card.child(warning(err.clone()));
+        }
         // Anything else on the system.
-        const HANDLED: [&str; 9] = [
-            "AFMF_ENABLE",
-            "VKNEMU",
-            "ENABLE_MAKO",
-            "ENABLE_MAKO_SPATIAL_SCALING",
-            "ENABLE_VKSUMI",
-            "ENABLE_VKBASALT",
-            "MANGOHUD",
-            "LSFGVK_ENV",
-            "ENABLE_LSFG",
-        ];
+
         let others: Vec<_> = self
             .tools
             .system_layers
             .iter()
-            .filter(|s| !HANDLED.contains(&s.enable.0.as_str()))
+            .filter(|s| !HANDLED_LAYERS.contains(&s.enable.0.as_str()))
             .cloned()
             .collect();
         if !others.is_empty() {

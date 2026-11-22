@@ -131,8 +131,11 @@ pub fn set_autostart(enabled: bool) -> anyhow::Result<()> {
 mod tests {
     #[test]
     fn autostart_file_written_and_removed() {
+        let _lock = crate::ui::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: the only test in this binary that touches XDG_CONFIG_HOME.
+        // SAFETY: tests that change XDG variables hold TEST_ENV_LOCK.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
         super::set_autostart(true).unwrap();
         let file = tmp.path().join("autostart/arkor.desktop");

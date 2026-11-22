@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use arkor_launch::proton_dl::{self, Release, Variant};
 use arkor_launch::tools;
 use arkor_stores::prefix::human_size;
-use gpui::{Context, Div, div, prelude::*, rgb};
+use gpui::{Context, Div, div, prelude::*};
 
 use super::Library;
 use super::widgets::{self, theme::*};
@@ -119,7 +119,7 @@ impl Library {
                         .px_3()
                         .py_2()
                         .rounded_md()
-                        .bg(rgb(BG()))
+                        .bg(super::style::pal::raised().opacity(0.45))
                         .child(
                             div()
                                 .flex()
@@ -205,7 +205,7 @@ impl Library {
                             .px_3()
                             .py_2()
                             .rounded_md()
-                            .bg(rgb(BG()))
+                            .bg(super::style::pal::raised().opacity(0.45))
                             .child(
                                 div()
                                     .flex()
@@ -230,7 +230,7 @@ impl Library {
                 .px_3()
                 .py_2()
                 .rounded_md()
-                .bg(rgb(BG()))
+                .bg(super::style::pal::raised().opacity(0.45))
                 .child(div().child(name))
                 .child(widgets::label(match path {
                     Some(p) => p.display().to_string(),
@@ -263,7 +263,7 @@ impl Library {
 
         div()
             .child(Self::header(
-                self.tr("Proton versions", "Proton sürümleri"),
+                self.tr("Proton & Wine", "Proton ve Wine"),
                 self.tr(
                     "Pick one per game on the game's page; Automatic uses the best installed.",
                     "Oyun sayfasında oyun başına seçilir; Otomatik en iyi kurulu sürümü kullanır.",
@@ -272,7 +272,7 @@ impl Library {
             .child(installed_card)
             .child(available)
             .child(anticheat)
-            .child(div().text_color(rgb(MUTED())))
+            .child(div().text_color(MUTED()))
     }
 }
 

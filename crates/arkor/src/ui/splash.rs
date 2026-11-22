@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use gpui::{
     App, Bounds, Context, SharedString, Window, WindowBounds, WindowDecorations, WindowKind,
-    WindowOptions, div, prelude::*, px, rgb, size,
+    WindowOptions, div, prelude::*, px, size,
 };
 
 use super::widgets::theme::*;
@@ -25,20 +25,15 @@ impl Render for Splash {
             .items_center()
             .justify_center()
             .gap_2()
-            .bg(rgb(PANEL()))
+            .bg(PANEL())
             .border_1()
-            .border_color(rgb(ACCENT()))
-            .child(div().text_sm().text_color(rgb(ACCENT())).child("Arkor"))
-            .child(
-                div()
-                    .text_xl()
-                    .text_color(rgb(TEXT()))
-                    .child(self.title.clone()),
-            )
+            .border_color(ACCENT())
+            .child(div().text_sm().text_color(ACCENT()).child("Arkor"))
+            .child(div().text_xl().text_color(TEXT()).child(self.title.clone()))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(MUTED()))
+                    .text_color(MUTED())
                     .child(self.subtitle.clone()),
             )
     }
@@ -74,7 +69,7 @@ pub(super) fn show(
     let timer = cx.background_executor().timer(SHOWN_FOR);
     cx.spawn(async move |cx| {
         timer.await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if let Ok(h) = handle {
                 let _ = h.update(cx, |_, window, _| window.remove_window());
             }

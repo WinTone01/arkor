@@ -356,11 +356,86 @@ pub struct Global {
 #[serde(default, deny_unknown_fields)]
 pub struct Appearance {
     pub theme: Theme,
-    /// Accent colour as 0xRRGGBB. `None` = Arkor's ember orange.
+    /// Accent colour as 0xRRGGBB. `None` = Arkor's default violet.
     pub accent: Option<u32>,
     pub grid_size: GridSize,
     /// Short sounds when a game starts or stops, a download finishes, or something fails.
     pub sounds: bool,
+    /// How the framed panels and cards look.
+    pub glass: Glass,
+    /// What is drawn behind the panels.
+    pub backdrop: Backdrop,
+    /// Base text size in pixels (every size in the window follows it).
+    pub font_size: Option<u8>,
+    /// Stop the animated backgrounds and other movement.
+    pub reduce_motion: bool,
+    /// Picture for `Backdrop::Image`.
+    pub backdrop_image: Option<PathBuf>,
+}
+
+impl Appearance {
+    pub const FONT_SIZES: [u8; 4] = [13, 14, 15, 16];
+
+    pub fn font_size(&self) -> u8 {
+        self.font_size
+            .filter(|s| Self::FONT_SIZES.contains(s))
+            .unwrap_or(14)
+    }
+}
+
+/// Panel and card style (fill, opacity, border, corner radius).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Glass {
+    #[default]
+    Acrylic,
+    Crystal,
+    Smoked,
+    Soft,
+}
+
+impl Glass {
+    pub const ALL: [Glass; 4] = [Glass::Acrylic, Glass::Crystal, Glass::Smoked, Glass::Soft];
+}
+
+/// Window background behind the panels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backdrop {
+    /// A glow rising behind the window.
+    #[default]
+    Nebula,
+    Eclipse,
+    Pulse,
+    Grid,
+    /// Animated.
+    Aurora,
+    /// Animated.
+    Tide,
+    /// Animated.
+    Drift,
+    /// Plain background colour.
+    Plain,
+    /// The user's own picture (`Appearance::backdrop_image`).
+    Image,
+}
+
+impl Backdrop {
+    pub const ALL: [Backdrop; 9] = [
+        Backdrop::Nebula,
+        Backdrop::Eclipse,
+        Backdrop::Pulse,
+        Backdrop::Grid,
+        Backdrop::Aurora,
+        Backdrop::Tide,
+        Backdrop::Drift,
+        Backdrop::Plain,
+        Backdrop::Image,
+    ];
+
+    pub fn animated(self) -> bool {
+        matches!(self, Backdrop::Aurora | Backdrop::Tide | Backdrop::Drift)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

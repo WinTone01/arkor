@@ -6,7 +6,6 @@ use std::sync::mpsc::{Receiver, channel};
 
 use gpui::{
     Context, Div, KeyBinding, ObjectFit, StyledImage, Window, actions, div, img, prelude::*, px,
-    rgb,
 };
 
 use super::widgets::{self, theme::*};
@@ -132,6 +131,8 @@ pub(super) fn start_gamepad() -> Option<Receiver<Nav>> {
 impl Library {
     pub(super) fn toggle_big_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.big_screen = !self.big_screen;
+        // Leave any focused text field so the arrow keys and Esc reach big-screen mode.
+        self.refocus = true;
         if self.big_screen {
             self.big_focus = match self.selection {
                 Some(Selection::Game(ix)) => {
@@ -219,7 +220,12 @@ impl Library {
                     .p_1()
                     .rounded_lg()
                     .border_2()
-                    .border_color(rgb(if focused { ACCENT() } else { BG() }))
+                    .border_color(if focused {
+                        super::style::pal::accent()
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .when(focused, |d| d.bg(super::style::pal::accent().opacity(0.12)))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(row) = this.visible.iter().position(|&v| v == ix) {
@@ -233,7 +239,7 @@ impl Library {
                         div()
                             .truncate()
                             .text_lg()
-                            .text_color(rgb(if focused { ACCENT() } else { TEXT() }))
+                            .text_color(if focused { ACCENT() } else { TEXT() })
                             .child(game.name.clone()),
                     )
                     .child(widgets::label(if played > 0 {
@@ -253,7 +259,6 @@ impl Library {
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .bg(rgb(BG()))
             .p(px(48.))
             .gap_6()
             .child(
@@ -261,7 +266,19 @@ impl Library {
                     .flex()
                     .items_end()
                     .justify_between()
-                    .child(div().text_3xl().text_color(rgb(ACCENT())).child("Arkor"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(super::style::logo(40.))
+                            .child(
+                                div()
+                                    .text_3xl()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child("Arkor"),
+                            ),
+                    )
                     .child(widgets::label(hint)),
             )
             .children(self.status.clone().map(widgets::label))

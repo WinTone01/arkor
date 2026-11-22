@@ -9,7 +9,7 @@ use arkor_launch::launchers::{self, LAUNCHERS};
 use arkor_launch::start::{self, PrefixTool};
 use arkor_stores::Detected;
 use arkor_stores::prefix::{self, Candidate};
-use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*, rgb};
+use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*};
 
 use super::Library;
 use super::widgets::{self, theme::*};
@@ -337,7 +337,7 @@ impl Library {
                 .px_3()
                 .py_2()
                 .rounded_md()
-                .bg(rgb(BG()))
+                .bg(super::style::pal::raised().opacity(0.45))
                 .child(
                     div()
                         .flex()
@@ -444,9 +444,9 @@ impl Library {
                         .px_3()
                         .py_2()
                         .rounded_md()
-                        .bg(rgb(BG()))
+                        .bg(super::style::pal::raised().opacity(0.45))
                         .cursor_pointer()
-                        .hover(|s| s.bg(rgb(ROW_HOVER())))
+                        .hover(|s| s.bg(ROW_HOVER()))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let mut new =
                                 NewGame::windows(prefix::suggested_name(&exe), exe.clone());
@@ -491,7 +491,7 @@ impl Library {
             ),
         ));
         if let Some(e) = &self.add.error {
-            page = page.child(div().text_sm().text_color(rgb(ACCENT())).child(e.clone()));
+            page = page.child(div().text_sm().text_color(ACCENT()).child(e.clone()));
         }
         page.child(manual)
             .child(found)

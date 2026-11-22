@@ -2,22 +2,34 @@
 //! right. Every change is saved immediately; `arkor run` picks it up on the next launch.
 
 mod add_game;
+mod backdrop;
 mod bench_page;
 mod big_screen;
 mod enhance;
+mod features;
 mod fields;
 mod game_page;
 mod global_page;
 mod grid;
 mod hud_editor;
 mod i18n;
+mod icons;
 mod protons;
+mod shell;
 mod sounds;
 mod splash;
+mod style;
 mod system_page;
 mod text_input;
 mod tray;
 mod widgets;
+
+#[cfg(test)]
+mod ui_tests;
+
+/// Tests that change process-wide XDG variables hold this, so they run one at a time.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use std::collections::HashMap;
 
@@ -25,15 +37,15 @@ use arkor_core::library::{Library as GameLibrary, LibraryGame};
 use arkor_core::mangohud::HudSettings;
 use arkor_core::{Game, GameId, Global, HudMode, Language, Profile};
 use gpui::{
-    AnyElement, App, Application, Bounds, Context, Div, ScrollStrategy, SharedString,
-    UniformListScrollHandle, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
-    uniform_list,
+    AnyElement, App, Bounds, Context, Div, SharedString, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
 
 use add_game::AddState;
 use enhance::GameTools;
+use features::GameTab;
 use fields::Fields;
-use game_page::{GameTab, GameUi};
+use game_page::GameUi;
 use i18n::Strings;
 use protons::ProtonsState;
 use widgets::theme::*;
@@ -71,7 +83,6 @@ pub struct Library {
     /// The library as display rows (sorted by name) and the raw entries.
     games: Vec<Game>,
     library: GameLibrary,
-    list_scroll: UniformListScrollHandle,
     warnings: Vec<String>,
     selection: Option<Selection>,
     /// Profile of the selected game (only meaningful when a game is selected).
@@ -104,6 +115,17 @@ pub struct Library {
     big_focus: usize,
     big_cols: usize,
     restore_pending: Option<std::path::PathBuf>,
+    settings_tab: global_page::SettingsTab,
+    /// Move the keyboard focus back to the window on the next render.
+    refocus: bool,
+    accent_picker: Option<(
+        gpui::Entity<gpui::component::color_picker::ColorPickerState>,
+        gpui::Subscription,
+    )>,
+    /// Text in the game page's settings search.
+    feature_query: String,
+    /// Appearance last pushed to gpui-kit's theme (re-synced when it changes).
+    synced_look: Option<(arkor_core::profile::Appearance, bool)>,
     /// Cover image per game id (looked up once per library load).
     covers: HashMap<String, Option<std::path::PathBuf>>,
 }
@@ -122,7 +144,6 @@ impl Library {
         let mut lib = Self {
             games: Vec::new(),
             library: GameLibrary::default(),
-            list_scroll: UniformListScrollHandle::new(),
             warnings,
             selection: None,
             profile: Profile::default(),
@@ -146,6 +167,11 @@ impl Library {
             search_text: String::new(),
             focus: None,
             covers: HashMap::new(),
+            synced_look: None,
+            feature_query: String::new(),
+            settings_tab: Default::default(),
+            refocus: false,
+            accent_picker: None,
             backup_prefixes: false,
             big_screen: false,
             big_focus: 0,
@@ -279,17 +305,28 @@ impl Library {
         };
         self.hud_advanced = tab == Some("advanced");
         self.global_hud_tab = matches!(tab, Some("advanced" | "mangohud"));
-        self.game_tab = match tab {
-            Some("launch") => GameTab::Launch,
-            Some("wine") => GameTab::Wine,
-            Some("performance") => GameTab::Performance,
-            Some("mods") => GameTab::Mods,
-            Some("logs") => GameTab::Logs,
-            _ => GameTab::General,
-        };
+        self.game_tab = tab.and_then(GameTab::from_name).unwrap_or_default();
+        // `#search=dlss` opens the game page with its settings search filled in.
+        if let Some(q) = tab.and_then(|t| t.strip_prefix("search=")) {
+            self.feature_query = q.replace('+', " ");
+        }
         let selection = match target {
             None => return,
-            Some("global") => Selection::Global,
+            Some("global") | Some("settings") => {
+                use global_page::SettingsTab;
+                self.settings_tab = match tab {
+                    Some("appearance") => SettingsTab::Appearance,
+                    Some("defaults") => SettingsTab::Defaults,
+                    Some("integrations") => SettingsTab::Integrations,
+                    Some("backups") => SettingsTab::Backups,
+                    _ => SettingsTab::General,
+                };
+                Selection::Global
+            }
+            Some("overlay") => {
+                self.global_hud_tab = true;
+                Selection::Global
+            }
             Some("add") | Some("import") => Selection::Add,
             Some("protons") => Selection::Protons,
             Some("system") => Selection::System,
@@ -315,6 +352,8 @@ impl Library {
     }
 
     fn select(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        // A settings search belongs to the page it was typed on.
+        self.feature_query.clear();
         self.set_selection(selection);
         cx.notify();
     }
@@ -327,13 +366,11 @@ impl Library {
 
     fn set_selection(&mut self, selection: Selection) {
         self.selection = Some(selection);
+        self.refocus = true;
         self.status = None;
         self.fields.clear();
         self.game_ui = GameUi::default();
         if let Selection::Game(ix) = selection {
-            if let Some(row) = self.visible.iter().position(|&v| v == ix) {
-                self.list_scroll.scroll_to_item(row, ScrollStrategy::Center);
-            }
             let t = self.t();
             self.profile = Profile::load(&self.games[ix].id).unwrap_or_else(|e| {
                 self.status = Some(format!("{}: {e:#}", t.profile_load_failed).into());
@@ -411,207 +448,10 @@ impl Library {
         input
     }
 
-    fn library_controls(&mut self, cx: &mut Context<Self>) -> Div {
-        let search = self.search_input(cx);
-        let sort_chip =
-            |ix: usize, sort: Sort, label: &'static str, this: &Self, cx: &mut Context<Self>| {
-                widgets::chip(("sort", ix), label, this.filter.sort == sort).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.filter.sort = sort;
-                        this.apply_filter();
-                        cx.notify();
-                    },
-                ))
-            };
-        let mut controls = div().px_2().flex().flex_col().gap_2().child(search).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                .child(sort_chip(0, Sort::Name, "A–Z", self, cx))
-                .child(sort_chip(
-                    1,
-                    Sort::Recent,
-                    self.tr("Recent", "Son"),
-                    self,
-                    cx,
-                ))
-                .child(sort_chip(
-                    2,
-                    Sort::Playtime,
-                    self.tr("Most played", "En çok"),
-                    self,
-                    cx,
-                )),
-        );
-        let categories = self.categories();
-        if !categories.is_empty() {
-            let mut row = div().flex().flex_wrap().gap_1().child(
-                widgets::chip(
-                    "cat-all",
-                    self.tr("All", "Tümü"),
-                    self.filter.category.is_none(),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filter.category = None;
-                    this.apply_filter();
-                    cx.notify();
-                })),
-            );
-            for (ix, c) in categories.into_iter().enumerate() {
-                let active = self.filter.category.as_ref() == Some(&c);
-                row = row.child(widgets::chip(("cat", ix), c.clone(), active).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        this.filter.category = if this.filter.category.as_ref() == Some(&c) {
-                            None
-                        } else {
-                            Some(c.clone())
-                        };
-                        this.apply_filter();
-                        cx.notify();
-                    }),
-                ));
-            }
-            controls = controls.child(row);
-        }
-        if self.filter.show_hidden || self.library.games.iter().any(|g| g.hidden) {
-            controls = controls.child(
-                div().flex().child(
-                    widgets::chip(
-                        "show-hidden",
-                        self.tr("Show hidden (Ctrl+H)", "Gizlileri göster (Ctrl+H)"),
-                        self.filter.show_hidden,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_hidden(cx))),
-                ),
-            );
-        }
-        controls
-    }
-
     fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
         self.filter.show_hidden = !self.filter.show_hidden;
         self.apply_filter();
         cx.notify();
-    }
-
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
-        let controls = self.library_controls(cx);
-        let t = self.t();
-        let nav_item =
-            |id: &'static str, selection: Selection, title: &'static str, hint: Option<String>| {
-                let selected = self.selection == Some(selection);
-                div()
-                    .id(id)
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(selected, |d| d.bg(rgb(SELECTED())))
-                    .when(!selected, |d| d.hover(|s| s.bg(rgb(ROW_HOVER()))))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(selection, cx)))
-                    .child(div().child(title))
-                    .children(hint.map(widgets::label))
-            };
-        let hud_state = format!(
-            "MangoHud {}",
-            if self.global.mangohud.enabled {
-                t.on
-            } else {
-                t.off
-            }
-        );
-        div()
-            .flex()
-            .flex_col()
-            .w(px(300.))
-            .h_full()
-            .bg(rgb(PANEL()))
-            .border_r_1()
-            .border_color(rgb(BORDER()))
-            .child(
-                div()
-                    .px_4()
-                    .py_3()
-                    .text_xl()
-                    .text_color(rgb(ACCENT()))
-                    .child("Arkor"),
-            )
-            .child(
-                div()
-                    .px_2()
-                    .flex()
-                    .flex_col()
-                    .child(nav_item(
-                        "nav-library",
-                        Selection::Grid,
-                        self.tr("Library", "Kütüphane"),
-                        None,
-                    ))
-                    .child(nav_item(
-                        "nav-global",
-                        Selection::Global,
-                        t.global_settings,
-                        Some(hud_state),
-                    ))
-                    .child(nav_item(
-                        "nav-add",
-                        Selection::Add,
-                        self.tr("Add game", "Oyun ekle"),
-                        None,
-                    ))
-                    .child(nav_item(
-                        "nav-protons",
-                        Selection::Protons,
-                        self.tr("Proton versions", "Proton sürümleri"),
-                        None,
-                    ))
-                    .child(nav_item(
-                        "nav-bench",
-                        Selection::Bench,
-                        self.tr("Benchmarks", "Benchmark'lar"),
-                        None,
-                    ))
-                    .child(nav_item(
-                        "nav-system",
-                        Selection::System,
-                        self.tr("System", "Sistem"),
-                        None,
-                    )),
-            )
-            .child(
-                div()
-                    .px_4()
-                    .pt_4()
-                    .pb_1()
-                    .flex()
-                    .justify_between()
-                    .child(widgets::label(t.games_header))
-                    .child(widgets::label(if self.visible.len() == self.games.len() {
-                        self.games.len().to_string()
-                    } else {
-                        format!("{}/{}", self.visible.len(), self.games.len())
-                    })),
-            )
-            .child(controls)
-            .children(
-                self.warnings
-                    .first()
-                    .map(|w| div().px_4().pb_2().child(widgets::label(format!("⚠ {w}")))),
-            )
-            .child(div().flex_1().px_2().child(self.render_list(cx)))
-            .when(!self.running.is_empty(), |d| {
-                d.child(
-                    div().p_2().border_t_1().border_color(rgb(BORDER())).child(
-                        widgets::chip(
-                            "stop-all",
-                            self.tr("Stop all games", "Tüm oyunları durdur"),
-                            false,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.stop_all(cx))),
-                    ),
-                )
-            })
     }
 
     /// Stops every game started from this window (process groups, then their prefixes).
@@ -635,59 +475,6 @@ impl Library {
         .detach();
     }
 
-    fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        uniform_list(
-            "games",
-            self.visible.len(),
-            cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
-                range
-                    .map(|row| {
-                        let ix = this.visible[row];
-                        let game = &this.games[ix];
-                        let selected = this.selection == Some(Selection::Game(ix));
-                        let running = this.running.contains_key(&game.id.to_string());
-                        let kind = this
-                            .library
-                            .get(&game.id.id)
-                            .map(|g| this.kind_label(g))
-                            .unwrap_or_default();
-                        div()
-                            .id(ix)
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .when(selected, |d| d.bg(rgb(SELECTED())))
-                            .when(!selected, |d| d.hover(|s| s.bg(rgb(ROW_HOVER()))))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select(Selection::Game(ix), cx)
-                            }))
-                            // One line only: uniform_list needs every row to be the same height.
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_color(rgb(TEXT()))
-                                    .child(game.name.clone()),
-                            )
-                            .child(widgets::label(if running {
-                                format!("▶ {}", this.tr("Running", "Çalışıyor"))
-                            } else {
-                                match this.playtime(&game.id).0 {
-                                    0 => kind.to_string(),
-                                    secs => format!(
-                                        "{kind} · {}",
-                                        arkor_core::stats::format_duration(secs)
-                                    ),
-                                }
-                            }))
-                    })
-                    .collect()
-            }),
-        )
-        .track_scroll(self.list_scroll.clone())
-        .h_full()
-    }
-
     pub(crate) fn kind_label(&self, game: &LibraryGame) -> &'static str {
         use arkor_core::library::GameKind;
         match game.kind {
@@ -700,32 +487,7 @@ impl Library {
 
     fn render_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let content = match self.selection {
-            None if !self.games.is_empty() => self.render_grid(cx),
-            None => {
-                return div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .text_color(rgb(MUTED()))
-                    .child(if self.games.is_empty() {
-                        self.tr(
-                            "Your library is empty. Add a game to get started.",
-                            "Kütüphanen boş. Başlamak için bir oyun ekle.",
-                        )
-                    } else {
-                        self.t().pick_something
-                    })
-                    .child(
-                        widgets::primary_button("empty-add", self.tr("Add game", "Oyun ekle"))
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.select(Selection::Add, cx)),
-                            ),
-                    )
-                    .into_any_element();
-            }
+            None => self.render_grid(cx),
             Some(Selection::Global) => self.render_global(window, cx),
             Some(Selection::Add) => self.render_add(window, cx),
             Some(Selection::Protons) => self.render_protons(cx),
@@ -733,10 +495,12 @@ impl Library {
             Some(Selection::Bench) => self.render_bench(cx),
             Some(Selection::System) => self.render_system(cx),
             Some(Selection::Game(ix)) => {
-                let game = self.games[ix].clone();
-                self.render_game(&game, window, cx)
+                let _ = ix;
+                self.render_game(window, cx)
             }
         };
+        // The library grid uses the full width; settings pages keep readable line lengths.
+        let wide = matches!(self.selection, None | Some(Selection::Grid));
         div()
             .id("detail")
             .size_full()
@@ -751,8 +515,7 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .max_w(px(900.))
-                    .children(self.status.clone().map(widgets::label)),
+                    .when(!wide, |d| d.max_w(px(1040.))),
             )
             .into_any_element()
     }
@@ -762,58 +525,14 @@ impl Library {
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().text_2xl().text_color(rgb(TEXT())).child(title.into()))
             .child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(MUTED()))
-                    .child(subtitle.into()),
+                    .text_2xl()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(TEXT())
+                    .child(title.into()),
             )
-    }
-}
-
-impl Render for Library {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.apply_theme(window);
-        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        if window.focused(cx).is_none() {
-            window.focus(&focus);
-        }
-        use big_screen::*;
-        if self.big_screen {
-            let big = self.render_big(window, cx);
-            return div()
-                .track_focus(&focus)
-                .key_context("BigScreen")
-                .on_action(
-                    cx.listener(|this, _: &ToggleBigScreen, w, cx| this.toggle_big_screen(w, cx)),
-                )
-                .on_action(cx.listener(|this, _: &NavUp, w, cx| this.nav(Nav::Up, w, cx)))
-                .on_action(cx.listener(|this, _: &NavDown, w, cx| this.nav(Nav::Down, w, cx)))
-                .on_action(cx.listener(|this, _: &NavLeft, w, cx| this.nav(Nav::Left, w, cx)))
-                .on_action(cx.listener(|this, _: &NavRight, w, cx| this.nav(Nav::Right, w, cx)))
-                .on_action(cx.listener(|this, _: &NavAccept, w, cx| this.nav(Nav::Accept, w, cx)))
-                .on_action(cx.listener(|this, _: &NavBack, w, cx| this.nav(Nav::Back, w, cx)))
-                .on_action(cx.listener(|this, _: &NavDetails, w, cx| this.nav(Nav::Details, w, cx)))
-                .size_full()
-                .text_color(rgb(TEXT()))
-                .child(big);
-        }
-        let detail = self.render_detail(window, cx);
-        let sidebar = self.render_sidebar(cx);
-        div()
-            .track_focus(&focus)
-            .key_context("Arkor")
-            .on_action(cx.listener(|this, _: &ToggleHidden, _, cx| this.toggle_hidden(cx)))
-            .on_action(
-                cx.listener(|this, _: &ToggleBigScreen, w, cx| this.toggle_big_screen(w, cx)),
-            )
-            .flex()
-            .size_full()
-            .bg(rgb(BG()))
-            .text_color(rgb(TEXT()))
-            .child(sidebar)
-            .child(div().flex_1().h_full().child(detail))
+            .child(div().text_sm().text_color(MUTED()).child(subtitle.into()))
     }
 }
 
@@ -825,118 +544,186 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
     // removed again (see `game_page::spawn_launch`).
     unsafe { std::env::set_var("DISABLE_MANGOHUD", "1") };
     let global = Global::load_or_import().unwrap_or_default();
-    Application::new().run(move |cx: &mut App| {
-        text_input::bind_keys(cx);
-        cx.bind_keys([gpui::KeyBinding::new("ctrl-h", ToggleHidden, None)]);
-        big_screen::bind_keys(cx);
-        let main: std::rc::Rc<std::cell::RefCell<Option<gpui::WindowHandle<Library>>>> =
-            Default::default();
+    gpui::application()
+        .with_assets(icons::ArkorAssets)
+        .run(move |cx: &mut App| {
+            gpui::init(cx);
+            style::load_fonts(cx);
+            sync_kit_theme(&global.appearance, cx);
+            text_input::bind_keys(cx);
+            cx.bind_keys([gpui::KeyBinding::new("ctrl-h", ToggleHidden, None)]);
+            big_screen::bind_keys(cx);
+            shell::bind_keys(cx);
+            let main: std::rc::Rc<std::cell::RefCell<Option<MainWindow>>> = Default::default();
 
-        let tray_rx = (global.tray || start_in_tray)
-            .then(|| {
-                let games = GameLibrary::load()
-                    .map(|l| {
-                        l.games
-                            .iter()
-                            .map(|g| (g.game_id().to_string(), g.name.clone()))
-                            .collect()
+            let tray_rx = (global.tray || start_in_tray)
+                .then(|| {
+                    let games = GameLibrary::load()
+                        .map(|l| {
+                            l.games
+                                .iter()
+                                .map(|g| (g.game_id().to_string(), g.name.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let labels = match global.language {
+                        Language::En => ["Open Arkor", "Play", "Quit"],
+                        Language::Tr => ["Arkor'u aç", "Oyna", "Çık"],
+                    };
+                    tray::start(games, labels)
+                })
+                .flatten();
+            let has_tray = tray_rx.is_some();
+
+            // Automatic backup, off the UI thread.
+            let now = arkor_core::stats::now();
+            if global.backup.due(now) {
+                let backup = global.backup.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let dest = backup.dest_dir();
+                        if arkor_core::backup::create(&dest, &[], "auto").is_ok() {
+                            arkor_core::backup::prune(&dest, backup.keep);
+                            if let Ok(mut g) = Global::load_or_import() {
+                                g.backup.last = Some(now);
+                                let _ = g.save();
+                            }
+                        }
                     })
-                    .unwrap_or_default();
-                let labels = match global.language {
-                    Language::En => ["Open Arkor", "Play", "Quit"],
-                    Language::Tr => ["Arkor'u aç", "Oyna", "Çık"],
-                };
-                tray::start(games, labels)
-            })
-            .flatten();
-        let has_tray = tray_rx.is_some();
+                    .detach();
+            }
 
-        // Automatic backup, off the UI thread.
-        let now = arkor_core::stats::now();
-        if global.backup.due(now) {
-            let backup = global.backup.clone();
-            cx.background_executor()
-                .spawn(async move {
-                    let dest = backup.dest_dir();
-                    if arkor_core::backup::create(&dest, &[], "auto").is_ok() {
-                        arkor_core::backup::prune(&dest, backup.keep);
-                        if let Ok(mut g) = Global::load_or_import() {
-                            g.backup.last = Some(now);
-                            let _ = g.save();
+            if !(start_in_tray && has_tray) {
+                *main.borrow_mut() = open_main(open.clone(), cx);
+            }
+            // Without a tray, closing the window ends Arkor; with one, Arkor stays in the tray.
+            cx.on_window_closed(move |cx, _| {
+                if !has_tray && cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+
+            // Gamepad: navigation in big-screen mode; Start opens Arkor if its window is closed.
+            if let Some(rx) = big_screen::start_gamepad() {
+                let executor = cx.background_executor().clone();
+                let main = main.clone();
+                cx.spawn(async move |cx| {
+                    loop {
+                        executor.timer(std::time::Duration::from_millis(30)).await;
+                        while let Ok(nav) = rx.try_recv() {
+                            cx.update(|cx| {
+                                let handle = main.borrow().clone();
+                                let alive = handle.is_some_and(|(h, lib)| {
+                                    h.update(cx, |_, window, cx| {
+                                        lib.update(cx, |lib, cx| lib.nav(nav, window, cx))
+                                    })
+                                    .is_ok()
+                                });
+                                if !alive && nav == big_screen::Nav::Toggle {
+                                    *main.borrow_mut() = open_main(None, cx);
+                                }
+                            });
                         }
                     }
                 })
                 .detach();
-        }
-
-        if !(start_in_tray && has_tray) {
-            *main.borrow_mut() = open_main(open.clone(), cx);
-        }
-        // Without a tray, closing the window ends Arkor; with one, Arkor stays in the tray.
-        cx.on_window_closed(move |cx| {
-            if !has_tray && cx.windows().is_empty() {
-                cx.quit();
             }
-        })
-        .detach();
 
-        // Gamepad: navigation in big-screen mode; Start opens Arkor if its window is closed.
-        if let Some(rx) = big_screen::start_gamepad() {
-            let executor = cx.background_executor().clone();
-            let main = main.clone();
-            cx.spawn(async move |cx| {
-                loop {
-                    executor.timer(std::time::Duration::from_millis(30)).await;
-                    while let Ok(nav) = rx.try_recv() {
-                        let _ = cx.update(|cx| {
-                            let handle = *main.borrow();
-                            let alive = handle.is_some_and(|h| {
-                                h.update(cx, |lib, window, cx| lib.nav(nav, window, cx))
-                                    .is_ok()
+            if let Some(rx) = tray_rx {
+                let main = main.clone();
+                let executor = cx.background_executor().clone();
+                cx.spawn(async move |cx| {
+                    loop {
+                        executor.timer(std::time::Duration::from_millis(250)).await;
+                        while let Ok(cmd) = rx.try_recv() {
+                            cx.update(|cx| match cmd {
+                                tray::TrayCmd::Show => match cx.windows().into_iter().next() {
+                                    Some(w) => {
+                                        let _ =
+                                            w.update(cx, |_, window, _| window.activate_window());
+                                    }
+                                    None => *main.borrow_mut() = open_main(None, cx),
+                                },
+                                tray::TrayCmd::Quit => cx.quit(),
                             });
-                            if !alive && nav == big_screen::Nav::Toggle {
-                                *main.borrow_mut() = open_main(None, cx);
-                            }
-                        });
+                        }
                     }
-                }
-            })
-            .detach();
-        }
-
-        if let Some(rx) = tray_rx {
-            let main = main.clone();
-            let executor = cx.background_executor().clone();
-            cx.spawn(async move |cx| {
-                loop {
-                    executor.timer(std::time::Duration::from_millis(250)).await;
-                    while let Ok(cmd) = rx.try_recv() {
-                        let _ = cx.update(|cx| match cmd {
-                            tray::TrayCmd::Show => match cx.windows().into_iter().next() {
-                                Some(w) => {
-                                    let _ = w.update(cx, |_, window, _| window.activate_window());
-                                }
-                                None => *main.borrow_mut() = open_main(None, cx),
-                            },
-                            tray::TrayCmd::Quit => cx.quit(),
-                        });
-                    }
-                }
-            })
-            .detach();
-        }
-    });
+                })
+                .detach();
+            }
+        });
     Ok(())
 }
 
-fn open_main(open: Option<String>, cx: &mut App) -> Option<gpui::WindowHandle<Library>> {
-    let bounds = Bounds::centered(None, size(px(1200.), px(820.)), cx);
-    let opened = cx.open_window(
+/// The main window and its view.
+type MainWindow = (gpui::AnyWindowHandle, gpui::Entity<Library>);
+
+/// Applies Arkor's palette to gpui-kit's own components (inputs, menus, sliders).
+pub(crate) fn sync_kit_theme(look: &arkor_core::profile::Appearance, cx: &mut App) {
+    use gpui::component::Theme;
+    use gpui::component::theme::ThemeMode;
+    use style::pal;
+    let light = match look.theme {
+        arkor_core::profile::Theme::Light => true,
+        arkor_core::profile::Theme::Dark => false,
+        arkor_core::profile::Theme::System => matches!(
+            cx.window_appearance(),
+            gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
+        ),
+    };
+    pal::set(
+        light,
+        look.accent.unwrap_or(pal::DEFAULT_ACCENT),
+        look.glass,
+    );
+    Theme::change(
+        if light {
+            ThemeMode::Light
+        } else {
+            ThemeMode::Dark
+        },
+        None,
+        cx,
+    );
+    let accent = pal::accent();
+    let size = look.font_size() as f32;
+    Theme::update(cx, |theme| {
+        theme.background = pal::bg();
+        theme.foreground = pal::text();
+        theme.border = pal::border();
+        theme.muted = pal::raised();
+        theme.muted_foreground = pal::muted();
+        theme.secondary = pal::raised();
+        theme.secondary_hover = style::shade(pal::raised(), if light { -0.03 } else { 0.03 });
+        theme.secondary_foreground = pal::text();
+        theme.accent = pal::raised();
+        theme.accent_foreground = pal::text();
+        theme.input = pal::border_strong();
+        theme.popover = pal::card();
+        theme.popover_foreground = pal::text();
+        theme.primary = accent;
+        theme.primary_hover = style::shade(accent, 0.06);
+        theme.primary_active = style::shade(accent, -0.06);
+        theme.primary_foreground = pal::on_accent();
+        theme.ring = accent;
+        theme.info = pal::accent_light();
+        theme.tokens.primary = accent.into();
+        theme.font_size = px(size);
+        theme.font_family = style::FONT.into();
+    });
+}
+
+fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
+    let bounds = Bounds::centered(None, size(px(1320.), px(860.)), cx);
+    let opened = gpui::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(1000.), px(640.))),
             app_id: Some("arkor".into()),
             ..Default::default()
         },
+        cx,
         move |_, cx| {
             cx.new(|_| {
                 let mut lib = Library::new();

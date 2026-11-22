@@ -18,3 +18,5 @@ gilrs = "0.11.2"
 
 [dev-dependencies]
 tempfile.workspace = true
+# gpui's headless test platform (same gpui-pre gpui-kit uses), for simulated key presses.
+gpui_test = { package = "gpui-pre", version = "=0.3.10", features = ["test-support"] }

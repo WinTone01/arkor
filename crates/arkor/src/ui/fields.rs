@@ -11,7 +11,7 @@ use super::text_input::{InputEvent, TextInput};
 
 #[derive(Default)]
 pub(super) struct Fields {
-    inputs: HashMap<String, (Entity<TextInput>, Subscription)>,
+    pub(super) inputs: HashMap<String, (Entity<TextInput>, Subscription)>,
 }
 
 impl Fields {

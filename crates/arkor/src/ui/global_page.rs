@@ -2,10 +2,31 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*, rgb};
+use gpui::{Context, Div, PathPromptOptions, Window, div, prelude::*, px};
 
 use super::widgets::{self, theme::*};
 use super::{Library, i18n};
+
+/// Tabs of the Settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum SettingsTab {
+    #[default]
+    General,
+    Appearance,
+    Defaults,
+    Integrations,
+    Backups,
+}
+
+impl SettingsTab {
+    pub(super) const ALL: [SettingsTab; 5] = [
+        SettingsTab::General,
+        SettingsTab::Appearance,
+        SettingsTab::Defaults,
+        SettingsTab::Integrations,
+        SettingsTab::Backups,
+    ];
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum EnvScope {
@@ -56,7 +77,7 @@ impl Library {
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(BG()))
+                        .bg(super::style::pal::raised().opacity(0.45))
                         .child(
                             div()
                                 .flex_1()
@@ -104,8 +125,13 @@ impl Library {
         let hud = self.global.mangohud.settings.clone();
         if self.global_hud_tab {
             return div()
-                .child(Self::header(t.global_settings, t.global_subtitle))
-                .child(self.global_tabs(cx))
+                .child(Self::header(
+                    self.tr("Overlay", "Overlay"),
+                    self.tr(
+                        "MangoHud layout for every game set to “Use global”. A game can also have its own layout (its Overlay & visuals tab).",
+                        "“Global'i kullan” seçili her oyunun MangoHud düzeni. Bir oyunun kendi düzeni de olabilir (Overlay ve görüntü sekmesi).",
+                    ),
+                ))
                 .child(
                     widgets::switch_row(
                         "global-hud",
@@ -159,36 +185,33 @@ impl Library {
             },
         );
 
-        div()
-            .child(Self::header(t.global_settings, t.global_subtitle))
-            .child(self.global_tabs(cx))
-            .child(widgets::section(t.language).child(languages))
-            .child(self.render_appearance(cx))
-            .child(
-                widgets::section(self.tr("Games", "Oyunlar"))
-                    .child(widgets::label(self.tr(
-                        "New Windows games get their own prefix in this folder:",
-                        "Yeni Windows oyunları bu klasörde kendi prefix'lerini alır:",
-                    )))
-                    .child(div().text_sm().child(prefixes.display().to_string()))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                widgets::chip("prefixes-choose", self.tr("Change…", "Değiştir…"), false)
-                                    .on_click(cx.listener(|this, _, _, cx| this.choose_prefixes_dir(cx))),
-                            )
-                            .when(custom_prefixes, |d| {
-                                d.child(widgets::chip("prefixes-default", self.tr("Use default", "Varsayılanı kullan"), false).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.global.prefixes_dir = None;
-                                        this.save();
-                                        cx.notify();
-                                    }),
-                                ))
-                            }),
-                    )
+        use super::style;
+        let tab = self.settings_tab;
+        let labels = [
+            ("settings", self.tr("General", "Genel")),
+            ("palette", self.tr("Appearance", "Görünüm")),
+            ("gamepad-2", self.tr("Game defaults", "Oyun varsayılanları")),
+            ("plug", self.tr("Integrations", "Entegrasyonlar")),
+            ("archive", self.tr("Backups", "Yedekleme")),
+        ];
+        let page = div()
+            .child(Self::header(
+                self.tr("Settings", "Ayarlar"),
+                self.tr(
+                    "How Arkor behaves and looks, and what every game gets unless it has its own setting.",
+                    "Arkor'un nasıl davrandığı ve göründüğü, ve kendi ayarı olmayan her oyunun ne aldığı.",
+                ),
+            ))
+            .child(style::tab_strip("settings-tab", &labels, tab as usize, cx, |this, i, cx| {
+                this.settings_tab = SettingsTab::ALL[i];
+                cx.notify();
+            }));
+        match tab {
+            SettingsTab::General => page
+                .child(widgets::section(t.language).child(languages))
+                .child(self.render_shortcut_list())
+                .child(
+                    widgets::section(self.tr("Window and start-up", "Pencere ve açılış"))
                     .child(
                         widgets::switch_row(
                             "tray",
@@ -245,7 +268,35 @@ impl Library {
                             cx.notify();
                         })),
                     ),
-            )
+                ),
+            SettingsTab::Appearance => page.child(self.render_appearance(_window, cx)),
+            SettingsTab::Defaults => page
+                .child(
+                    widgets::section(self.tr("Wine prefixes", "Wine prefix'leri"))
+                    .child(widgets::label(self.tr(
+                        "New Windows games get their own prefix in this folder:",
+                        "Yeni Windows oyunları bu klasörde kendi prefix'lerini alır:",
+                    )))
+                    .child(div().text_sm().child(prefixes.display().to_string()))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                widgets::chip("prefixes-choose", self.tr("Change…", "Değiştir…"), false)
+                                    .on_click(cx.listener(|this, _, _, cx| this.choose_prefixes_dir(cx))),
+                            )
+                            .when(custom_prefixes, |d| {
+                                d.child(widgets::chip("prefixes-default", self.tr("Use default", "Varsayılanı kullan"), false).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.global.prefixes_dir = None;
+                                        this.save();
+                                        cx.notify();
+                                    }),
+                                ))
+                            }),
+                    ),
+                )
             .child(
                 widgets::section(self.tr("Environment variables (all games)", "Ortam değişkenleri (tüm oyunlar)"))
                     .child(widgets::label(self.tr(
@@ -253,8 +304,8 @@ impl Library {
                         "Oyunun kendi değişkenleri bunları ezer.",
                     )))
                     .child(env),
-            )
-            .child(self.render_backup(cx))
+            ),
+            SettingsTab::Integrations => page
             .child(
                 widgets::section(self.tr("Cover art", "Kapak resimleri"))
                     .child(widgets::label(self.tr(
@@ -283,22 +334,24 @@ impl Library {
                         "Uygulama kimliği (discord.com/developers'ta bir uygulama oluştur; Discord onun adını gösterir):",
                     )))
                     .child(discord_id),
-            )
+            ),
+            SettingsTab::Backups => page.child(self.render_backup(cx)),
+        }
     }
 
     /// Applies the theme and accent from the settings (System follows the window's appearance).
-    pub(super) fn apply_theme(&self, window: &Window) {
-        use arkor_core::profile::Theme;
-        let a = &self.global.appearance;
-        let light = match a.theme {
-            Theme::Dark => false,
-            Theme::Light => true,
-            Theme::System => matches!(
-                window.appearance(),
-                gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
-            ),
-        };
-        widgets::theme::set(light, a.accent.unwrap_or(widgets::theme::DEFAULT_ACCENT));
+    /// Applies the theme, accent and glass from the settings to Arkor's palette and
+    /// gpui-kit's components; only re-syncs when they (or the desktop's light/dark) change.
+    pub(super) fn apply_theme(&mut self, window: &Window, cx: &mut gpui::App) {
+        let system_light = matches!(
+            window.appearance(),
+            gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
+        );
+        let key = (self.global.appearance.clone(), system_light);
+        if self.synced_look.as_ref() != Some(&key) {
+            super::sync_kit_theme(&self.global.appearance, cx);
+            self.synced_look = Some(key);
+        }
     }
 
     pub(super) fn sound(&self, sound: super::sounds::Sound) {
@@ -334,67 +387,465 @@ impl Library {
         row
     }
 
-    fn render_appearance(&mut self, cx: &mut Context<Self>) -> Div {
-        use arkor_core::profile::Theme;
+    /// The colour picker for a custom accent (created once, needs the window).
+    fn make_accent_picker(
+        &mut self,
+        current: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<gpui::component::color_picker::ColorPickerState> {
+        use gpui::component::color_picker::{ColorPickerEvent, ColorPickerState};
+        if let Some((picker, _)) = &self.accent_picker {
+            return picker.clone();
+        }
+        let picker =
+            cx.new(|cx| ColorPickerState::new(window, cx).default_value(gpui::rgb(current)));
+        let sub = cx.subscribe(&picker, |this, _, event: &ColorPickerEvent, cx| {
+            let ColorPickerEvent::Change(Some(color)) = event else {
+                return;
+            };
+            let c: gpui::Rgba = (*color).into();
+            let hex = ((c.r * 255.).round() as u32) << 16
+                | ((c.g * 255.).round() as u32) << 8
+                | (c.b * 255.).round() as u32;
+            this.edit_look(cx, |l| l.accent = Some(hex));
+        });
+        self.accent_picker = Some((picker.clone(), sub));
+        picker
+    }
+
+    fn render_shortcut_list(&self) -> Div {
+        use super::style::pal;
+        let mut list = div().flex().flex_col().gap_1();
+        for (keys, en, tr) in super::shell::SHORTCUTS {
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div().w(px(150.)).flex().child(
+                            div()
+                                .flex_none()
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(pal::border_strong())
+                                .bg(pal::raised().opacity(0.6))
+                                .text_xs()
+                                .font_family("monospace")
+                                .text_color(pal::text_soft())
+                                .child(keys),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(pal::text_soft())
+                            .child(self.tr(en, tr)),
+                    ),
+            );
+        }
+        widgets::section(self.tr("Keyboard shortcuts", "Klavye kısayolları")).child(list)
+    }
+
+    fn edit_look(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut arkor_core::profile::Appearance),
+    ) {
+        f(&mut self.global.appearance);
+        let saved = self.global.save();
+        self.report(saved);
+        cx.notify();
+    }
+
+    /// A selectable tile with a small preview above its name.
+    fn look_tile(
+        id: (&'static str, usize),
+        name: &'static str,
+        active: bool,
+        preview: gpui::AnyElement,
+    ) -> gpui::Stateful<Div> {
+        use super::style::pal;
+        div()
+            .id(id)
+            .w(px(118.))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_1p5()
+            .rounded(px(14.))
+            .border_1()
+            .border_color(if active {
+                pal::accent()
+            } else {
+                pal::glass_spec().border
+            })
+            .bg(if active {
+                pal::accent().opacity(0.1)
+            } else {
+                gpui::transparent_black()
+            })
+            .cursor_pointer()
+            .hover(|s| s.border_color(pal::accent().opacity(0.6)))
+            .child(
+                div()
+                    .h(px(64.))
+                    .rounded(px(10.))
+                    .overflow_hidden()
+                    .bg(pal::bg())
+                    .relative()
+                    .child(preview),
+            )
+            .child(
+                div()
+                    .px_1()
+                    .pb_0p5()
+                    .text_sm()
+                    .text_color(if active {
+                        pal::accent_light()
+                    } else {
+                        pal::text_soft()
+                    })
+                    .child(name),
+            )
+    }
+
+    fn render_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        use super::style::{self, pal};
+        use arkor_core::profile::{Backdrop, Glass, Theme};
         let a = self.global.appearance.clone();
-        let mut themes = div().flex().gap_2();
-        for (ix, (theme, label)) in [
-            (Theme::Dark, self.tr("Dark", "Koyu")),
-            (Theme::Light, self.tr("Light", "Açık")),
-            (Theme::System, self.tr("Follow the system", "Sisteme uy")),
+        let row = |title: &'static str, hint: &'static str, control: gpui::AnyElement| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(div().font_weight(gpui::FontWeight::MEDIUM).child(title))
+                        .child(widgets::label(hint)),
+                )
+                .child(control)
+        };
+
+        // Theme
+        let mut themes = div().flex().flex_wrap().gap_3();
+        for (ix, (theme, label, fill, ink)) in [
+            (
+                Theme::Dark,
+                self.tr("Dark", "Koyu"),
+                0x0d0d11u32,
+                0xf4f4f5u32,
+            ),
+            (Theme::Light, self.tr("Light", "Açık"), 0xf7f8fa, 0x16171b),
+            (
+                Theme::System,
+                self.tr("Follow the system", "Sisteme uy"),
+                0x6b6b75,
+                0xffffff,
+            ),
         ]
         .into_iter()
         .enumerate()
         {
+            let preview = div()
+                .absolute()
+                .inset_0()
+                .bg(style::hex(fill))
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .w(px(50.))
+                        .h(px(6.))
+                        .rounded_full()
+                        .bg(style::hex(ink).opacity(0.8)),
+                )
+                .child(
+                    div()
+                        .w(px(70.))
+                        .h(px(6.))
+                        .rounded_full()
+                        .bg(style::hex(ink).opacity(0.35)),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .w(px(28.))
+                        .h(px(10.))
+                        .rounded(px(4.))
+                        .bg(pal::accent()),
+                )
+                .into_any_element();
             themes = themes.child(
-                widgets::chip(("theme", ix), label, a.theme == theme).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.global.appearance.theme = theme;
-                        this.save();
-                        cx.notify();
-                    },
-                )),
+                Self::look_tile(("theme", ix), label, a.theme == theme, preview).on_click(
+                    cx.listener(move |this, _, _, cx| this.edit_look(cx, |l| l.theme = theme)),
+                ),
             );
         }
-        let current = a.accent.unwrap_or(widgets::theme::DEFAULT_ACCENT);
+
+        // Accent
+        let current = a.accent.unwrap_or(pal::DEFAULT_ACCENT);
         let mut accents = div().flex().flex_wrap().gap_2();
-        for (ix, (color, en, tr)) in widgets::theme::ACCENTS.into_iter().enumerate() {
+        for (ix, (color, en, tr)) in pal::ACCENTS.into_iter().enumerate() {
+            let active = current == color;
             accents = accents.child(
                 div()
                     .id(("accent", ix))
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
+                    .pl_1p5()
+                    .pr_3()
+                    .py_1p5()
+                    .rounded_full()
                     .cursor_pointer()
                     .border_1()
-                    .border_color(rgb(if current == color { color } else { BORDER() }))
-                    .child(div().size_3().rounded_full().bg(rgb(color)))
+                    .border_color(if active {
+                        style::hex(color)
+                    } else {
+                        pal::glass_spec().border
+                    })
+                    .bg(if active {
+                        style::hex(color).opacity(0.12)
+                    } else {
+                        pal::raised().opacity(0.4)
+                    })
+                    .hover(|s| s.border_color(style::hex(color).opacity(0.7)))
+                    .child(
+                        div()
+                            .size(px(18.))
+                            .rounded_full()
+                            .bg(style::hex(color))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(active, |d| {
+                                d.child(style::icon("check", 12., gpui::white()))
+                            }),
+                    )
                     .child(div().text_sm().child(self.tr(en, tr)))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.global.appearance.accent =
-                            (color != widgets::theme::DEFAULT_ACCENT).then_some(color);
-                        this.save();
-                        cx.notify();
+                        this.edit_look(cx, |l| {
+                            l.accent = (color != pal::DEFAULT_ACCENT).then_some(color)
+                        })
                     })),
             );
         }
+
+        // Custom colour from a picker (live, saved on change).
+        let picker = self.make_accent_picker(current, window, cx);
+        let custom = !pal::ACCENTS.iter().any(|(c, _, _)| *c == current);
+        accents = accents.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .pl_1()
+                .pr_3()
+                .py_0p5()
+                .rounded_full()
+                .border_1()
+                .border_color(if custom {
+                    pal::accent()
+                } else {
+                    pal::glass_spec().border
+                })
+                .bg(pal::raised().opacity(0.4))
+                .child(
+                    gpui::component::color_picker::ColorPicker::new(&picker).featured_colors(
+                        pal::ACCENTS
+                            .iter()
+                            .map(|(c, _, _)| style::hex(*c))
+                            .collect(),
+                    ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().child(self.tr("Custom", "Özel")))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(pal::muted())
+                                .child(format!("#{current:06X}")),
+                        ),
+                ),
+        );
+
+        // Glass
+        let mut glasses = div().flex().flex_wrap().gap_3();
+        for (ix, glass) in Glass::ALL.into_iter().enumerate() {
+            let (name, radius, fill, border): (&'static str, f32, f32, f32) = match glass {
+                Glass::Acrylic => ("Acrylic", 10., 0.7, 0.12),
+                Glass::Crystal => ("Crystal", 5., 0.3, 0.25),
+                Glass::Smoked => ("Smoked", 9., 0.95, 0.18),
+                Glass::Soft => (self.tr("Soft", "Yumuşak"), 14., 0.06, 0.04),
+            };
+            let preview = div()
+                .absolute()
+                .inset_0()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(-10.))
+                        .top(px(-14.))
+                        .size(px(70.))
+                        .rounded_full()
+                        .bg(pal::accent().opacity(0.55)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(18.))
+                        .top(px(14.))
+                        .w(px(74.))
+                        .h(px(40.))
+                        .rounded(px(radius))
+                        .bg(pal::card().opacity(fill))
+                        .border_1()
+                        .border_color(pal::text().opacity(border)),
+                )
+                .into_any_element();
+            glasses = glasses.child(
+                Self::look_tile(("glass", ix), name, a.glass == glass, preview).on_click(
+                    cx.listener(move |this, _, _, cx| this.edit_look(cx, |l| l.glass = glass)),
+                ),
+            );
+        }
+
+        // Backdrop
+        let mut backdrops = div().flex().flex_wrap().gap_3();
+        for (ix, kind) in Backdrop::ALL.into_iter().enumerate() {
+            let name = match kind {
+                Backdrop::Nebula => self.tr("Nebula", "Bulutsu"),
+                Backdrop::Eclipse => self.tr("Eclipse", "Tutulma"),
+                Backdrop::Pulse => self.tr("Pulse", "Dalga"),
+                Backdrop::Grid => self.tr("Grid", "Izgara"),
+                Backdrop::Aurora => self.tr("Aurora ✦", "Kutup ışığı ✦"),
+                Backdrop::Tide => self.tr("Tide ✦", "Gelgit ✦"),
+                Backdrop::Drift => self.tr("Drift ✦", "Süzülme ✦"),
+                Backdrop::Plain => self.tr("Plain", "Düz"),
+                Backdrop::Image => self.tr("Your picture…", "Kendi görselin…"),
+            };
+            // Small previews are always still.
+            let preview = div()
+                .absolute()
+                .inset_0()
+                .child(super::backdrop::render(
+                    kind,
+                    true,
+                    a.backdrop_image.as_deref(),
+                ))
+                .into_any_element();
+            backdrops = backdrops.child(
+                Self::look_tile(("backdrop", ix), name, a.backdrop == kind, preview).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        if kind == Backdrop::Image {
+                            let title =
+                                this.tr("Choose a background picture", "Bir arka plan görseli seç");
+                            this.prompt_path(false, title, cx, |this, path, cx| {
+                                this.edit_look(cx, |l| {
+                                    l.backdrop = Backdrop::Image;
+                                    l.backdrop_image = Some(path);
+                                })
+                            });
+                        } else {
+                            this.edit_look(cx, |l| l.backdrop = kind)
+                        }
+                    }),
+                ),
+            );
+        }
+
+        // Text size
+        let mut sizes = div().flex().gap_1p5();
+        for (ix, size) in arkor_core::profile::Appearance::FONT_SIZES
+            .into_iter()
+            .enumerate()
+        {
+            sizes = sizes.child(
+                widgets::chip(
+                    ("font-size", ix),
+                    format!("{size} px"),
+                    a.font_size() == size,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.edit_look(cx, |l| l.font_size = Some(size))
+                })),
+            );
+        }
+
         widgets::section(self.tr("Appearance", "Görünüm"))
-            .child(widgets::label(self.tr("Theme", "Tema")))
-            .child(themes)
-            .child(widgets::label(self.tr("Accent colour", "Vurgu rengi")))
-            .child(accents)
+            .gap_5()
+            .child(row(
+                self.tr("Theme", "Tema"),
+                self.tr(
+                    "Dark, light, or whatever the desktop uses.",
+                    "Koyu, açık ya da masaüstü neyi kullanıyorsa o.",
+                ),
+                themes.into_any_element(),
+            ))
+            .child(row(
+                self.tr("Accent colour", "Vurgu rengi"),
+                self.tr(
+                    "Used for highlights, switches and the logo.",
+                    "Vurgularda, anahtarlarda ve logoda kullanılır.",
+                ),
+                accents.into_any_element(),
+            ))
+            .child(row(
+                self.tr("Panel style", "Panel stili"),
+                self.tr(
+                    "How see-through the panels and cards are, and how round.",
+                    "Panellerin ve kartların ne kadar saydam ve yuvarlak olduğu.",
+                ),
+                glasses.into_any_element(),
+            ))
+            .child(row(
+                self.tr("Background", "Arka plan"),
+                self.tr(
+                    "Drawn behind the panels. ✦ = animated.",
+                    "Panellerin arkasında çizilir. ✦ = hareketli.",
+                ),
+                backdrops.into_any_element(),
+            ))
+            .child(row(
+                self.tr("Text size", "Yazı boyutu"),
+                self.tr(
+                    "Every text and spacing in the window follows it.",
+                    "Penceredeki tüm yazılar ve boşluklar buna göre ölçeklenir.",
+                ),
+                sizes.into_any_element(),
+            ))
+            .child(row(
+                self.tr("Library cover size", "Kütüphane kapak boyutu"),
+                self.tr(
+                    "Small, medium or large covers on the Library page.",
+                    "Kütüphane sayfasında küçük, orta ya da büyük kapaklar.",
+                ),
+                self.grid_size_chips(cx).into_any_element(),
+            ))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(widgets::label(
-                        self.tr("Library cover size", "Kütüphane kapak boyutu"),
-                    ))
-                    .child(self.grid_size_chips(cx)),
+                widgets::switch_row(
+                    "reduce-motion",
+                    self.tr("Reduce motion", "Hareketi azalt"),
+                    self.tr(
+                        "Animated backgrounds stand still.",
+                        "Hareketli arka planlar durağan kalır.",
+                    ),
+                    a.reduce_motion,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.edit_look(cx, |l| l.reduce_motion = !l.reduce_motion)
+                })),
             )
             .child(
                 widgets::switch_row(
@@ -407,30 +858,12 @@ impl Library {
                     a.sounds,
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.global.appearance.sounds = !this.global.appearance.sounds;
-                    this.save();
+                    this.edit_look(cx, |l| l.sounds = !l.sounds);
                     if this.global.appearance.sounds {
                         super::sounds::play(super::sounds::Sound::Done);
                     }
-                    cx.notify();
                 })),
             )
-    }
-
-    fn global_tabs(&self, cx: &mut Context<Self>) -> Div {
-        let tab = |ix: usize, hud: bool, label: &'static str, cx: &mut Context<Self>| {
-            widgets::chip(("global-tab", ix), label, self.global_hud_tab == hud).on_click(
-                cx.listener(move |this, _, _, cx| {
-                    this.global_hud_tab = hud;
-                    cx.notify();
-                }),
-            )
-        };
-        div()
-            .flex()
-            .gap_2()
-            .child(tab(0, false, self.tr("General", "Genel"), cx))
-            .child(tab(1, true, "MangoHud", cx))
     }
 }
 
@@ -558,7 +991,7 @@ impl Library {
                 ),
             ),
             Some(file) => card
-                .child(div().text_sm().text_color(rgb(ACCENT())).child(format!(
+                .child(div().text_sm().text_color(ACCENT()).child(format!(
                     "{} {} ",
                     self.tr(
                         "Replace the current settings and library with",

@@ -2,7 +2,7 @@
 //! package to install when one is missing).
 
 use arkor_launch::tools::{self, ToolStatus};
-use gpui::{Context, Div, div, prelude::*, rgb};
+use gpui::{Context, Div, div, prelude::*};
 
 use super::Library;
 use super::widgets::{self, theme::*};
@@ -69,12 +69,12 @@ impl Library {
                 .px_3()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(BG()))
+                .bg(super::style::pal::raised().opacity(0.45))
                 .child(
                     div()
                         .w(gpui::px(220.))
                         .text_sm()
-                        .text_color(rgb(MUTED()))
+                        .text_color(MUTED())
                         .child(label),
                 )
                 .child(value.flex_1().min_w_0())
@@ -90,11 +90,8 @@ impl Library {
         let mut tool_card = widgets::section(self.tr("Tools", "Araçlar"));
         for t in tools {
             let value = match &t.found {
-                Some(v) => div()
-                    .text_sm()
-                    .text_color(rgb(TEXT()))
-                    .child(format!("✓ {v}")),
-                None => div().text_sm().text_color(rgb(ACCENT())).child(format!(
+                Some(v) => div().text_sm().text_color(TEXT()).child(format!("✓ {v}")),
+                None => div().text_sm().text_color(ACCENT()).child(format!(
                     "{} · sudo pacman -S {}",
                     self.tr("missing", "eksik"),
                     t.package
@@ -116,8 +113,8 @@ impl Library {
                         div()
                             .p_2()
                             .rounded_md()
-                            .bg(rgb(BG()))
-                            .text_color(rgb(ACCENT()))
+                            .bg(super::style::pal::raised().opacity(0.45))
+                            .text_color(ACCENT())
                             .text_sm()
                             .child(format!("sudo pacman -S --needed {}", repo.join(" "))),
                     )

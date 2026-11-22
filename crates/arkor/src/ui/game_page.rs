@@ -4,26 +4,14 @@
 use std::path::PathBuf;
 
 use arkor_core::library::GameKind;
-use arkor_core::{Game, GameId, HudMode, paths};
+use arkor_core::{GameId, HudMode, paths};
 use arkor_launch::start::{self, PrefixTool};
 use arkor_launch::umu_db;
-use gpui::{Context, Div, Window, div, prelude::*, rgb};
+use gpui::{Context, Div, div, prelude::*};
 
 use super::global_page::EnvScope;
 use super::widgets::{self, theme::*};
 use super::{Library, Selection};
-
-/// Tabs of the game page (kept when switching games).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum GameTab {
-    #[default]
-    General,
-    Launch,
-    Wine,
-    Performance,
-    Mods,
-    Logs,
-}
 
 /// Page-local state of the game page (reset when another page is selected).
 #[derive(Default)]
@@ -102,7 +90,7 @@ impl Library {
     }
 
     /// Stops a game started here: SIGTERM to its process group, then `wineserver -k`.
-    fn stop(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn stop(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else { return };
         if let Some(pgid) = self.running.get(&id.to_string()) {
             // SAFETY: plain syscall; a negative pid addresses the whole process group.
@@ -260,58 +248,10 @@ impl Library {
         }
     }
 
-    pub(super) fn render_game(
-        &mut self,
-        game: &Game,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    /// Name, category, visibility, cover, duplicate and delete.
+    pub(super) fn render_details_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let t = self.t();
-        let Some(entry) = self.entry().cloned() else {
-            return div().child(widgets::label(t.not_found));
-        };
-        let running = self.running.contains_key(&game.id.to_string());
-        let is_steam = matches!(entry.kind, GameKind::Steam { .. });
-        let is_linux = entry.kind == GameKind::Linux;
-        let has_prefix = entry.needs_prefix();
-
-        // Header: name, kind, Play/Stop.
-        let header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(Self::header(game.name.clone(), {
-                let (secs, last) = self.playtime(&game.id);
-                let mut sub = format!("{}  ·  {}", self.kind_label(&entry), game.id);
-                if secs > 0 {
-                    sub.push_str(&format!(
-                        "  ·  {} {}",
-                        self.tr("Played", "Oynanan:"),
-                        arkor_core::stats::format_duration(secs)
-                    ));
-                }
-                if let Some(last) = last {
-                    sub.push_str(&format!(
-                        "  ·  {} {}",
-                        self.tr("Last", "Son:"),
-                        ago(
-                            arkor_core::stats::now().saturating_sub(last),
-                            self.global.language
-                        )
-                    ));
-                }
-                sub
-            }))
-            .child(if running {
-                widgets::primary_button("stop", self.tr("Stop", "Durdur"))
-                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-            } else {
-                widgets::primary_button("play", t.play)
-                    .on_click(cx.listener(|this, _, _, cx| this.play(cx)))
-            });
-
-        // Entry: name, executable, arguments, prefix.
+        let entry = self.entry().cloned()?;
         let name = self.field(
             "game-name",
             |this| this.entry().map(|g| g.name.clone()).unwrap_or_default(),
@@ -333,9 +273,55 @@ impl Library {
                 }
             },
         );
-        let mut entry_card = widgets::section(self.tr("Game", "Oyun"))
+        let mut entry_card = widgets::section(self.tr("Details", "Ayrıntılar"))
             .child(widgets::label(t.name_label))
             .child(name);
+        let category = self.field(
+            "game-category",
+            |this| {
+                this.entry()
+                    .and_then(|g| g.category.clone())
+                    .unwrap_or_default()
+            },
+            self.tr(
+                "Category, e.g. Shooters (optional)",
+                "Kategori, ör. FPS (isteğe bağlı)",
+            ),
+            cx,
+            |this, text| {
+                let value = Some(text.trim().to_string()).filter(|t| !t.is_empty());
+                this.edit_entry(|g| g.category = value);
+                this.apply_filter();
+            },
+        );
+        let hidden = entry.hidden;
+        entry_card = entry_card
+            .child(widgets::label(self.tr("Category", "Kategori")))
+            .child(category)
+            .child(
+                div().flex().child(
+                    widgets::chip(
+                        "hide-game",
+                        self.tr("Hidden in the library", "Kütüphanede gizli"),
+                        hidden,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.edit_entry(|g| g.hidden = !g.hidden);
+                        this.apply_filter();
+                        cx.notify();
+                    })),
+                ),
+            );
+        entry_card = entry_card.child(self.render_cover_controls(&entry.id, &entry.name, cx));
+        Some(entry_card.child(self.manage_row(&entry.name, cx)))
+    }
+
+    /// What runs: the executable and its arguments, the prefix, or the store's id.
+    pub(super) fn render_exec_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let t = self.t();
+        let entry = self.entry().cloned()?;
+        let has_prefix = entry.needs_prefix();
+        let mut entry_card = widgets::section(self.tr("Executable", "Çalıştırılabilir dosya"));
         match &entry.kind {
             GameKind::Windows | GameKind::Linux => {
                 let args = self.field(
@@ -445,45 +431,13 @@ impl Library {
                 entry_card = entry_card.child(widgets::label(format!("Epic: {app_name}")))
             }
         }
-        let category = self.field(
-            "game-category",
-            |this| {
-                this.entry()
-                    .and_then(|g| g.category.clone())
-                    .unwrap_or_default()
-            },
-            self.tr(
-                "Category, e.g. Shooters (optional)",
-                "Kategori, ör. FPS (isteğe bağlı)",
-            ),
-            cx,
-            |this, text| {
-                let value = Some(text.trim().to_string()).filter(|t| !t.is_empty());
-                this.edit_entry(|g| g.category = value);
-                this.apply_filter();
-            },
-        );
-        let hidden = entry.hidden;
-        entry_card = entry_card
-            .child(widgets::label(self.tr("Category", "Kategori")))
-            .child(category)
-            .child(
-                div().flex().child(
-                    widgets::chip(
-                        "hide-game",
-                        self.tr("Hidden in the library", "Kütüphanede gizli"),
-                        hidden,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.edit_entry(|g| g.hidden = !g.hidden);
-                        this.apply_filter();
-                        cx.notify();
-                    })),
-                ),
-            );
-        entry_card = entry_card.child(self.render_cover_controls(&entry.id, &entry.name, cx));
-        entry_card = entry_card.child(self.manage_row(&entry.name, cx));
+        let _ = t;
+        Some(entry_card)
+    }
 
+    /// MangoHud for this game: global, its own layout (with the editor) or off.
+    pub(super) fn render_mangohud_card(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.t();
         // MangoHud mode.
         let mode = self.profile.mangohud.mode;
         let mode_chip = |ix: usize, m: HudMode, text: &'static str, cx: &mut Context<Self>| {
@@ -510,7 +464,7 @@ impl Library {
                         t.mode_global_off_note
                     }))
                     .child(widgets::chip("goto-global", t.edit_global, false).on_click(
-                        cx.listener(|this, _, _, cx| this.select(Selection::Global, cx)),
+                        cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Overlay, cx)),
                     )),
             ),
             HudMode::Custom => hud_card.child(widgets::label(t.mode_custom_note)),
@@ -521,85 +475,40 @@ impl Library {
             _ => None,
         };
 
-        let launch = self.render_launch(&entry.id, is_steam, cx);
-        let env = widgets::section(self.tr("Environment variables", "Ortam değişkenleri"))
+        let mut out = div().flex().flex_col().gap_4().child(hud_card);
+        if let Some(editor) = custom_editor {
+            out = out.child(editor);
+        }
+        out
+    }
+
+    /// Environment variables of this game.
+    pub(super) fn render_env_card(&mut self, cx: &mut Context<Self>) -> Div {
+        widgets::section(self.tr("Environment variables", "Ortam değişkenleri"))
             .child(widgets::label(self.tr(
                 "Override global ones. Also settable in launch options (KEY=VALUE %command%).",
                 "Global olanları ezer. Başlatma seçeneklerinde de yazılabilir (ANAHTAR=DEĞER %command%).",
             )))
-            .child(self.env_editor(EnvScope::Game, cx));
+            .child(self.env_editor(EnvScope::Game, cx))
+    }
 
-        let tabs: [(GameTab, &'static str); 6] = [
-            (GameTab::General, self.tr("General", "Genel")),
-            (GameTab::Launch, self.tr("Launch", "Başlatma")),
-            (
-                GameTab::Wine,
-                if has_prefix {
-                    self.tr("Wine & Proton", "Wine ve Proton")
-                } else {
-                    self.tr("Runtime", "Runtime")
-                },
-            ),
-            (GameTab::Performance, self.tr("Performance", "Performans")),
-            (GameTab::Mods, self.tr("Mods", "Modlar")),
-            (GameTab::Logs, self.tr("Logs", "Log'lar")),
-        ];
-        let current = self.game_tab;
-        let mut tab_row = div().flex().flex_wrap().gap_2();
-        for (ix, (tab, label)) in tabs.into_iter().enumerate() {
-            if tab == GameTab::Wine && is_steam {
-                continue;
-            }
-            tab_row = tab_row.child(
-                widgets::chip(("game-tab", ix), label, tab == current).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.game_tab = tab;
-                        cx.notify();
-                    },
-                )),
-            );
-        }
-        let page = div().child(header).child(tab_row);
-        match current {
-            GameTab::General => page
-                .child(entry_card)
-                .child(hud_card)
-                .children(custom_editor),
-            GameTab::Launch => page
-                .child(launch)
-                .child(env)
-                .children(self.render_shortcuts(cx)),
-            GameTab::Wine if is_steam => page.child(widgets::label(self.tr(
-                "Steam runs this game with its own Proton.",
-                "Bu oyunu Steam kendi Proton'uyla çalıştırır.",
-            ))),
-            GameTab::Wine => {
-                let mut page = page;
-                if is_linux {
-                    page = page.child(self.render_runtime(cx));
-                } else {
-                    page = page
-                        .children(self.render_proton(game, cx))
-                        .child(self.render_protonfix(cx));
-                }
-                if has_prefix {
-                    page = page.child(self.render_prefix_tools(cx));
-                }
-                page
-            }
-            GameTab::Performance => page
-                .child(self.render_tweaks(cx))
-                .child(self.render_gamescope(cx))
-                .child(self.render_lsfg(cx))
-                .child(self.render_vkbasalt(cx))
-                .child(self.render_layers(cx)),
-            GameTab::Mods => page
-                .child(self.render_optiscaler(cx))
-                .child(self.render_dlss_enabler(cx))
-                .child(self.render_streamline(cx))
-                .child(self.render_amd_bundles(cx))
-                .child(self.render_reshade(cx)),
-            GameTab::Logs => page.child(self.render_logs(&game.id, cx)),
+    /// Steam picks Proton itself.
+    pub(super) fn render_steam_runtime_note(&mut self, _cx: &mut Context<Self>) -> Div {
+        widgets::section("Proton").child(widgets::label(self.tr(
+            "Steam runs this game with its own Proton; pick it in the game's Properties in Steam. Launch options, environment and the other tabs still apply.",
+            "Bu oyunu Steam kendi Proton'uyla çalıştırır; Steam'de oyunun Özellikler bölümünden seç. Başlatma seçenekleri, ortam ve diğer sekmeler yine geçerli.",
+        )))
+    }
+
+    /// Starts or stops the selected game.
+    pub(super) fn toggle_play(&mut self, cx: &mut Context<Self>) {
+        let running = self
+            .selected_id()
+            .is_some_and(|id| self.running.contains_key(&id.to_string()));
+        if running {
+            self.stop(cx)
+        } else {
+            self.play(cx)
         }
     }
 
@@ -629,7 +538,7 @@ impl Library {
             .flex_col()
             .gap_2()
             .pt_2()
-            .child(div().text_sm().text_color(rgb(ACCENT())).child(format!(
+            .child(div().text_sm().text_color(ACCENT()).child(format!(
                 "{} “{name}”? {}",
                 self.tr("Remove", "Kaldır:"),
                 self.tr(
@@ -673,7 +582,12 @@ impl Library {
             )
     }
 
-    fn render_launch(&mut self, game_id: &str, is_steam: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_launch(
+        &mut self,
+        game_id: &str,
+        is_steam: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let t = self.t();
         let options = self.field(
             "launch-options",
@@ -835,7 +749,7 @@ impl Library {
         card
     }
 
-    fn render_protonfix(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_protonfix(&mut self, cx: &mut Context<Self>) -> Div {
         let umu = self.field(
             "umu-id",
             |this| this.profile.umu_id.clone().unwrap_or_default(),
@@ -898,7 +812,7 @@ impl Library {
         card
     }
 
-    fn render_runtime(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_runtime(&mut self, cx: &mut Context<Self>) -> Div {
         let current = self.profile.linux_runtime.clone();
         let mut row = div().flex().flex_wrap().gap_2().child(
             widgets::chip(
@@ -931,7 +845,7 @@ impl Library {
             .child(row)
     }
 
-    fn render_prefix_tools(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_prefix_tools(&mut self, cx: &mut Context<Self>) -> Div {
         let verbs = self.field(
             "winetricks-verbs",
             |_| String::new(),
@@ -1052,7 +966,7 @@ impl Library {
                     .px_3()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(BG()))
+                    .bg(super::style::pal::raised().opacity(0.45))
                     .child(
                         div()
                             .flex()
@@ -1088,7 +1002,7 @@ impl Library {
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
     }
 
-    fn render_logs(&mut self, id: &GameId, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_logs(&mut self, id: &GameId, cx: &mut Context<Self>) -> Div {
         let show_label = if self.game_ui.show_log {
             self.tr("Hide last launch log", "Son başlatma log'unu gizle")
         } else {
@@ -1153,7 +1067,7 @@ impl Library {
                 .flex_col()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(BG()))
+                .bg(super::style::pal::raised().opacity(0.45))
                 .text_xs()
                 .font_family("monospace");
             if tail.is_empty() {
@@ -1217,10 +1131,10 @@ fn code_box(text: String) -> Div {
     div()
         .p_2()
         .rounded_md()
-        .bg(rgb(BG()))
+        .bg(super::style::pal::raised().opacity(0.45))
         .border_1()
-        .border_color(rgb(BORDER()))
-        .text_color(rgb(ACCENT()))
+        .border_color(BORDER())
+        .text_color(ACCENT())
         .child(text)
 }
 
@@ -1269,7 +1183,7 @@ pub(super) fn launch_detached(id: &str) {
 }
 
 /// "3 days ago" / "3 gün önce".
-fn ago(secs: u64, lang: arkor_core::Language) -> String {
+pub(super) fn ago(secs: u64, lang: arkor_core::Language) -> String {
     let (n, en, tr) = match secs {
         s if s < 3600 => (s / 60, "min", "dk"),
         s if s < 86_400 => (s / 3600, "h", "sa"),
@@ -1400,7 +1314,7 @@ impl Library {
     }
 
     /// App-menu, desktop and Steam shortcuts, and the command line for other launchers.
-    fn render_shortcuts(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_shortcuts(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let game = self.selected_game()?.clone();
         let id = game.id.clone();
         let command = arkor_launch::shortcuts::launch_command(&id);

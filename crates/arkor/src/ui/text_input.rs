@@ -9,7 +9,7 @@ use gpui::{
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div,
-    fill, point, prelude::*, px, relative, rgb, rgba, size,
+    fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -496,7 +496,7 @@ impl Element for TextElement {
             len: content.len(),
             font: style.font(),
             color: if showing_placeholder {
-                rgb(MUTED()).into()
+                MUTED()
             } else {
                 style.color
             },
@@ -547,7 +547,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    rgb(ACCENT()),
+                    ACCENT(),
                 )),
             )
         } else {
@@ -563,7 +563,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0xff7a3d55),
+                    super::style::pal::accent().opacity(0.33),
                 )),
                 None,
             )
@@ -597,7 +597,14 @@ impl Element for TextElement {
         let Some(line) = prepaint.line.take() else {
             return;
         };
-        let _ = line.paint(bounds.origin, window.line_height(), window, cx);
+        let _ = line.paint(
+            bounds.origin,
+            window.line_height(),
+            gpui::TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()
         {
@@ -636,14 +643,18 @@ impl Render for TextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .w_full()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(BG()))
+            .px_3()
+            .py_1p5()
+            .rounded(px(10.))
+            .bg(super::style::pal::raised().opacity(0.55))
             .border_1()
-            .border_color(rgb(BORDER()))
-            .focus(|s| s.border_color(rgb(ACCENT())))
-            .text_color(rgb(TEXT()))
+            .border_color(super::style::pal::border_strong())
+            .hover(|s| s.border_color(super::style::pal::accent().opacity(0.4)))
+            .focus(|s| {
+                s.border_color(super::style::pal::accent())
+                    .bg(super::style::pal::raised().opacity(0.8))
+            })
+            .text_color(TEXT())
             .line_height(px(24.))
             .child(TextElement { input: cx.entity() })
     }

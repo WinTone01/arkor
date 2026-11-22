@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use arkor_core::bench::{self, Run};
-use gpui::{Context, Div, div, prelude::*, px, rgb};
+use gpui::{Context, Div, div, prelude::*, px};
 
 use super::Library;
 use super::widgets::{self, theme::*};
@@ -202,7 +202,7 @@ impl Library {
                     .w(px(150.))
                     .truncate()
                     .text_sm()
-                    .text_color(rgb(ACCENT()))
+                    .text_color(ACCENT())
                     .child(r.name()),
             );
         }
@@ -222,7 +222,7 @@ impl Library {
                 .gap_2()
                 .px_1()
                 .rounded_sm()
-                .bg(rgb(BG()))
+                .bg(super::style::pal::raised().opacity(0.45))
                 .child(cell(label.into(), 170.));
             for (i, s) in sums.iter().enumerate() {
                 let v = get(s);
@@ -234,20 +234,14 @@ impl Library {
                     let worse = if higher_better { pct < -0.5 } else { pct > 0.5 };
                     text.push_str(&format!("  ({pct:+.1}%)"));
                     color = if better {
-                        0x4caf50
+                        super::style::pal::success()
                     } else if worse {
-                        0xeb5b5b
+                        super::style::pal::danger()
                     } else {
                         TEXT()
                     };
                 }
-                line = line.child(
-                    div()
-                        .w(px(150.))
-                        .text_sm()
-                        .text_color(rgb(color))
-                        .child(text),
-                );
+                line = line.child(div().w(px(150.)).text_sm().text_color(color).child(text));
             }
             table = table.child(line);
         }
@@ -265,21 +259,21 @@ impl Library {
             .gap(px(1.))
             .p_1()
             .rounded_md()
-            .bg(rgb(BG()));
+            .bg(super::style::pal::raised().opacity(0.45));
         for v in points {
             // Green within 60 FPS pacing, yellow up to 30 FPS, red beyond.
             let color = if v <= 16.7 {
-                0x4caf50
+                super::style::pal::success()
             } else if v <= 33.4 {
-                0xe6b422
+                super::style::pal::warning()
             } else {
-                0xeb5b5b
+                super::style::pal::danger()
             };
             bars = bars.child(
                 div()
                     .flex_1()
                     .h(px(((v / max) as f32 * (CHART_H - 8.)).max(1.)))
-                    .bg(rgb(color)),
+                    .bg(color),
             );
         }
         let specs = run

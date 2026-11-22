@@ -296,9 +296,9 @@ impl Library {
                         cell.id(("pos", (row * 3 + col) as usize))
                             .cursor_pointer()
                             .border_1()
-                            .border_color(rgb(if active { ACCENT() } else { BORDER() }))
-                            .bg(rgb(if active { ACCENT() } else { BG() }))
-                            .when(!active, |d| d.hover(|s| s.bg(rgb(ROW_HOVER()))))
+                            .border_color(if active { ACCENT() } else { BORDER() })
+                            .bg(if active { ACCENT() } else { BG() })
+                            .when(!active, |d| d.hover(|s| s.bg(ROW_HOVER())))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.edit_hud(cx, |h| h.position = pos)
                             }))
@@ -414,7 +414,7 @@ impl Library {
                             .w(px(110.))
                             .pt_1()
                             .text_sm()
-                            .text_color(rgb(TEXT()))
+                            .text_color(TEXT())
                             .child(title),
                     )
                     .child(row.flex_1()),
@@ -657,7 +657,7 @@ impl Library {
                                     .flex_none()
                                     .rounded_sm()
                                     .border_1()
-                                    .border_color(rgb(BORDER()))
+                                    .border_color(BORDER())
                                     .bg(rgb(shown)),
                             )
                             .child(div().flex_1().child(input)),
@@ -975,7 +975,7 @@ impl Library {
                     .overflow_hidden()
                     .bg(rgb(0x2a3b4f))
                     .border_1()
-                    .border_color(rgb(BORDER()))
+                    .border_color(BORDER())
                     .map(|d| match row {
                         0 => d.justify_start(),
                         1 => d.justify_center(),

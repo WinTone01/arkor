@@ -1,87 +1,34 @@
 //! Small reusable building blocks. GPUI ships no widget set, so Arkor keeps its own here.
 //! Widgets return elements without click handlers; callers attach `.on_click(cx.listener(..))`.
 
-use gpui::{Div, ElementId, Hsla, SharedString, Stateful, div, prelude::*, px, rgb};
+use gpui::{Div, ElementId, SharedString, Stateful, div, prelude::*, px};
 
-/// Colours. Functions rather than constants so the theme and accent can change at runtime.
+/// Colour names used across the older pages, mapped onto the style palette.
 #[allow(non_snake_case)]
 pub mod theme {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use super::super::style::pal;
+    use gpui::Hsla;
 
-    static LIGHT: AtomicBool = AtomicBool::new(false);
-    static ACCENT_RGB: AtomicU32 = AtomicU32::new(DEFAULT_ACCENT);
-
-    pub const DEFAULT_ACCENT: u32 = 0xff7a3d; // ember
-
-    /// Accent choices offered in the settings: (colour, English name, Turkish name).
-    pub const ACCENTS: [(u32, &str, &str); 6] = [
-        (DEFAULT_ACCENT, "Ember", "Kor"),
-        (0x4c8dff, "Blue", "Mavi"),
-        (0x3ccf7a, "Green", "Yeşil"),
-        (0xa77bff, "Purple", "Mor"),
-        (0xff5fa2, "Pink", "Pembe"),
-        (0x2ec4c4, "Teal", "Turkuaz"),
-    ];
-
-    pub fn set(light: bool, accent: u32) {
-        LIGHT.store(light, Ordering::Relaxed);
-        ACCENT_RGB.store(accent, Ordering::Relaxed);
+    pub fn BG() -> Hsla {
+        pal::bg()
     }
-
-    pub fn is_light() -> bool {
-        LIGHT.load(Ordering::Relaxed)
+    pub fn PANEL() -> Hsla {
+        pal::panel()
     }
-
-    fn pick(dark: u32, light: u32) -> u32 {
-        if is_light() { light } else { dark }
+    pub fn ROW_HOVER() -> Hsla {
+        pal::raised().opacity(0.6)
     }
-
-    /// `a` mixed with `b`; `t` = share of `a`.
-    fn mix(a: u32, b: u32, t: f32) -> u32 {
-        let ch = |c: u32, s: u32| {
-            (((c >> s) & 0xff) as f32 * t + ((b >> s) & 0xff) as f32 * (1. - t)).round() as u32
-        };
-        (ch(a, 16) << 16) | (ch(a, 8) << 8) | ch(a, 0)
+    pub fn TEXT() -> Hsla {
+        pal::text()
     }
-
-    pub fn BG() -> u32 {
-        pick(0x14161a, 0xf3f4f6)
+    pub fn MUTED() -> Hsla {
+        pal::muted()
     }
-    pub fn PANEL() -> u32 {
-        pick(0x1c1f25, 0xe8eaee)
+    pub fn ACCENT() -> Hsla {
+        pal::accent_light()
     }
-    pub fn CARD() -> u32 {
-        pick(0x1a1d23, 0xffffff)
-    }
-    pub fn ROW_HOVER() -> u32 {
-        pick(0x252932, 0xdfe2e8)
-    }
-    pub fn SELECTED() -> u32 {
-        pick(0x2d3340, 0xd4d9e2)
-    }
-    pub fn TEXT() -> u32 {
-        pick(0xe6e8eb, 0x1d2026)
-    }
-    pub fn MUTED() -> u32 {
-        pick(0x8a909c, 0x5c6370)
-    }
-    pub fn ACCENT() -> u32 {
-        ACCENT_RGB.load(Ordering::Relaxed)
-    }
-    pub fn ACCENT_DIM() -> u32 {
-        mix(ACCENT(), BG(), 0.25)
-    }
-    pub fn BORDER() -> u32 {
-        pick(0x2a2e36, 0xcfd4dc)
-    }
-
-    #[cfg(test)]
-    mod tests {
-        #[test]
-        fn mix_blends_channels() {
-            assert_eq!(super::mix(0xff0000, 0x000000, 0.5), 0x800000);
-            assert_eq!(super::mix(0x123456, 0xffffff, 1.0), 0x123456);
-        }
+    pub fn BORDER() -> Hsla {
+        pal::glass_spec().border
     }
 }
 
@@ -89,20 +36,17 @@ use theme::*;
 
 /// A titled card grouping related settings.
 pub fn section(title: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .p_4()
-        .rounded_lg()
-        .bg(rgb(CARD()))
-        .border_1()
-        .border_color(rgb(BORDER()))
-        .child(div().text_sm().text_color(rgb(MUTED())).child(title.into()))
+    super::style::card().flex().flex_col().gap_3().p_5().child(
+        div()
+            .text_base()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(TEXT())
+            .child(title.into()),
+    )
 }
 
 pub fn label(text: impl Into<SharedString>) -> Div {
-    div().text_xs().text_color(rgb(MUTED())).child(text.into())
+    div().text_sm().text_color(MUTED()).child(text.into())
 }
 
 /// Pill button; `active` renders it highlighted. Used for toggles and single-choice groups.
@@ -111,8 +55,12 @@ pub fn chip(
     text: impl Into<SharedString>,
     active: bool,
 ) -> Stateful<Div> {
+    use super::style::pal;
     div()
         .id(id)
+        .flex()
+        .items_center()
+        .gap_1p5()
         .px_3()
         .py_1()
         .rounded_full()
@@ -120,28 +68,37 @@ pub fn chip(
         .cursor_pointer()
         .border_1()
         .when(active, |d| {
-            d.bg(rgb(ACCENT_DIM()))
-                .border_color(rgb(ACCENT()))
-                .text_color(rgb(ACCENT()))
+            d.bg(pal::accent().opacity(0.16))
+                .border_color(pal::accent().opacity(0.6))
+                .text_color(pal::accent_light())
         })
         .when(!active, |d| {
-            d.border_color(rgb(BORDER()))
-                .text_color(rgb(TEXT()))
-                .hover(|s| s.bg(rgb(ROW_HOVER())))
+            d.bg(pal::raised().opacity(0.5))
+                .border_color(pal::border_strong())
+                .text_color(pal::text_soft())
+                .hover(|s| {
+                    s.bg(pal::raised())
+                        .border_color(pal::accent().opacity(0.45))
+                })
         })
         .child(text.into())
 }
 
 /// Filled accent button for the main action on a page (e.g. Play).
 pub fn primary_button(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
+    use super::style::{self, pal};
     div()
         .id(id)
+        .flex()
         .flex_none()
+        .items_center()
+        .justify_center()
+        .gap_2()
         .px_6()
         .py_2()
-        .rounded_lg()
-        .bg(rgb(ACCENT()))
-        .text_color(rgb(BG()))
+        .rounded(px(12.))
+        .bg(style::accent_gradient())
+        .text_color(pal::on_accent())
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .cursor_pointer()
         .hover(|s| s.opacity(0.9))
@@ -157,9 +114,32 @@ pub fn badge(text: impl Into<SharedString>, active: bool) -> Div {
         .text_sm()
         .border_1()
         .border_dashed()
-        .border_color(rgb(if active { ACCENT() } else { BORDER() }))
-        .text_color(rgb(if active { ACCENT() } else { MUTED() }))
+        .border_color(if active { ACCENT() } else { BORDER() })
+        .text_color(if active { ACCENT() } else { MUTED() })
         .child(text.into())
+}
+
+/// An on/off switch track.
+pub fn switch(on: bool) -> Div {
+    use super::style::pal;
+    div()
+        .flex()
+        .flex_none()
+        .w(px(38.))
+        .h(px(22.))
+        .p(px(3.))
+        .rounded_full()
+        .bg(if on {
+            pal::accent()
+        } else {
+            pal::border_strong()
+        })
+        .when(on, |d| d.justify_end())
+        .child(div().size(px(16.)).rounded_full().bg(if on {
+            pal::on_accent()
+        } else {
+            pal::text_soft()
+        }))
 }
 
 /// Full-width row with a label, hint and an on/off switch.
@@ -169,40 +149,40 @@ pub fn switch_row(
     hint: &'static str,
     on: bool,
 ) -> Stateful<Div> {
-    let track: Hsla = if on {
-        rgb(ACCENT()).into()
-    } else {
-        rgb(BORDER()).into()
-    };
+    use super::style::pal;
     div()
         .id(id)
         .flex()
         .items_center()
         .justify_between()
-        .p_3()
-        .rounded_lg()
-        .bg(rgb(BG()))
+        .gap_4()
+        .px_4()
+        .py_3()
+        .rounded(px(12.))
+        .bg(pal::raised().opacity(0.45))
+        .border_1()
+        .border_color(if on {
+            pal::accent().opacity(0.35)
+        } else {
+            pal::glass_spec().border
+        })
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(ROW_HOVER())))
+        .hover(|s| s.bg(pal::raised().opacity(0.8)))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .child(div().text_color(rgb(TEXT())).child(title))
-                .child(div().text_xs().text_color(rgb(MUTED())).child(hint)),
+                .gap_0p5()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_color(TEXT())
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(title),
+                )
+                .child(div().text_sm().text_color(MUTED()).child(hint)),
         )
-        .child(
-            div()
-                .flex()
-                .flex_none()
-                .w(px(40.))
-                .h(px(22.))
-                .p(px(3.))
-                .rounded_full()
-                .bg(track)
-                .when(on, |d| d.justify_end())
-                .child(div().size(px(16.)).rounded_full().bg(rgb(TEXT()))),
-        )
+        .child(switch(on))
 }
 
 /// Square `-` / `+` button for steppers.
@@ -212,13 +192,14 @@ pub fn step_button(id: impl Into<ElementId>, glyph: &'static str) -> Stateful<Di
         .flex()
         .items_center()
         .justify_center()
-        .size(px(26.))
-        .rounded_md()
+        .size(px(28.))
+        .rounded(px(8.))
         .border_1()
-        .border_color(rgb(BORDER()))
-        .text_color(rgb(TEXT()))
+        .border_color(super::style::pal::border_strong())
+        .bg(super::style::pal::raised().opacity(0.5))
+        .text_color(TEXT())
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(ROW_HOVER())))
+        .hover(|s| s.bg(ROW_HOVER()))
         .child(glyph)
 }
 
@@ -240,7 +221,7 @@ pub fn stepper(
                     .min_w(px(64.))
                     .flex()
                     .justify_center()
-                    .text_color(rgb(TEXT()))
+                    .text_color(TEXT())
                     .child(value.into()),
             )
             .child(plus),
