@@ -70,7 +70,10 @@ pub fn check() -> anyhow::Result<Option<Release>> {
     let gh: Gh =
         serde_json::from_str(&crate::tools::http_get(API)?).context("unexpected GitHub release")?;
     let version = gh.tag_name.trim_start_matches('v').to_string();
-    if !is_newer(&version, current_version()) {
+    // ARKOR_UPDATE_FORCE=1 takes the latest release even when it is not newer (to try the
+    // update path).
+    let force = std::env::var_os("ARKOR_UPDATE_FORCE").is_some_and(|v| v == "1");
+    if !force && !is_newer(&version, current_version()) {
         return Ok(None);
     }
     let asset = gh

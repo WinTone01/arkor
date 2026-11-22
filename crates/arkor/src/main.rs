@@ -43,6 +43,7 @@ usage:
              | helixsr <game dir> [remove]   (opens HelixSR's setup in a terminal)
              | dlssnr <id> <game dir> <nvngx_dlssnr file> [model] | dlssnr-remove <id>
                                           AMD upscaler bundles (HelixSR, DLSS-NR)
+  arkor update [--check]                  update Arkor itself from its GitHub releases
   arkor layer list | install <vksumi|vknemu|mako> | remove <id>
                                           extra Vulkan layers (user folder)
   arkor backup create [--with-prefixes] | restore <file>
@@ -116,6 +117,7 @@ fn main() -> anyhow::Result<()> {
         Some("reshade") => reshade(&args[1..]),
         Some("backup") => backup(&args[1..]),
         Some("layer") => layer(&args[1..]),
+        Some("update") => self_update(args.get(1).is_some_and(|a| a == "--check")),
         Some("shortcut") => shortcut(&args[1..]),
         Some("bundle") => bundle(&args[1..]),
         Some("streamline") => streamline(&args[1..]),
@@ -488,6 +490,24 @@ fn bundle(args: &[String]) -> anyhow::Result<()> {
             println!("removed");
         }
         _ => anyhow::bail!("usage: see `arkor help`"),
+    }
+    Ok(())
+}
+
+fn self_update(check_only: bool) -> anyhow::Result<()> {
+    use arkor_launch::self_update;
+    match self_update::check()? {
+        None => println!("Arkor {} is up to date", self_update::current_version()),
+        Some(r) if check_only => println!(
+            "Arkor {} is out (you have {})",
+            r.version,
+            self_update::current_version()
+        ),
+        Some(r) => {
+            println!("updating to Arkor {}…", r.version);
+            let exe = self_update::install(&r)?;
+            println!("installed: {}", exe.display());
+        }
     }
     Ok(())
 }
