@@ -74,7 +74,7 @@ Heroic) for Epic games, `vkbasalt`.
   </tr>
 </table>
 
-<sub>The games in these pictures are made up for the screenshots.</sub>
+<sub>Cover art from <a href="https://www.steamgriddb.com">SteamGridDB</a>; the games and their art belong to their publishers.</sub>
 
 <a id="features"></a>
 
