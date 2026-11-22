@@ -282,6 +282,9 @@ impl Library {
         }
 
         side = side.child(div().flex_1());
+        if let Some(note) = self.render_update_note(cx) {
+            side = side.child(note);
+        }
         // Downloads in progress, like a store's download bar; opens the Downloads page.
         let active = arkor_launch::progress::list();
         if !active.is_empty() {

@@ -3,6 +3,7 @@
 
 mod add_game;
 mod app_icon;
+mod app_update;
 mod backdrop;
 mod bench_page;
 mod big_screen;
@@ -123,6 +124,7 @@ pub struct Library {
     required: protons::RequiredState,
     settings_tab: global_page::SettingsTab,
     downloads: downloads_page::DownloadsState,
+    app_update: app_update::AppUpdate,
     /// The redraw loop for download progress is running.
     downloads_watch: bool,
     /// Move the keyboard focus back to the window on the next render.
@@ -180,6 +182,7 @@ impl Library {
             feature_query: String::new(),
             settings_tab: Default::default(),
             downloads: Default::default(),
+            app_update: Default::default(),
             downloads_watch: false,
             refocus: false,
             accent_picker: None,
@@ -757,6 +760,10 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.open(open.as_deref());
                 // Only the real window installs components (not the headless tests).
                 lib.ensure_required(cx);
+                // A newer Arkor is looked for at start, like the components.
+                if !lib.global.no_auto_updates {
+                    lib.check_app_update(true, cx);
+                }
                 lib
             })
         },

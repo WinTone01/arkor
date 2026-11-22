@@ -20,25 +20,35 @@
 ## <img src="docs/icons/install.svg" width="30" align="top"> Install in one command
 
 > [!TIP]
-> **Arch Linux, CachyOS, EndeavourOS, Manjaro and other Arch-based systems** — paste this
-> into a terminal:
+> **Arch Linux, CachyOS, EndeavourOS, Manjaro and other up-to-date distributions (x86_64,
+> glibc 2.44 or newer)** — paste this into a terminal:
 >
 > ```bash
-> git clone https://github.com/WinTone01/arkor.git /tmp/arkor && cd /tmp/arkor/packaging/arch && makepkg -si
+> curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash
 > ```
 >
-> It builds Arkor and installs it as a normal package, with its app-menu entry and icon.
-> Run the same command again to update; remove it with `sudo pacman -R arkor-git`.
+> It downloads the latest release from [Releases](https://github.com/WinTone01/arkor/releases)
+> (no build, no root) and installs it into `~/.local` with its app-menu entry and icon.
+> Arkor then updates itself: **Settings → General → Arkor updates**, or the note in the
+> sidebar when a new version is out. Remove it with
+> `curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash -s -- --uninstall`.
 
 On the first start Arkor sets itself up: it downloads umu-launcher, the EasyAntiCheat and
 BattlEye runtimes and, if you have no Proton yet, Proton-CachyOS.
 
 <details>
-<summary><b>Other distributions</b> (build from source)</summary>
+<summary><b>Build from source</b> (an Arch package, or distributions with an older glibc)</summary>
 
 <br>
 
-Install Rust from [rustup.rs](https://rustup.rs) or your package manager, then:
+On Arch-based systems this builds Arkor as a pacman package (`arkor-git`); update it by running
+the command again (a package-manager install does not update itself):
+
+```bash
+git clone https://github.com/WinTone01/arkor.git /tmp/arkor && cd /tmp/arkor/packaging/arch && makepkg -si
+```
+
+On other distributions, install Rust from [rustup.rs](https://rustup.rs) or your package manager, then:
 
 ```bash
 git clone https://github.com/WinTone01/arkor.git && cd arkor

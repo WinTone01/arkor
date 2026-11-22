@@ -18,6 +18,7 @@ pub mod optiscaler;
 pub mod progress;
 pub mod proton_dl;
 pub mod reshade;
+pub mod self_update;
 pub mod shortcuts;
 pub mod start;
 pub mod streamline;
@@ -416,6 +417,8 @@ mod tests {
 
     #[test]
     fn global_hud_uses_layer_and_global_layout() {
+        // The layout's output folder comes from XDG_DATA_HOME, which other tests change.
+        let _lock = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let g = global(true);
         let p = plan(
             &Profile::default(),

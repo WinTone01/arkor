@@ -222,6 +222,7 @@ impl Library {
                 .flex()
                 .flex_col()
                 .gap_4()
+                .child(self.render_app_update(cx))
                 .child(
                     widgets::section(self.tr("Language", "Dil")).child(widgets::setting_row(
                         t.language,
