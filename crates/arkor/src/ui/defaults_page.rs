@@ -18,23 +18,21 @@ impl Library {
         &self,
         id: &'static str,
         current: Option<&str>,
-        auto_label: &'static str,
+        auto_label: impl Into<gpui::SharedString>,
         cx: &mut Context<Self>,
         set: fn(&mut Self, Option<String>, &mut Context<Self>),
     ) -> Div {
         let chosen_latest = current.and_then(Latest::from_value);
         let mut first = div().flex().flex_wrap().gap_2().child(
-            widgets::chip((id, 0usize), auto_label, current.is_none())
+            widgets::chip((id, 0usize), auto_label.into(), current.is_none())
                 .on_click(cx.listener(move |this, _, _, cx| set(this, None, cx))),
         );
         for (ix, l) in Latest::ALL.into_iter().enumerate() {
             let name = l.dir_name();
             first = first.child(
-                widgets::chip((id, 1 + ix), name, chosen_latest == Some(l))
-                    .child(style::icon("refresh-cw", 12., pal::muted()))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| set(this, Some(name.to_string()), cx)),
-                    ),
+                widgets::chip((id, 1 + ix), name, chosen_latest == Some(l)).on_click(
+                    cx.listener(move |this, _, _, cx| set(this, Some(name.to_string()), cx)),
+                ),
             );
         }
         let mut installed = div().flex().flex_wrap().gap_2();
@@ -56,17 +54,14 @@ impl Library {
             .flex()
             .flex_col()
             .gap_2()
+            .child(widgets::subheading(
+                self.tr("Always up to date", "Her zaman güncel"),
+            ))
             .child(first)
-            .child(widgets::label(self.tr(
-                "↻ = always the newest release, downloaded when first chosen and kept up to date (see Updates below).",
-                "↻ = hep en yeni sürüm; ilk seçildiğinde indirilir ve güncel tutulur (aşağıdaki Güncellemeler bölümüne bak).",
-            )))
             .when(any, |d| {
-                d.child(widgets::subheading(self.tr(
-                    "Installed versions (never change)",
-                    "Kurulu sürümler (hiç değişmez)",
-                )))
-                .child(installed)
+                d.child(div().h(px(4.)))
+                    .child(widgets::subheading(self.tr("Installed", "Kurulu")))
+                    .child(installed)
             })
     }
 
@@ -234,10 +229,6 @@ impl Library {
 
         let new_games =
             widgets::section(self.tr("New games start with", "Yeni oyunlar şununla başlar"))
-                .child(widgets::label(self.tr(
-                    "Copied into a game when it is added; change it on the game's page afterwards.",
-                    "Oyun eklenince ona kopyalanır; sonra oyunun sayfasında değiştirilebilir.",
-                )))
                 .child(widgets::setting_row(
                     self.tr("Keep the system awake", "Sistemi uyanık tut"),
                     self.tr(
@@ -348,12 +339,8 @@ impl Library {
         };
         let new_games = new_games.child(div().flex().pt_1().child(apply));
 
-        let launch = widgets::section(self.tr("Environment (all games)", "Ortam (tüm oyunlar)"))
-            .child(widgets::label(self.tr(
-                "Variables added to every game at launch. A game's own variables override these.",
-                "Her oyuna başlatırken eklenen değişkenler. Oyunun kendi değişkenleri bunları ezer.",
-            )))
-            .child(env);
+        let launch =
+            widgets::section(self.tr("Environment (all games)", "Ortam (tüm oyunlar)")).child(env);
 
         let interval = self.global.update_interval();
         let mut chips = div().flex().flex_wrap().gap_2();

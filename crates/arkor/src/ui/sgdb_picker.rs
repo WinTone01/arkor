@@ -108,7 +108,7 @@ impl Library {
                 .spawn(async move { covers::sgdb_covers(game, animated, &key) })
                 .await;
             let images = match list {
-                Ok(images) => images.into_iter().take(30).collect::<Vec<_>>(),
+                Ok(images) => images.into_iter().take(50).collect::<Vec<_>>(),
                 Err(e) => {
                     let _ = this.update(cx, |this, cx| {
                         if let Some(p) = this.sgdb.as_mut().filter(|p| p.request == request) {
@@ -132,8 +132,14 @@ impl Library {
             if !matches!(alive, Ok(true)) {
                 return;
             }
-            for (ix, image) in images.into_iter().enumerate() {
-                let Ok(path) = bg.spawn(async move { covers::sgdb_thumb(&image) }).await else {
+            // All previews are fetched at once on the background pool (animated ones also go
+            // through ffmpeg), then shown in order as they arrive.
+            let tasks: Vec<_> = images
+                .into_iter()
+                .map(|image| bg.spawn(async move { covers::sgdb_thumb(&image) }))
+                .collect();
+            for (ix, task) in tasks.into_iter().enumerate() {
+                let Ok(path) = task.await else {
                     continue;
                 };
                 let still = this.update(cx, |this, cx| {
@@ -317,6 +323,8 @@ impl Library {
                         .w(px(104.))
                         .h(px(156.))
                         .object_fit(ObjectFit::Cover)
+                        // An id keeps the frame position, so animated covers play.
+                        .id(("sgdb-thumb", ix))
                         .into_any_element(),
                     None => div()
                         .size_full()

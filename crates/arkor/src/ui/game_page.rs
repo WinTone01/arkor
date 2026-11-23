@@ -487,45 +487,40 @@ impl Library {
             widgets::choice_card(("hud-mode", ix), icon, title, hint, mode == m)
                 .on_click(cx.listener(move |this, _, _, cx| this.set_hud_mode(m, cx)))
         };
-        let mut hud_card = widgets::section("MangoHud")
-            .child(widgets::label(self.tr(
-                "The overlay with FPS, temperatures and load over the game.",
-                "Oyunun üstünde FPS, sıcaklık ve yük gösteren katman.",
-            )))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(card(
-                        0,
-                        HudMode::Global,
-                        "copy",
-                        t.mode_global,
-                        if global_on {
-                            t.mode_global_on_note
-                        } else {
-                            t.mode_global_off_note
-                        },
-                        cx,
-                    ))
-                    .child(card(
-                        1,
-                        HudMode::Custom,
-                        "pencil",
-                        t.mode_custom,
-                        t.mode_custom_note,
-                        cx,
-                    ))
-                    .child(card(
-                        2,
-                        HudMode::Off,
-                        "eye-off",
-                        t.mode_off,
-                        t.mode_off_note,
-                        cx,
-                    )),
-            );
+        let mut hud_card = widgets::section("MangoHud").child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(card(
+                    0,
+                    HudMode::Global,
+                    "copy",
+                    t.mode_global,
+                    if global_on {
+                        t.mode_global_on_note
+                    } else {
+                        t.mode_global_off_note
+                    },
+                    cx,
+                ))
+                .child(card(
+                    1,
+                    HudMode::Custom,
+                    "pencil",
+                    t.mode_custom,
+                    t.mode_custom_note,
+                    cx,
+                ))
+                .child(card(
+                    2,
+                    HudMode::Off,
+                    "eye-off",
+                    t.mode_off,
+                    t.mode_off_note,
+                    cx,
+                )),
+        );
         if mode == HudMode::Global {
             hud_card = hud_card.child(
                 div().flex().child(
@@ -556,10 +551,6 @@ impl Library {
     /// Environment variables of this game.
     pub(super) fn render_env_card(&mut self, cx: &mut Context<Self>) -> Div {
         widgets::section(self.tr("Environment variables", "Ortam değişkenleri"))
-            .child(widgets::label(self.tr(
-                "Override global ones. Also settable in launch options (KEY=VALUE %command%).",
-                "Global olanları ezer. Başlatma seçeneklerinde de yazılabilir (ANAHTAR=DEĞER %command%).",
-            )))
             .child(self.env_editor(EnvScope::Game, cx))
     }
 
@@ -1442,11 +1433,11 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().font_weight(gpui::FontWeight::MEDIUM).child(self.tr("Cover", "Kapak")))
-                    .child(widgets::label(self.tr(
-                        "A picture file, SteamGridDB (needs its key in Settings → Integrations) or an image address.",
-                        "Bir resim dosyası, SteamGridDB (Ayarlar → Entegrasyonlar'da anahtarı gerekir) ya da bir resim adresi.",
-                    )))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(self.tr("Cover", "Kapak")),
+                    )
                     .child(
                         div()
                             .flex()
@@ -1474,18 +1465,28 @@ impl Library {
                             )
                             .child(
                                 super::style::button("cover-sgdb", "SteamGridDB", false)
-                                    .child(super::style::icon("images", 13., super::style::pal::muted()))
+                                    .child(super::style::icon(
+                                        "images",
+                                        13.,
+                                        super::style::pal::muted(),
+                                    ))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.sgdb_open(id_sgdb.clone(), name_sgdb.clone(), cx)
                                     })),
                             )
                             .child(
-                                super::style::button("cover-reset", self.tr("Reset", "Sıfırla"), false)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                super::style::button(
+                                    "cover-reset",
+                                    self.tr("Reset", "Sıfırla"),
+                                    false,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         arkor_launch::covers::reset(&id_reset);
                                         this.refresh_cover(&id_reset);
                                         cx.notify();
-                                    })),
+                                    },
+                                )),
                             ),
                     )
                     .child(url),

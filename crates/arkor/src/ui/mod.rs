@@ -7,8 +7,10 @@ mod app_update;
 mod backdrop;
 mod bench_page;
 mod big_screen;
+mod boot;
 mod defaults_page;
 mod downloads_page;
+mod downloads_queue;
 mod enhance;
 mod features;
 mod fields;
@@ -109,6 +111,10 @@ pub struct Library {
     bench: bench_page::BenchState,
     /// Games started from this window: game id -> process group id.
     running: HashMap<String, u32>,
+    /// Window width at the last render (the library grid fits its columns to it).
+    viewport_w: f32,
+    /// The start-up screen, while it is up (see `boot`).
+    boot: Option<boot::Boot>,
     status: Option<SharedString>,
     stats: arkor_core::stats::Stats,
     filter: ListFilter,
@@ -177,6 +183,8 @@ impl Library {
             system: Default::default(),
             bench: Default::default(),
             running: HashMap::new(),
+            viewport_w: 1320.,
+            boot: None,
             status: None,
             stats: arkor_core::stats::Stats::load(),
             filter: ListFilter::default(),
@@ -556,7 +564,7 @@ impl Library {
                 self.render_game(window, cx)
             }
         };
-        // The library grid uses the full width; settings pages keep readable line lengths.
+        // The library grid uses the full width; other pages keep readable line lengths.
         let wide = matches!(self.selection, None | Some(Selection::Grid));
         div()
             .id("detail")
@@ -572,7 +580,10 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .when(!wide, |d| d.max_w(px(1040.))),
+                    .w_full()
+                    // Wide windows: a centred column that grows with the window, up to a
+                    // comfortable reading width.
+                    .when(!wide, |d| d.max_w(px(1280.)).mx_auto()),
             )
             .into_any_element()
     }
@@ -589,7 +600,12 @@ impl Library {
                     .text_color(TEXT())
                     .child(title.into()),
             )
-            .child(div().text_sm().text_color(MUTED()).child(subtitle.into()))
+            // A short fact ("12 games") stays; explanations of the page do not.
+            .children({
+                let subtitle: SharedString = subtitle.into();
+                (!subtitle.is_empty() && !widgets::is_explanation(&subtitle))
+                    .then(|| div().text_sm().text_color(MUTED()).child(subtitle))
+            })
     }
 }
 
@@ -614,7 +630,9 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             shell::bind_keys(cx);
             let main: std::rc::Rc<std::cell::RefCell<Option<MainWindow>>> = Default::default();
 
-            let tray_rx = (global.tray || start_in_tray)
+            // The tray icon is always there; the setting decides whether closing the window
+            // keeps Arkor running in it.
+            let tray_rx = true
                 .then(|| {
                     let games = GameLibrary::load()
                         .map(|l| {
@@ -632,6 +650,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
                 })
                 .flatten();
             let has_tray = tray_rx.is_some();
+            let keep_in_tray = has_tray && (global.tray || start_in_tray);
 
             // Automatic backup, off the UI thread.
             let now = arkor_core::stats::now();
@@ -654,9 +673,9 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             if !(start_in_tray && has_tray) {
                 *main.borrow_mut() = open_main(open.clone(), cx);
             }
-            // Without a tray, closing the window ends Arkor; with one, Arkor stays in the tray.
+            // Closing the window ends Arkor unless it is set to stay in the tray.
             cx.on_window_closed(move |cx, _| {
-                if !has_tray && cx.windows().is_empty() {
+                if !keep_in_tray && cx.windows().is_empty() {
                     cx.quit();
                 }
             })
@@ -773,7 +792,15 @@ pub(crate) fn sync_kit_theme(look: &arkor_core::profile::Appearance, cx: &mut Ap
 }
 
 fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
-    let bounds = Bounds::centered(None, size(px(1320.), px(860.)), cx);
+    // `ARKOR_WINDOW_SIZE=2400x1350` opens the window at that size (for checking layouts).
+    let (w, h) = std::env::var("ARKOR_WINDOW_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
+        })
+        .unwrap_or((1320., 860.));
+    let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
     let opened = gpui::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -788,6 +815,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.open(open.as_deref());
                 // Only the real window installs components and runs the download queue
                 // (not the headless tests).
+                lib.start_boot(cx);
                 arkor_launch::downloads::start();
                 lib.watch_progress(cx);
                 lib.startup_updates(cx);

@@ -390,15 +390,27 @@ pub fn ensure_required(
     default_proton: Option<&str>,
     step: &dyn Fn(&str),
 ) -> anyhow::Result<()> {
-    step("umu-launcher");
-    ensure_umu(update)?;
-    step("EasyAntiCheat & BattlEye");
-    ensure_anticheat(update)?;
-    step("Steam Linux Runtime");
-    ensure_runtime(update)?;
+    // Each part is a progress job: listed as "checking" while its release is looked up and
+    // with its own name and percentage once it really downloads.
+    {
+        step("umu-launcher");
+        let _job = crate::progress::job("component:umu", "umu-launcher");
+        ensure_umu(update)?;
+    }
+    {
+        step("EasyAntiCheat & BattlEye");
+        let _job = crate::progress::job("component:anticheat", "EasyAntiCheat & BattlEye");
+        ensure_anticheat(update)?;
+    }
+    {
+        step("Steam Linux Runtime");
+        let _job = crate::progress::job("component:runtime", "Steam Linux Runtime");
+        ensure_runtime(update)?;
+    }
     if !any_proton() {
         let latest = first_proton(default_proton);
         step(latest.dir_name());
+        let _job = crate::progress::job("component:proton", latest.dir_name());
         ensure_latest(latest, true)?;
     }
     Ok(())

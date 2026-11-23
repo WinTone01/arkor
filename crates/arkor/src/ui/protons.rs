@@ -262,10 +262,6 @@ impl Library {
                 }))
         };
         let mut card = widgets::section(self.tr("Required for games", "Oyunlar için gerekli"))
-            .child(widgets::label(self.tr(
-                "Arkor installs these by itself when it starts and keeps them updated, as Faugus Launcher does. Games run inside the Steam Linux Runtime.",
-                "Arkor bunları açılırken kendisi kurar ve Faugus Launcher gibi güncel tutar. Oyunlar Steam Linux Runtime içinde çalışır.",
-            )))
             .child(row("umu-launcher", umu_text, 0))
             .child(widgets::divider())
             .child(row("Steam Linux Runtime", runtime_text, 3))
@@ -415,12 +411,8 @@ impl Library {
                             chips,
                         ))
                         .child(preset)
-                        .child(widgets::subheading(self.tr("A specific version (never changes)", "Belirli bir sürüm (hiç değişmez)")))
-                        .child(versions)
-                        .child(widgets::label(self.tr(
-                            "Installed into ~/.local/share/Steam/compatibilitytools.d, so Steam can use them too. Checked against the release checksum.",
-                            "~/.local/share/Steam/compatibilitytools.d içine kurulur, böylece Steam de kullanabilir. Sürümün sağlama toplamıyla doğrulanır.",
-                        ))),
+                        .child(widgets::subheading(self.tr("A specific version", "Belirli bir sürüm")))
+                        .child(versions),
                 )
             }
         };

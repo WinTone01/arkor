@@ -315,10 +315,6 @@ impl Library {
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .child(self.t().presets_section),
             )
-            .child(widgets::label(self.tr(
-                "Start from a preset, then change anything in the tabs below.",
-                "Bir hazır ayarla başla, sonra aşağıdaki sekmelerde istediğini değiştir.",
-            )))
             .child(row)
             .child(widgets::subheading(self.tr(
                 "MangoHud's own (replace the layout)",
@@ -531,10 +527,7 @@ impl Library {
             self.t().group_frame,
             self.t().group_other,
         ];
-        let mut card = widgets::section(self.t().metrics_section).child(widgets::label(self.tr(
-            "Tick what the HUD shows. The preview above follows along.",
-            "HUD'un ne göstereceğini işaretle. Yukarıdaki önizleme anında güncellenir.",
-        )));
+        let mut card = widgets::section(self.t().metrics_section);
         for (gi, (title, metrics)) in titles.into_iter().zip(GROUPS).enumerate() {
             let on = metrics.iter().filter(|m| hud.metrics.contains(m)).count();
             let mut grid = div().flex().flex_wrap().gap_1();
@@ -754,12 +747,7 @@ impl Library {
                     ),
             );
         }
-        widgets::section(self.tr("Colours", "Renkler"))
-            .child(widgets::label(self.tr(
-                "Hex values such as 2E9762. Empty = MangoHud's default (shown faded).",
-                "2E9762 gibi hex değerler. Boş = MangoHud'un varsayılanı (soluk gösterilir).",
-            )))
-            .child(grid)
+        widgets::section(self.tr("Colours", "Renkler")).child(grid)
     }
 
     fn hud_keys(&mut self, cx: &mut Context<Self>) -> Div {
@@ -771,12 +759,7 @@ impl Library {
             self.tr("Move the HUD", "HUD'u taşı"),
             self.tr("Next preset", "Sonraki hazır ayar"),
         ];
-        let mut card = widgets::section(self.tr("Keyboard shortcuts", "Klavye kısayolları")).child(
-            widgets::label(self.tr(
-                "In game. X11 key names joined with +, e.g. Shift_R+F12.",
-                "Oyun içinde. + ile birleştirilmiş X11 tuş adları, ör. Shift_R+F12.",
-            )),
-        );
+        let mut card = widgets::section(self.tr("Keyboard shortcuts", "Klavye kısayolları"));
         for (ix, ((key, default), name)) in KEYS.into_iter().zip(names).enumerate() {
             let input = self.key_field(key, default, cx);
             if ix > 0 {
@@ -950,10 +933,6 @@ impl Library {
         let duration = self.key_field("log_duration", "30", cx);
         let interval = self.key_field("log_interval", "100", cx);
         widgets::section(self.tr("Benchmark logging", "Benchmark kaydı"))
-            .child(widgets::label(self.tr(
-                "Press the logging key in game to record frametimes to CSV; the Benchmarks page reads them.",
-                "Oyunda kayıt tuşuna basınca frametime'lar CSV'ye kaydedilir; Benchmark sayfası bunları okur.",
-            )))
             .child(widgets::setting_row(
                 self.tr("Log folder", "Kayıt klasörü"),
                 "",
@@ -968,7 +947,10 @@ impl Library {
             .child(widgets::divider())
             .child(widgets::setting_row(
                 self.tr("Interval", "Aralık"),
-                self.tr("Milliseconds between samples.", "Örnekler arası milisaniye."),
+                self.tr(
+                    "Milliseconds between samples.",
+                    "Örnekler arası milisaniye.",
+                ),
                 div().w(px(120.)).child(interval),
             ))
             .child(widgets::divider())
@@ -1036,10 +1018,6 @@ impl Library {
             "Programs MangoHud ignores",
             "MangoHud'un yok saydığı programlar",
         ))
-        .child(widgets::label(self.tr(
-            "Process names that never get the HUD, e.g. launchers.",
-            "HUD'u hiç almayan süreç adları, ör. başlatıcılar.",
-        )))
         .child(chips)
         .child(add)
     }

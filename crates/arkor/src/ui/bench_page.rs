@@ -154,10 +154,7 @@ impl Library {
             }
         }
         if runs.is_empty() {
-            return page.child(widgets::label(self.tr(
-                "Select one run to inspect it, or several to compare.",
-                "İncelemek için bir kayıt, karşılaştırmak için birkaçını seç.",
-            )));
+            return page;
         }
         page = page.child(self.bench_table(&runs));
         for run in &runs {

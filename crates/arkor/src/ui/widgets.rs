@@ -237,6 +237,7 @@ pub fn setting_row(
     control: impl IntoElement,
 ) -> Div {
     let hint: SharedString = hint.into();
+    let title: SharedString = title.into();
     div()
         .flex()
         .flex_wrap()
@@ -254,12 +255,18 @@ pub fn setting_row(
                 .flex_1()
                 .child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
                         .text_color(TEXT())
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(title.into()),
+                        .child(title.clone())
+                        .when(is_explanation(&hint), |d| {
+                            d.child(hint_icon(format!("hint-{title}"), hint.clone()))
+                        }),
                 )
-                .when(!hint.is_empty(), |d| {
-                    d.child(div().text_sm().text_color(MUTED()).child(hint))
+                .when(!hint.is_empty() && !is_explanation(&hint), |d| {
+                    d.child(div().text_sm().text_color(MUTED()).truncate().child(hint))
                 }),
         )
         .child(
@@ -270,6 +277,44 @@ pub fn setting_row(
                 .gap_2()
                 .child(control),
         )
+}
+
+/// Whether a row's second line explains the setting (shown on hover) rather than holding a
+/// value such as a path or a version (shown under the title).
+pub fn is_explanation(text: &str) -> bool {
+    text.chars().count() > 44 && text.contains(' ') && !text.starts_with('/')
+}
+
+/// A small "i" that shows `text` on hover.
+pub fn hint_icon(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
+    let text: SharedString = text.into();
+    div()
+        .id(id)
+        .flex_none()
+        .child(super::style::icon("info", 13., super::style::pal::faint()))
+        .tooltip(move |_, cx| cx.new(|_| HintTip(text.clone())).into())
+}
+
+struct HintTip(SharedString);
+
+impl gpui::Render for HintTip {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        use super::style::pal;
+        div().pl_2().pt_2().child(
+            div()
+                .max_w(px(360.))
+                .px_3()
+                .py_2()
+                .rounded(px(10.))
+                .bg(pal::raised())
+                .border_1()
+                .border_color(pal::border_strong())
+                .shadow_lg()
+                .text_sm()
+                .text_color(pal::text_soft())
+                .child(self.0.clone()),
+        )
+    }
 }
 
 /// A hairline between rows of a section.

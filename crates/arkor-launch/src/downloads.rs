@@ -373,8 +373,35 @@ pub fn cancel(key: &str) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Finished {
     pub key: String,
+    /// What it was, e.g. "OptiScaler".
+    pub label: String,
     pub ok: bool,
     pub report: String,
+    /// When it ended (Unix seconds).
+    pub at: u64,
+}
+
+static HISTORY: Mutex<Vec<Finished>> = Mutex::new(Vec::new());
+
+/// Queue items that ended in this session, newest first (failures included).
+pub fn history() -> Vec<Finished> {
+    HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Forgets the finished list.
+pub fn clear_history() {
+    HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    progress::touch();
+}
+
+/// Moves `key` to the front of the queue, so it is next.
+pub fn move_to_front(key: &str) {
+    with(|q| {
+        if let Some(pos) = q.iter().position(|i| i.key == key) {
+            let item = q.remove(pos);
+            q.insert(0, item);
+        }
+    });
 }
 
 /// How many queue items have ended, and the last one (for the UI to notice). Paused or
@@ -436,11 +463,23 @@ fn worker() {
                 }
             }
         });
-        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = report.map(|(ok, report)| Finished {
+        let finished = report.map(|(ok, report)| Finished {
             key: item.key.clone(),
+            label: item.label.clone(),
             ok,
             report,
+            at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
         });
+        if let Some(f) = &finished {
+            let mut h = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+            h.retain(|old| old.key != f.key);
+            h.insert(0, f.clone());
+            h.truncate(30);
+        }
+        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = finished;
         FINISHED.fetch_add(1, Ordering::Relaxed);
         progress::touch();
     }

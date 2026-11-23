@@ -287,6 +287,13 @@ impl Library {
         }
         // Downloads in progress, like a store's download bar; opens the Downloads page.
         let active = arkor_launch::progress::list();
+        // Jobs still looking up their release are only being checked; once bytes flow (or
+        // the download is being unpacked) it is a download.
+        let downloading = active
+            .iter()
+            .filter(|e| e.phase != arkor_launch::progress::Phase::Preparing)
+            .count();
+        let checking = downloading == 0;
         if !active.is_empty() {
             let mut card = div()
                 .id("downloads-progress")
@@ -308,14 +315,26 @@ impl Library {
                         .gap_2()
                         .text_xs()
                         .text_color(pal::muted())
-                        .child(style::icon("download", 13., pal::accent_light()))
-                        .child(format!(
-                            "{} · {}",
-                            self.tr("Downloading", "İndiriliyor"),
-                            active.len()
-                        )),
+                        .child(style::icon(
+                            if checking { "refresh-cw" } else { "download" },
+                            13.,
+                            pal::accent_light(),
+                        ))
+                        .child(if checking {
+                            self.tr("Checking for updates", "Güncellemeler denetleniyor")
+                                .to_string()
+                        } else {
+                            format!(
+                                "{} · {}",
+                                self.tr("Downloading", "İndiriliyor"),
+                                downloading
+                            )
+                        }),
                 );
-            for e in active.iter().take(2) {
+            // Downloads first, then what is only being checked.
+            let mut shown: Vec<_> = active.iter().collect();
+            shown.sort_by_key(|e| e.phase == arkor_launch::progress::Phase::Preparing);
+            for e in shown.into_iter().take(2) {
                 card = card.child(
                     div()
                         .flex()
@@ -335,41 +354,13 @@ impl Library {
                                         .child(format!("{:.0}%", f * 100.))
                                 })),
                         )
-                        .child(super::downloads_page::progress_bar(e.fraction())),
+                        .when(e.phase != arkor_launch::progress::Phase::Preparing, |d| {
+                            d.child(super::downloads_page::progress_bar(e.fraction()))
+                        }),
                 );
             }
             side = side
                 .child(card.on_click(cx.listener(|this, _, _, cx| this.go(Nav::Downloads, cx))));
-        }
-        if let Some(step) = self.required.step.clone().filter(|_| self.required.running) {
-            side = side.child(
-                div()
-                    .id("required-progress")
-                    .mb_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(10.))
-                    .bg(pal::accent().opacity(0.1))
-                    .border_1()
-                    .border_color(pal::accent().opacity(0.3))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .cursor_pointer()
-                    .child(style::icon("loader", 14., pal::accent_light()))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .child(div().text_xs().text_color(pal::muted()).child(self.tr(
-                                "Installing required components",
-                                "Gerekli bileşenler kuruluyor",
-                            )))
-                            .child(div().text_sm().truncate().child(step)),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.go(Nav::Protons, cx))),
-            );
         }
         if !self.running.is_empty() {
             let n = self.running.len();
@@ -544,6 +535,7 @@ impl Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.viewport_w = f32::from(window.viewport_size().width);
         self.apply_theme(window, cx);
         self.watch_progress(cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
@@ -567,6 +559,10 @@ impl Render for Library {
                 look.reduce_motion,
                 look.backdrop_image.as_deref(),
             ));
+        // The start-up screen lies over the finished page, so fading it out reveals the
+        // library (drawn underneath all along) rather than an empty background.
+        let boot = self.render_boot(window, cx);
+        let reveal = self.boot_reveal();
         use big_screen::*;
         if self.big_screen {
             let big = self.render_big(window, cx);
@@ -599,7 +595,8 @@ impl Render for Library {
                 .on_action(cx.listener(|this, _: &NavDetails, w, cx| {
                     this.nav(big_screen::Nav::Details, w, cx)
                 }))
-                .child(div().absolute().inset_0().child(big));
+                .child(div().absolute().inset_0().child(big))
+                .children(boot);
         }
         let detail = self.render_detail(window, cx);
         let sidebar = self.render_sidebar(cx);
@@ -634,6 +631,8 @@ impl Render for Library {
                 div()
                     .absolute()
                     .inset_0()
+                    // While the start-up screen fades, the page settles up into place.
+                    .when_some(reveal, |d, k| d.top(px(18. * (1. - k))))
                     .flex()
                     .p_4()
                     .gap_4()
@@ -657,5 +656,6 @@ impl Render for Library {
                     ),
             )
             .children(self.render_sgdb_picker(cx))
+            .children(boot)
     }
 }

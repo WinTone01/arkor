@@ -233,8 +233,8 @@ impl Library {
                 .child(
                     widgets::section(self.tr("Window and start-up", "Pencere ve açılış"))
                         .child(widgets::setting_row(
-                            self.tr("System tray icon", "Sistem tepsisi simgesi"),
-                            self.tr("Closing the window keeps Arkor in the tray (applies on next start).", "Pencereyi kapatınca Arkor tepside kalır (sonraki açılışta geçerli)."),
+                            self.tr("Keep running in the tray", "Kapatınca tepside çalışsın"),
+                            self.tr("Closing the window leaves Arkor running in the tray (applies on next start).", "Pencere kapanınca Arkor tepside çalışmaya devam eder (sonraki açılışta geçerli)."),
                             switch("tray", self.global.tray, cx, |this| this.global.tray = !this.global.tray),
                         ))
                         .child(widgets::divider())
@@ -277,10 +277,6 @@ impl Library {
                 .gap_4()
                 .child(
                     widgets::section(self.tr("Cover art (SteamGridDB)", "Kapak resimleri (SteamGridDB)"))
-                        .child(widgets::label(self.tr(
-                            "Free key from steamgriddb.com → Preferences → API; used by the SteamGridDB button on game pages.",
-                            "steamgriddb.com → Preferences → API'den ücretsiz anahtar; oyun sayfalarındaki SteamGridDB düğmesi kullanır.",
-                        )))
                         .child(sgdb),
                 )
                 .child(
@@ -500,8 +496,11 @@ impl Library {
                     div()
                         .flex()
                         .flex_col()
+                        .flex_row()
+                        .items_center()
+                        .gap_1p5()
                         .child(div().font_weight(gpui::FontWeight::MEDIUM).child(title))
-                        .child(widgets::label(hint)),
+                        .child(widgets::hint_icon(format!("look-{title}"), hint)),
                 )
                 .child(control)
         };
@@ -786,8 +785,8 @@ impl Library {
             .child(row(
                 self.tr("Background", "Arka plan"),
                 self.tr(
-                    "Drawn behind the panels. ✦ = animated.",
-                    "Panellerin arkasında çizilir. ✦ = hareketli.",
+                    "Drawn behind the panels. ✦ marks the animated ones.",
+                    "Panellerin arkasında çizilir. ✦ işaretliler hareketli.",
                 ),
                 backdrops.into_any_element(),
             ));
@@ -909,10 +908,6 @@ impl Library {
         };
         use super::style::{self, pal};
         let now_card = widgets::section(self.tr("Back up now", "Şimdi yedekle"))
-            .child(widgets::label(self.tr(
-                "Settings, library, profiles, play time and covers in one .tar.gz. Prefixes Arkor created can be included.",
-                "Ayarlar, kütüphane, profiller, oynama süreleri ve kapaklar tek bir .tar.gz dosyasında. Arkor'un oluşturduğu prefix'ler de eklenebilir.",
-            )))
             .child(widgets::setting_row(
                 self.tr("Backup folder", "Yedek klasörü"),
                 b.dest_dir().display().to_string(),
@@ -928,8 +923,14 @@ impl Library {
             ))
             .child(widgets::divider())
             .child(widgets::setting_row(
-                self.tr("Include Arkor's prefixes", "Arkor'un prefix'lerini dahil et"),
-                self.tr("Game installs inside them make the file large.", "İçlerindeki oyun kurulumları dosyayı büyütür."),
+                self.tr(
+                    "Include Arkor's prefixes",
+                    "Arkor'un prefix'lerini dahil et",
+                ),
+                self.tr(
+                    "Game installs inside them make the file large.",
+                    "İçlerindeki oyun kurulumları dosyayı büyütür.",
+                ),
                 widgets::switch(self.backup_prefixes)
                     .id("backup-prefixes")
                     .cursor_pointer()

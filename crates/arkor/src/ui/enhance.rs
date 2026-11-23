@@ -274,11 +274,9 @@ impl Library {
     pub(super) fn render_tweaks(&mut self, cx: &mut Context<Self>) -> Div {
         let selected = self.profile.tweaks.clone();
         widgets::section(self.tr("Proton and driver switches", "Proton ve sürücü anahtarları"))
-            .child(widgets::label(self.tr(
-                "Each is an environment variable set at launch. In brackets: what it needs (a Proton build or driver).",
-                "Her biri başlatırken ayarlanan bir ortam değişkeni. Parantez içinde: neye ihtiyaç duyduğu (Proton derlemesi ya da sürücü).",
-            )))
-            .child(self.tweak_list("tweak", &selected, cx, |this, id, cx| this.toggle_tweak(id, cx)))
+            .child(self.tweak_list("tweak", &selected, cx, |this, id, cx| {
+                this.toggle_tweak(id, cx)
+            }))
     }
 
     pub(super) fn render_gamescope(&mut self, cx: &mut Context<Self>) -> Div {
@@ -565,10 +563,7 @@ impl Library {
 
     pub(super) fn render_streamline(&self, cx: &mut Context<Self>) -> Div {
         let tools = &self.tools;
-        let mut card = widgets::section("Streamline SDK").child(widgets::label(self.tr(
-            "Replaces the Streamline and DLSS DLLs (sl.*.dll, nvngx_*.dll) the game ships with the newest from NVIDIA. The game's own files are kept as backups.",
-            "Oyunun getirdiği Streamline ve DLSS DLL'lerini (sl.*.dll, nvngx_*.dll) NVIDIA'nın en yenileriyle değiştirir. Oyunun kendi dosyaları yedeklenir.",
-        )));
+        let mut card = widgets::section("Streamline SDK");
         if let Some(m) = &tools.sl_manifest {
             card = card
                 .child(div().text_sm().child(format!(
@@ -748,10 +743,7 @@ impl Library {
         let busy = tools.busy.is_some();
 
         // HelixSR
-        card = card.child(div().text_sm().child("HelixSR — HLX DLSS / HLX FSR 4")).child(widgets::label(self.tr(
-            "Its setup builds HelixSR on this PC the first time (it asks before downloading NVIDIA's and AMD's files) and installs it into the game. It opens in a terminal.",
-            "Kurulumu ilk seferde HelixSR'ı bu bilgisayarda derler (NVIDIA ve AMD dosyalarını indirmeden önce sorar) ve oyuna kurar. Bir terminalde açılır.",
-        )));
+        card = card.child(div().text_sm().child("HelixSR — HLX DLSS / HLX FSR 4"));
         let installed = bundles::helixsr_installed(&game_dir);
         let mut row = div().flex().flex_wrap().gap_2();
         match &tools.bundles[0] {
@@ -823,10 +815,7 @@ impl Library {
         card = card.child(row);
 
         // DLSS-NR
-        card = card.child(div().text_sm().child("DLSS-NR — DLSS 5 neural rendering")).child(widgets::label(self.tr(
-            "Needs Mesa 26.2+, an RDNA3 or RDNA4 card and NVIDIA's nvngx_dlssnr.dll (or its zip), which you provide. It brings its own OptiScaler.",
-            "Mesa 26.2+, RDNA3 ya da RDNA4 kart ve senin sağlayacağın NVIDIA nvngx_dlssnr.dll (ya da zip'i) gerekir. Kendi OptiScaler'ını getirir.",
-        )));
+        card = card.child(div().text_sm().child("DLSS-NR — DLSS 5 neural rendering"));
         if let Some(d) = &tools.dlssnr {
             return card
                 .child(div().text_sm().child(format!(
@@ -1092,30 +1081,18 @@ impl Library {
         }
         let t = self.t();
         let current = self.profile.proton.clone();
-        let auto_note = match (&self.global.defaults.proton, &game_source_proton(self)) {
-            (_, Some(src)) => format!(
-                "{} {src}",
-                self.tr(
-                    "Automatic = what the game's launcher chose:",
-                    "Otomatik = oyunun başlatıcısının seçtiği:"
-                )
-            ),
-            (Some(d), None) => format!(
-                "{} {d}",
-                self.tr(
-                    "Automatic = the default from Settings:",
-                    "Otomatik = Ayarlar'daki varsayılan:"
-                )
-            ),
-            (None, None) => t.proton_auto_note.to_string(),
+        // What "Automatic" resolves to, shown on its chip.
+        let auto_label = match (&self.global.defaults.proton, &game_source_proton(self)) {
+            (_, Some(src)) => format!("{} · {src}", t.proton_auto),
+            (Some(d), None) => format!("{} · {d}", t.proton_auto),
+            (None, None) => t.proton_auto.to_string(),
         };
         Some(
             widgets::section(t.proton_section)
-                .child(widgets::label(auto_note))
                 .child(self.proton_picker(
                     "proton-pick",
                     current.as_deref(),
-                    t.proton_auto,
+                    auto_label,
                     cx,
                     |this, value, cx| this.set_proton(value, cx),
                 ))
@@ -1302,7 +1279,6 @@ impl Library {
         );
         match lsfg.mode {
             LsfgMode::Off => {
-                card = card.child(widgets::label(t.lsfg_off_note));
                 return card;
             }
             LsfgMode::On => {}
@@ -1382,17 +1358,40 @@ impl Library {
             );
         }
         card = card
-            .child(div().flex().flex_col().gap_1().child(div().font_weight(gpui::FontWeight::MEDIUM).child(t.lsfg_multiplier)).child(widgets::label(self.tr(
-                "Frames shown for each real one: 2x doubles the frame rate. Higher adds more latency.",
-                "Her gerçek kare için gösterilen kare: 2x kare hızını ikiye katlar. Yüksek değer gecikmeyi artırır.",
-            ))).child(mults))
-            .child(div().flex().flex_col().gap_1().child(div().font_weight(gpui::FontWeight::MEDIUM).child(t.lsfg_flow_scale)).child(widgets::label(self.tr(
-                "Resolution of the motion estimate. Lower is faster on weak GPUs or at 4K, a little less accurate.",
-                "Hareket tahmininin çözünürlüğü. Düşük değer zayıf GPU'larda ya da 4K'da daha hızlıdır, biraz daha az isabetlidir.",
-            ))).child(flows))
             .child(
-                widgets::switch_row("lsfg-perf", t.lsfg_performance, t.lsfg_performance_hint, lsfg.performance_mode)
-                    .on_click(cx.listener(|this, _, _, cx| this.edit_lsfg(cx, |l| l.performance_mode = !l.performance_mode))),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(t.lsfg_multiplier),
+                    )
+                    .child(mults),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(t.lsfg_flow_scale),
+                    )
+                    .child(flows),
+            )
+            .child(
+                widgets::switch_row(
+                    "lsfg-perf",
+                    t.lsfg_performance,
+                    t.lsfg_performance_hint,
+                    lsfg.performance_mode,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.edit_lsfg(cx, |l| l.performance_mode = !l.performance_mode)
+                })),
             );
         let lsfg = &lsfg;
         {
@@ -1743,10 +1742,7 @@ impl Library {
     }
 
     pub(super) fn render_dlss_enabler(&mut self, cx: &mut Context<Self>) -> Div {
-        let mut card = widgets::section("DLSS Enabler").child(widgets::label(self.tr(
-            "Brings DLSS (and DLSS frame generation through FSR 3) to cards and games without it, e.g. frame generation on RTX 20/30. Installed as version.dll in the game folder chosen in the OptiScaler section.",
-            "DLSS'i (ve FSR 3 üzerinden DLSS kare üretimini) desteklemeyen kartlara ve oyunlara getirir, ör. RTX 20/30'da kare üretimi. OptiScaler bölümünde seçilen oyun klasörüne version.dll olarak kurulur.",
-        )));
+        let mut card = widgets::section("DLSS Enabler");
         let tools = &self.tools;
         if let Some(m) = &tools.de_manifest {
             return card
@@ -1829,10 +1825,7 @@ impl Library {
 
     pub(super) fn render_reshade(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.t();
-        let mut card = widgets::section("ReShade").child(widgets::label(self.tr(
-            "Post-processing shaders for DirectX/OpenGL games, in the game folder chosen in the OptiScaler section. Press Home in game for its menu. Many games need d3dcompiler_47 (winetricks).",
-            "DirectX/OpenGL oyunları için efekt shader'ları; OptiScaler bölümünde seçilen oyun klasörüne kurulur. Menü için oyunda Home'a bas. Çoğu oyun d3dcompiler_47 ister (winetricks).",
-        )));
+        let mut card = widgets::section("ReShade");
         if let Some(m) = self.tools.rs_manifest.clone() {
             return card
                 .child(
@@ -2457,9 +2450,6 @@ impl Library {
         );
         if !self.layer_present("ENABLE_VKSUMI") || self.tools.layer_tools[0] {
             card = card.child(self.layer_install_row(0, cx));
-        }
-        if l.vksumi {
-            card = card.child(widgets::label(self.tr("Settings come from ~/.config/vkSumi/vkSumi.conf; vksumi-toggle switches it in game.", "Ayarlar ~/.config/vkSumi/vkSumi.conf dosyasından gelir; oyun içinde vksumi-toggle ile açılıp kapanır.")));
         }
         card
     }

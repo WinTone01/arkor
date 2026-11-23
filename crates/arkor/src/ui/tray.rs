@@ -32,6 +32,32 @@ impl ksni::Tray for ArkorTray {
         super::app_icon::NAME.into()
     }
 
+    /// The logo as pixels too, for trays that do not look the name up in the icon theme.
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        [
+            &include_bytes!("../../assets/logo/arkor-32.png")[..],
+            &include_bytes!("../../assets/logo/arkor-64.png")[..],
+        ]
+        .into_iter()
+        .filter_map(|png| {
+            let img = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+                .ok()?
+                .to_rgba8();
+            let (width, height) = img.dimensions();
+            // StatusNotifierItem wants ARGB32 in network byte order.
+            let data = img
+                .pixels()
+                .flat_map(|p| [p[3], p[0], p[1], p[2]])
+                .collect();
+            Some(ksni::Icon {
+                width: width as i32,
+                height: height as i32,
+                data,
+            })
+        })
+        .collect()
+    }
+
     fn icon_theme_path(&self) -> String {
         super::app_icon::theme_root()
             .map(|p| p.display().to_string())

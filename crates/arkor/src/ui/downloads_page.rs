@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use arkor_launch::bundles::{self, Bundle};
 use arkor_launch::components::Latest;
-use arkor_launch::downloads::{self, State, Update};
-use arkor_launch::progress::{self, Phase};
+use arkor_launch::downloads::{self, Update};
+use arkor_launch::progress;
 use arkor_launch::{dlss_enabler, layers, optiscaler, proton_dl, reshade, streamline, tools};
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, div, prelude::*, px};
@@ -152,6 +152,8 @@ pub(super) struct DownloadsState {
     checked: bool,
     /// `downloads::finished()` count last seen, to notice queue items ending.
     finished: u64,
+    /// Recent download speeds for the graph on the overview.
+    pub(super) speed: super::downloads_queue::SpeedGraph,
 }
 
 type Job = Box<dyn FnOnce() -> anyhow::Result<String> + Send + 'static>;
@@ -167,36 +169,6 @@ struct Row {
     /// Queue key that brings it to its newest release (none for a fixed version).
     update: Option<String>,
     remove: Option<Action>,
-}
-
-/// "12 MB / 280 MB · 8.4 MB/s · 31 s left".
-fn progress_text(e: &progress::Entry, lib: &Library) -> String {
-    match e.phase {
-        Phase::Preparing => lib.tr("Preparing…", "Hazırlanıyor…").to_string(),
-        Phase::Finishing => lib.tr("Installing…", "Kuruluyor…").to_string(),
-        Phase::Downloading => {
-            let mut s = match e.total {
-                Some(t) => format!(
-                    "{} / {}",
-                    progress::human_bytes(e.done),
-                    progress::human_bytes(t)
-                ),
-                None => progress::human_bytes(e.done),
-            };
-            if e.speed > 1. {
-                s.push_str(&format!(" · {}/s", progress::human_bytes(e.speed as u64)));
-            }
-            if let Some(eta) = e.eta_secs() {
-                let left = if eta >= 60 {
-                    format!("{} min", eta / 60)
-                } else {
-                    format!("{eta} s")
-                };
-                s.push_str(&format!(" · {left} {}", lib.tr("left", "kaldı")));
-            }
-            s
-        }
-    }
 }
 
 /// A thin progress bar; without a known size a short stripe shows it is working.
@@ -304,8 +276,18 @@ impl Library {
             let mut seen = progress::generation();
             loop {
                 timer.timer(std::time::Duration::from_millis(300)).await;
+                // The speed graph moves every tick while something downloads.
+                let graph_moved = this
+                    .update(cx, |this, cx| {
+                        let moved = this.downloads.speed.sample();
+                        if moved {
+                            cx.notify();
+                        }
+                        moved
+                    })
+                    .unwrap_or(false);
                 let now = progress::generation();
-                if now == seen {
+                if now == seen && !graph_moved {
                     continue;
                 }
                 seen = now;
@@ -423,257 +405,6 @@ impl Library {
             }
         }
         rows
-    }
-
-    /// One active download as a large card: bar on top, then a strip of figures.
-    fn active_card(&self, ix: usize, e: &progress::Entry, cx: &mut Context<Self>) -> Div {
-        let stat = |title: &'static str, value: String| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .px_4()
-                .py_2()
-                .child(div().text_xs().text_color(pal::faint()).child(title))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(value),
-                )
-        };
-        let size = match (e.phase, e.total) {
-            (Phase::Downloading, Some(t)) => format!(
-                "{} / {}",
-                progress::human_bytes(e.done),
-                progress::human_bytes(t)
-            ),
-            (Phase::Downloading, None) => progress::human_bytes(e.done),
-            _ => "—".into(),
-        };
-        let speed = if e.phase == Phase::Downloading && e.speed > 1. {
-            format!("{}/s", progress::human_bytes(e.speed as u64))
-        } else {
-            "—".into()
-        };
-        let left = match (e.phase, e.eta_secs()) {
-            (Phase::Downloading, Some(s)) if s >= 60 => format!("{} min", s / 60),
-            (Phase::Downloading, Some(s)) => format!("{s} s"),
-            _ => "—".into(),
-        };
-        style::card()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .p_4()
-                    .flex()
-                    .items_center()
-                    .gap_4()
-                    .child(
-                        div()
-                            .size(px(52.))
-                            .flex_none()
-                            .rounded(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(style::accent_gradient())
-                            .child(style::icon("download", 24., pal::on_accent())),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_end()
-                                    .justify_between()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .text_lg()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .truncate()
-                                            .child(e.label.clone()),
-                                    )
-                                    .child(div().text_sm().text_color(pal::accent_light()).child(
-                                        match e.fraction() {
-                                            Some(f) if e.phase == Phase::Downloading => {
-                                                format!("{:.0}%", f * 100.)
-                                            }
-                                            _ => progress_text(e, self),
-                                        },
-                                    )),
-                            )
-                            .child(
-                                progress_bar(if e.phase == Phase::Downloading {
-                                    e.fraction()
-                                } else {
-                                    None
-                                })
-                                .h(px(8.)),
-                            ),
-                    )
-                    .when(downloads::items().iter().any(|i| i.key == e.key), |row| {
-                        // Queued downloads can be paused (the partial file is kept) or cancelled.
-                        let (pause, cancel) = (e.key.clone(), e.key.clone());
-                        row.child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .flex_none()
-                                .child(
-                                    style::button(
-                                        ("dl-pause", ix),
-                                        self.tr("Pause", "Duraklat"),
-                                        false,
-                                    )
-                                    .child(style::icon("pause", 13., pal::muted()))
-                                    .on_click(cx.listener(
-                                        move |_, _, _, cx| {
-                                            downloads::pause(&pause);
-                                            cx.notify();
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    style::button(
-                                        ("dl-cancel", ix),
-                                        self.tr("Cancel", "İptal"),
-                                        false,
-                                    )
-                                    .child(style::icon("x", 13., pal::muted()))
-                                    .on_click(cx.listener(
-                                        move |_, _, _, cx| {
-                                            downloads::cancel(&cancel);
-                                            cx.notify();
-                                        },
-                                    )),
-                                ),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .border_t_1()
-                    .border_color(pal::glass_spec().border)
-                    .bg(pal::raised().opacity(0.25))
-                    .child(stat(self.tr("Downloaded", "İndirilen"), size))
-                    .child(stat(self.tr("Speed", "Hız"), speed))
-                    .child(stat(self.tr("Time left", "Kalan süre"), left)),
-            )
-    }
-
-    /// Waiting, paused and failed downloads, in the order they will run.
-    fn queue_list(&mut self, items: Vec<downloads::Item>, cx: &mut Context<Self>) -> Div {
-        let mut list = style::card().overflow_hidden().flex().flex_col();
-        let n = items.len();
-        for (ix, item) in items.into_iter().enumerate() {
-            let (icon, color, state) = match &item.state {
-                State::Queued => (
-                    "clock",
-                    pal::muted(),
-                    self.tr("Waiting", "Bekliyor").to_string(),
-                ),
-                State::Paused => (
-                    "pause",
-                    pal::warning(),
-                    self.tr("Paused", "Duraklatıldı").to_string(),
-                ),
-                State::Failed(e) => (
-                    "circle-alert",
-                    pal::danger(),
-                    format!("{} · {e}", self.tr("Failed", "Başarısız")),
-                ),
-            };
-            let key = item.key.clone();
-            let main = match item.state {
-                State::Queued => {
-                    style::button(("q-pause", ix), self.tr("Pause", "Duraklat"), false)
-                        .child(style::icon("pause", 13., pal::muted()))
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            downloads::pause(&key);
-                            cx.notify();
-                        }))
-                }
-                State::Paused => style::button(("q-resume", ix), self.tr("Resume", "Sürdür"), true)
-                    .child(style::icon("play", 13., pal::on_accent()))
-                    .on_click(cx.listener(move |this, _, _, cx| this.enqueue_download(&key, cx))),
-                State::Failed(_) => {
-                    style::button(("q-retry", ix), self.tr("Try again", "Yeniden dene"), true)
-                        .child(style::icon("rotate-ccw", 13., pal::on_accent()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            downloads::retry(&key);
-                            this.watch_progress(cx);
-                            cx.notify();
-                        }))
-                }
-            };
-            let key = item.key.clone();
-            list = list.child(
-                div()
-                    .px_4()
-                    .py_3()
-                    .flex()
-                    .items_center()
-                    .gap_4()
-                    .when(ix + 1 < n, |d| {
-                        d.border_b_1().border_color(pal::glass_spec().border)
-                    })
-                    .child(
-                        div()
-                            .size(px(36.))
-                            .flex_none()
-                            .rounded(px(10.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(color.opacity(0.12))
-                            .child(style::icon(icon, 17., color)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .truncate()
-                                    .child(item.label),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(pal::muted())
-                                    .truncate()
-                                    .child(state),
-                            ),
-                    )
-                    .child(
-                        div().flex().gap_2().flex_none().child(main).child(
-                            style::button(("q-cancel", ix), self.tr("Remove", "Kaldır"), false)
-                                .child(style::icon("x", 13., pal::muted()))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    downloads::cancel(&key);
-                                    cx.notify();
-                                })),
-                        ),
-                    ),
-            );
-        }
-        list
     }
 
     /// "N updates available · Update all", with each update's versions.
@@ -931,7 +662,7 @@ impl Library {
             Filter::Tools,
         ];
         let mut entries = vec![
-            style::NavEntry::new("layout-dashboard", self.tr("Overview", "Genel bakış")),
+            style::NavEntry::new("layout-dashboard", self.tr("Downloads", "İndirmeler")),
             style::NavEntry::new("wine", "Proton"),
             style::NavEntry::new("layers", self.tr("Vulkan layers", "Vulkan katmanları")),
             style::NavEntry::new("puzzle", self.tr("Game mods", "Oyun modları")),
@@ -967,36 +698,14 @@ impl Library {
         }
         let mut content = div().flex().flex_col().gap_4();
         if current == Filter::All {
-            content = content.child(section(self.tr("DOWNLOADING", "İNDİRİLİYOR")));
-            if active.is_empty() {
-                content = content.child(
-                    style::card()
-                        .p_4()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(style::icon("circle-check", 18., pal::success()))
-                        .child(widgets::label(self.tr(
-                            "Nothing is downloading right now.",
-                            "Şu an bir şey indirilmiyor.",
-                        ))),
-                );
-            }
-            for (ix, e) in active.iter().enumerate() {
-                content = content.child(self.active_card(ix, e, cx));
-            }
-            let waiting: Vec<downloads::Item> = downloads::items()
-                .into_iter()
-                .filter(|i| !progress::running(&i.key))
-                .collect();
-            if !waiting.is_empty() {
-                content = content
-                    .child(section(self.tr("QUEUE", "SIRADA")))
-                    .child(self.queue_list(waiting, cx));
-            }
-            content = content.child(self.updates_card(cx));
+            content = content
+                .child(self.downloads_overview(cx))
+                .child(self.updates_card(cx));
             let protons = tools::installed_protons().len();
             content = content.child(self.render_required(protons, cx));
+            return div()
+                .child(Self::header(self.tr("Downloads", "İndirilenler"), ""))
+                .child(style::with_side_nav(nav, content));
         }
         let shown: Vec<Row> = rows
             .into_iter()

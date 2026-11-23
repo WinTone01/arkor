@@ -238,15 +238,15 @@ fn has_ffmpeg() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Turns a short video (SteamGridDB's preview of an animated cover) into an animated WebP,
-/// `width` pixels wide at most. Blocking.
+/// Turns an animation (SteamGridDB's preview video, or the animated cover itself) into an
+/// animated WebP `width` pixels wide at most, at the source's own frame rate. Blocking.
 fn video_to_webp(src: &Path, dest: &Path, width: u32) -> anyhow::Result<()> {
     let out = std::process::Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-i"])
         .arg(src)
         .args([
             "-vf",
-            &format!("fps=15,scale='min({width},iw)':-2"),
+            &format!("scale='min({width},iw)':-2:flags=lanczos"),
             "-c:v",
             "libwebp_anim",
             "-lossless",
@@ -280,20 +280,32 @@ fn is_video(url: &str) -> bool {
     [".webm", ".mp4"].iter().any(|e| url.ends_with(e))
 }
 
-/// An animated cover as a small animated WebP made from SteamGridDB's video preview (the
-/// covers themselves can be tens of MB, all of it decoded into memory to play).
-fn animated_webp(image: &SgdbImage, width: u32) -> anyhow::Result<PathBuf> {
+/// An animated cover as a small animated WebP (the originals can be tens of MB, all of it
+/// decoded into memory to play). Previews come from SteamGridDB's small preview video;
+/// `full` covers (the one put in the library) from the full-size animation, so they stay
+/// sharp at cover size.
+fn animated_webp(image: &SgdbImage, width: u32, full: bool) -> anyhow::Result<PathBuf> {
     let dir = sgdb_cache()?;
-    let path = dir.join(format!("{}-{width}.webp", image.id));
+    let path = dir.join(format!("{}-{width}-v2.webp", image.id));
     if !path.is_file() {
-        let video = dir.join(format!("{}.video", image.id));
-        if !video.is_file() {
-            let tmp = dir.join(format!(".{}.video.part", image.id));
-            crate::tools::download(&image.thumb, &tmp)?;
-            std::fs::rename(&tmp, &video)?;
+        let (source, name) = if full {
+            (&image.url, format!("{}.full", image.id))
+        } else {
+            (&image.thumb, format!("{}.video", image.id))
+        };
+        let src = dir.join(&name);
+        if !src.is_file() {
+            let tmp = dir.join(format!(".{name}.part"));
+            crate::tools::download(source, &tmp)?;
+            std::fs::rename(&tmp, &src)?;
         }
         let tmp = dir.join(format!(".{}-{width}.webp", image.id));
-        video_to_webp(&video, &tmp, width)?;
+        let made = video_to_webp(&src, &tmp, width);
+        if full {
+            // The original is only a source; it can be very large.
+            let _ = std::fs::remove_file(&src);
+        }
+        made?;
         std::fs::rename(&tmp, &path)?;
     }
     Ok(path)
@@ -306,7 +318,7 @@ pub fn sgdb_thumb(image: &SgdbImage) -> anyhow::Result<PathBuf> {
 
 fn thumb(image: &SgdbImage) -> anyhow::Result<PathBuf> {
     if is_video(&image.thumb) && has_ffmpeg() {
-        return animated_webp(image, 208);
+        return animated_webp(image, 208, false);
     }
     // Without ffmpeg an animated cover's preview is the cover itself.
     let source = if is_video(&image.thumb) {
@@ -334,7 +346,7 @@ fn thumb(image: &SgdbImage) -> anyhow::Result<PathBuf> {
 /// ffmpeg is there). Blocking.
 pub fn set_from_sgdb(id: &str, image: &SgdbImage) -> anyhow::Result<PathBuf> {
     if image.animated && is_video(&image.thumb) && has_ffmpeg() {
-        return set_from_file(id, &animated_webp(image, 400)?);
+        return set_from_file(id, &animated_webp(image, 480, true)?);
     }
     set_from_url(id, &image.url)
 }
@@ -429,7 +441,7 @@ mod sgdb_network {
         let thumb = super::sgdb_thumb(&still[0]).unwrap();
         println!("thumb {} bytes", std::fs::metadata(&thumb).unwrap().len());
         if let Some(m) = moving.first() {
-            let t = super::animated_webp(m, 400).unwrap();
+            let t = super::animated_webp(m, 480, true).unwrap();
             println!(
                 "animated cover {} ({} bytes)",
                 t.display(),

@@ -473,7 +473,7 @@ impl GameDefaults {
 }
 
 /// Look and feel of Arkor's window.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Appearance {
     pub theme: Theme,
@@ -494,6 +494,24 @@ pub struct Appearance {
     pub backdrop_image: Option<PathBuf>,
 }
 
+/// What a new install looks like: dark, violet, Crystal panels over the Drift background,
+/// with sounds.
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            theme: Theme::Dark,
+            accent: None,
+            grid_size: GridSize::Medium,
+            sounds: true,
+            glass: Glass::Crystal,
+            backdrop: Backdrop::Drift,
+            font_size: None,
+            reduce_motion: false,
+            backdrop_image: None,
+        }
+    }
+}
+
 impl Appearance {
     pub const FONT_SIZES: [u8; 4] = [13, 14, 15, 16];
 
@@ -508,8 +526,8 @@ impl Appearance {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Glass {
-    #[default]
     Acrylic,
+    #[default]
     Crystal,
     Smoked,
     Soft,
@@ -524,7 +542,6 @@ impl Glass {
 #[serde(rename_all = "lowercase")]
 pub enum Backdrop {
     /// A glow rising behind the window.
-    #[default]
     Nebula,
     Eclipse,
     Pulse,
@@ -534,6 +551,7 @@ pub enum Backdrop {
     /// Animated.
     Tide,
     /// Animated.
+    #[default]
     Drift,
     /// Plain background colour.
     Plain,
@@ -918,5 +936,26 @@ mod tests {
             Some(&own),
             "custom ignores global switch"
         );
+    }
+}
+
+#[cfg(test)]
+mod appearance_default_tests {
+    use super::*;
+
+    #[test]
+    fn new_installs_look_like_this() {
+        let g: Global = toml::from_str("").unwrap();
+        let a = g.appearance;
+        assert_eq!(
+            (a.theme, a.glass, a.backdrop, a.grid_size),
+            (
+                Theme::Dark,
+                Glass::Crystal,
+                Backdrop::Drift,
+                GridSize::Medium
+            )
+        );
+        assert!(a.sounds && a.accent.is_none() && !a.reduce_motion);
     }
 }

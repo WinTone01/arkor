@@ -260,10 +260,6 @@ impl Library {
                 .into(),
         };
         let mut manual = widgets::section(self.tr("Add by hand", "Elle ekle"))
-            .child(widgets::label(self.tr(
-                "Pick the game's executable; everything else is optional.",
-                "Oyunun çalıştırılabilir dosyasını seç; gerisi isteğe bağlı.",
-            )))
             .child(widgets::setting_row(
                 self.tr("1. Type", "1. Tür"),
                 self.tr(
@@ -380,10 +376,8 @@ impl Library {
             }));
 
         // 2. Found in other launchers
-        let mut found = widgets::section(self.tr("Found on this computer", "Bu bilgisayarda bulunanlar")).child(widgets::label(self.tr(
-            "Installed games in Steam, Heroic (Epic, GOG, added games), Lutris and Faugus. Adding one uses the same files and prefix.",
-            "Steam, Heroic (Epic, GOG, eklenen oyunlar), Lutris ve Faugus'ta kurulu oyunlar. Eklenen oyun aynı dosyaları ve prefix'i kullanır.",
-        )));
+        let mut found =
+            widgets::section(self.tr("Found on this computer", "Bu bilgisayarda bulunanlar"));
         if state.detecting {
             found = found.child(widgets::label(self.tr("Looking…", "Aranıyor…")));
         }
@@ -544,12 +538,8 @@ impl Library {
                         cx.listener(move |this, _, _, cx| this.install_launcher(id, cx)),
                     ));
         }
-        let launchers_card = widgets::section(self.tr("Install a launcher", "Başlatıcı kur"))
-            .child(widgets::label(self.tr(
-                "Downloads the official installer and runs it in a new prefix; the launcher is added to your library.",
-                "Resmi kurulum dosyasını indirip yeni bir prefix'te çalıştırır; başlatıcı kütüphanene eklenir.",
-            )))
-            .child(launchers_row);
+        let launchers_card =
+            widgets::section(self.tr("Install a launcher", "Başlatıcı kur")).child(launchers_row);
 
         let tab = self.add.tab;
         let mut entries = vec![

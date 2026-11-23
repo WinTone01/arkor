@@ -16,6 +16,7 @@ impl Library {
                 .h(px(h))
                 .rounded(radius)
                 .object_fit(ObjectFit::Cover)
+                .id(gpui::SharedString::from(format!("cover-{id}-{w}")))
                 .into_any_element(),
             None => div()
                 .w(px(w))
@@ -28,6 +29,39 @@ impl Library {
                 .items_center()
                 .justify_center()
                 .text_size(px(w * 0.38))
+                .font_weight(FontWeight::BOLD)
+                .text_color(pal::on_accent())
+                .child(
+                    name.chars()
+                        .next()
+                        .map(|c| c.to_uppercase().to_string())
+                        .unwrap_or_default(),
+                )
+                .into_any_element(),
+        }
+    }
+
+    /// A cover that fills its tile's width (2:3), animated covers playing.
+    fn cover_fill(&self, id: &str, name: &str, h: f32) -> gpui::AnyElement {
+        match self.covers.get(id).cloned().flatten() {
+            Some(path) => img(path)
+                .w(px(h / 1.5))
+                .h(px(h))
+                .rounded(px(12.))
+                .object_fit(ObjectFit::Cover)
+                // An id keeps the frame position, so GIF/WebP covers animate.
+                .id(gpui::SharedString::from(format!("cover-{id}")))
+                .into_any_element(),
+            None => div()
+                .w(px(h / 1.5))
+                .h(px(h))
+                .rounded(px(12.))
+                .bg(style::accent_gradient())
+                .opacity(0.85)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(56.))
                 .font_weight(FontWeight::BOLD)
                 .text_color(pal::on_accent())
                 .child(
@@ -214,9 +248,18 @@ impl Library {
                 .child(self.render_empty_library(cx));
         }
         let toolbar = self.library_toolbar(cx);
-        let cover_w = self.global.appearance.grid_size.cover_width();
+        // As many columns of about the chosen cover size as fit (covers get a little bigger
+        // on large windows); the covers then grow to fill the row, so nothing is left empty.
+        let scale = (self.viewport_w / 1320.).clamp(1., 1.45);
+        let preferred = self.global.appearance.grid_size.cover_width() * scale;
+        // Sidebar, panel frame and page padding around the grid (measured: 341 px).
+        let available = (self.viewport_w - 346.).max(preferred);
+        let gap = 20.;
+        let cols = (((available + gap) / (preferred + gap)).floor() as u16).max(2);
+        let tile_w = ((available - gap * f32::from(cols - 1)) / f32::from(cols)).floor();
+        let cover_w = tile_w - 6.;
         let cover_h = cover_w * 1.5;
-        let mut tiles = div().flex().flex_wrap().gap_5();
+        let mut tiles = div().flex().flex_wrap().gap(px(gap));
         for &ix in &self.visible {
             let game = &self.games[ix];
             let played = self.playtime(&game.id).0;
@@ -230,7 +273,8 @@ impl Library {
             tiles = tiles.child(
                 div()
                     .id(("tile", ix))
-                    .w(px(cover_w))
+                    .w(px(tile_w))
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -252,7 +296,7 @@ impl Library {
                                 gpui::transparent_black()
                             })
                             .group_hover("tile", |s| s.border_color(pal::accent().opacity(0.7)))
-                            .child(self.cover_tile(&game.id.id, &game.name, cover_w - 6., cover_h))
+                            .child(self.cover_fill(&game.id.id, &game.name, cover_h))
                             .when(running, |d| {
                                 d.child(
                                     div().absolute().top_2().left_2().child(

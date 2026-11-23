@@ -160,19 +160,25 @@ impl Library {
                             format!(
                                 "{} ({what})",
                                 self.tr(
-                                    "Steam is open, so this is not in Steam yet: it is written when you press Play (Steam restarts first)",
-                                    "Steam açık olduğu için henüz Steam'e yazılmadı: Oyna'ya basınca yazılır (önce Steam yeniden açılır)",
+                                    "Applied when you press Play",
+                                    "Oyna'ya basınca uygulanır",
                                 )
                             )
                         } else {
-                            format!("{} ({what})", self.tr("Not in Steam yet", "Henüz Steam'de değil"))
+                            format!(
+                                "{} ({what})",
+                                self.tr("Not in Steam yet", "Henüz Steam'de değil")
+                            )
                         })),
                 )
                 .child(
                     style::button(
                         "steam-apply",
                         if st.steam_running {
-                            self.tr("Apply now (restarts Steam)", "Şimdi uygula (Steam yeniden açılır)")
+                            self.tr(
+                                "Apply now (restarts Steam)",
+                                "Şimdi uygula (Steam yeniden açılır)",
+                            )
                         } else {
                             self.tr("Apply", "Uygula")
                         },
@@ -230,10 +236,6 @@ impl Library {
 
         let through_arkor = !self.profile.steam.no_arkor;
         let mut card = widgets::section("Steam")
-            .child(widgets::label(self.tr(
-                "Steam starts this game. Arkor writes these settings into Steam, so they apply from Arkor and from Steam alike.",
-                "Bu oyunu Steam başlatır. Arkor bu ayarları Steam'e yazar; oyun ister Arkor'dan ister Steam'den açılsın geçerli olur.",
-            )))
             .child(status)
             .when_some(st.error.clone(), |d, e| {
                 d.child(div().text_sm().text_color(pal::warning()).child(format!("⚠ {e}")))
@@ -245,10 +247,6 @@ impl Library {
                     .flex_col()
                     .gap_2()
                     .child(div().font_weight(gpui::FontWeight::MEDIUM).child("Proton"))
-                    .child(widgets::label(self.tr(
-                        "The compatibility tool Steam runs the game with (Steam: Properties → Compatibility).",
-                        "Steam'in oyunu çalıştırdığı uyumluluk aracı (Steam: Özellikler → Uyumluluk).",
-                    )))
                     .child(chips),
             )
             .child(widgets::divider())

@@ -225,6 +225,7 @@ dependencies = [
  "gilrs",
  "gpui-kit",
  "gpui-pre",
+ "image",
  "ksni",
  "libc",
  "tempfile",

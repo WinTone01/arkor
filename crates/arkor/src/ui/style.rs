@@ -266,6 +266,23 @@ pub fn logo(size: f32) -> impl IntoElement {
 }
 
 /// Compact rounded button. `primary` is the filled look for a row's main action.
+/// A square button holding only an icon, centred.
+pub fn icon_button(id: impl Into<ElementId>, icon_name: &str, primary: bool) -> Stateful<Div> {
+    button(id, SharedString::default(), primary)
+        .size(px(32.))
+        .p_0()
+        .gap_0()
+        .child(icon(
+            icon_name,
+            14.,
+            if primary {
+                pal::on_accent()
+            } else {
+                pal::muted()
+            },
+        ))
+}
+
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,

@@ -757,12 +757,7 @@ impl Library {
                     .child(widgets::switch(on)),
             );
         }
-        widgets::section(self.tr("Quick switches", "Hızlı anahtarlar"))
-            .child(widgets::label(self.tr(
-                "Click a tile to switch it; “Settings” opens its options.",
-                "Açıp kapatmak için kutuya tıkla; “Ayarlar” seçeneklerini açar.",
-            )))
-            .child(grid)
+        widgets::section(self.tr("Quick switches", "Hızlı anahtarlar")).child(grid)
     }
 
     /// Goes to `tab` with `feature_id`'s panel open.
@@ -939,23 +934,18 @@ impl Library {
                         )),
                 )
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(self.feature_name(f)),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(pal::muted())
-                                .child(self.tr(f.desc.0, f.desc.1)),
-                        ),
+                    div().flex_1().min_w_0().flex().flex_col().gap_0p5().child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(self.feature_name(f))
+                            .child(widgets::hint_icon(
+                                ("panel-hint", id.len() * 131 + id.as_bytes()[0] as usize),
+                                self.tr(f.desc.0, f.desc.1),
+                            )),
+                    ),
                 )
                 .when_some(download, |row, start| {
                     // Nothing to set up before it is downloaded: just the button.
@@ -1110,17 +1100,15 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child(div().text_2xl().font_weight(FontWeight::BOLD).child(entry.name.clone()))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::BOLD)
+                            .child(entry.name.clone()),
+                    )
                     .child(facts)
                     .child(div().flex_1())
-                    .child(if any_on {
-                        on_tags
-                    } else {
-                        div().text_sm().text_color(pal::faint()).child(self.tr(
-                            "Nothing extra is on for this game yet: see Quick switches below or the menu on the left.",
-                            "Bu oyunda henüz ek bir şey açık değil: aşağıdaki Hızlı anahtarlara ya da soldaki menüye bak.",
-                        ))
-                    }),
+                    .when(any_on, |d| d.child(on_tags)),
             )
             .child(
                 div()
@@ -1245,59 +1233,20 @@ impl Library {
         }
 
         let tab = self.game_tab;
-        let tab_intro = match tab {
-            GameTab::Overview => self.tr(
-                "The most used switches, and how this game starts.",
-                "En çok kullanılan anahtarlar ve bu oyunun nasıl başladığı.",
-            ),
-            GameTab::Game => self.tr(
-                "What the game is: its name, cover, files and shortcuts.",
-                "Oyunun kendisi: adı, kapağı, dosyaları ve kısayolları.",
-            ),
-            GameTab::Runtime => self.tr(
-                "What runs a Windows game on Linux: Proton, its switches and the Wine prefix.",
-                "Windows oyununu Linux'ta çalıştıran şey: Proton, anahtarları ve Wine prefix'i.",
-            ),
-            GameTab::Launch => self.tr(
-                "How the command that starts the game is put together.",
-                "Oyunu başlatan komutun nasıl kurulduğu.",
-            ),
-            GameTab::Performance => self.tr(
-                "System tuning and frame-rate control.",
-                "Sistem ayarı ve kare hızı denetimi.",
-            ),
-            GameTab::Upscaling => self.tr(
-                "More FPS: generated frames and better upscalers. Usually one at a time.",
-                "Daha çok FPS: üretilmiş kareler ve daha iyi ölçekleyiciler. Genelde biri yeter.",
-            ),
-            GameTab::Visuals => self.tr(
-                "What is drawn over or into the picture.",
-                "Görüntünün üstüne ya da içine çizilenler.",
-            ),
-            GameTab::Logs => self.tr(
-                "When a game doesn't start, look here first.",
-                "Bir oyun açılmazsa önce buraya bak.",
-            ),
-        };
         content = content.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(style::icon(tab.icon(), 18., pal::accent_light()))
-                        .child(
-                            div()
-                                .text_lg()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(tab.name(self)),
-                        ),
-                )
-                .child(widgets::label(tab_intro)),
+            div().flex().flex_col().gap_1().child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(style::icon(tab.icon(), 18., pal::accent_light()))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(tab.name(self)),
+                    ),
+            ),
         );
         if tab == GameTab::Overview {
             content = content
