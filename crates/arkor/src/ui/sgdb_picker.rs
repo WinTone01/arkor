@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use arkor_launch::covers::{self, SgdbImage, SgdbMatch};
 use gpui::prelude::FluentBuilder;
-use gpui::{Context, ObjectFit, div, img, prelude::*, px};
+use gpui::{Context, div, prelude::*, px};
 
 use super::style::{self, pal};
 use super::{Library, widgets};
@@ -176,9 +176,7 @@ impl Library {
                 if let Some(p) = this.sgdb.as_mut() {
                     p.applying = None;
                 }
-                if let Some(g) = this.library.get(&id) {
-                    this.covers.insert(id.clone(), covers::cover_for(g));
-                }
+                this.refresh_cover(&id);
                 this.report(result.map(|_| ()));
                 cx.notify();
             });
@@ -202,8 +200,7 @@ impl Library {
                 .await;
             if let Ok((game, Some(_))) = found {
                 let _ = this.update(cx, |this, cx| {
-                    this.covers
-                        .insert(game.id.clone(), covers::cover_for(&game));
+                    this.refresh_cover(&game.id);
                     cx.notify();
                 });
             }
@@ -298,6 +295,7 @@ impl Library {
             );
         }
 
+        let moving = !self.global.appearance.reduce_motion;
         let mut grid = div().flex().flex_wrap().justify_center().gap_3();
         for (ix, (image, thumb)) in p.images.iter().enumerate() {
             let applying = p.applying == Some(image.id);
@@ -319,12 +317,9 @@ impl Library {
                 .cursor_pointer()
                 .hover(|s| s.border_color(pal::accent().opacity(0.6)))
                 .child(match thumb {
-                    Some(path) => img(path.clone())
+                    Some(path) => super::cover_art::cover(path.clone(), 8., moving)
                         .w(px(104.))
                         .h(px(156.))
-                        .object_fit(ObjectFit::Cover)
-                        // An id keeps the frame position, so animated covers play.
-                        .id(("sgdb-thumb", ix))
                         .into_any_element(),
                     None => div()
                         .size_full()

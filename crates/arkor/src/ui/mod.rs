@@ -7,7 +7,7 @@ mod app_update;
 mod backdrop;
 mod bench_page;
 mod big_screen;
-mod boot;
+mod cover_art;
 mod defaults_page;
 mod downloads_page;
 mod downloads_queue;
@@ -20,6 +20,7 @@ mod grid;
 mod hud_editor;
 mod i18n;
 mod icons;
+mod intro;
 mod protons;
 mod sgdb_picker;
 mod shell;
@@ -113,8 +114,12 @@ pub struct Library {
     running: HashMap<String, u32>,
     /// Window width at the last render (the library grid fits its columns to it).
     viewport_w: f32,
-    /// The start-up screen, while it is up (see `boot`).
-    boot: Option<boot::Boot>,
+    /// The start-up animation, while it plays (see `intro`).
+    intro: Option<intro::Intro>,
+    /// The redraw timer for moving covers and backgrounds is running.
+    ticking: bool,
+    /// Seconds the background has been moving, and when that was counted.
+    motion: (f32, Option<std::time::Instant>),
     status: Option<SharedString>,
     stats: arkor_core::stats::Stats,
     filter: ListFilter,
@@ -184,7 +189,9 @@ impl Library {
             bench: Default::default(),
             running: HashMap::new(),
             viewport_w: 1320.,
-            boot: None,
+            intro: None,
+            ticking: false,
+            motion: (0., None),
             status: None,
             stats: arkor_core::stats::Stats::load(),
             filter: ListFilter::default(),
@@ -213,6 +220,51 @@ impl Library {
         };
         lib.reload_games();
         lib
+    }
+
+    /// Redraws about 60 times a second while the background or a cover moves and the window
+    /// is in use. (Redrawing with every refresh of a fast screen would cost three times as
+    /// much for no visible gain.)
+    fn keep_moving(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let look = &self.global.appearance;
+        let moving = window.is_window_active()
+            && !look.reduce_motion
+            && (look.backdrop.animated() || cover_art::any_playing());
+        let now = std::time::Instant::now();
+        if moving && let Some(last) = self.motion.1 {
+            // After a pause it goes on where it was.
+            self.motion.0 += (now - last).as_secs_f32().min(0.05);
+        }
+        self.motion.1 = Some(now);
+        if !moving || self.ticking {
+            return;
+        }
+        self.ticking = true;
+        Self::tick(cx.entity().downgrade(), now, window);
+    }
+
+    /// Waits for the screen refresh at which the next of those redraws is due.
+    fn tick(this: gpui::WeakEntity<Self>, drawn: std::time::Instant, window: &Window) {
+        window.on_next_frame(move |window, cx| {
+            if drawn.elapsed() < std::time::Duration::from_millis(13) {
+                return Self::tick(this, drawn, window);
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.ticking = false;
+                cx.notify();
+            });
+        });
+    }
+
+    /// Reads what is installed again; the open game page keeps its own state.
+    pub(crate) fn rescan_tools(&mut self) {
+        self.tools = GameTools::scan();
+        if let Some(Selection::Game(ix)) = self.selection
+            && let Some(game) = self.games.get(ix)
+        {
+            self.tools.select(game);
+            self.find_game_folders();
+        }
     }
 
     /// Re-reads the library, keeping the selected game selected if it still exists.
@@ -815,7 +867,16 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.open(open.as_deref());
                 // Only the real window installs components and runs the download queue
                 // (not the headless tests).
-                lib.start_boot(cx);
+                lib.start_intro();
+                // The package version of lsfg-vk takes a moment to look up.
+                let bg = cx.background_executor().clone();
+                cx.spawn(async move |this, cx| {
+                    let info = bg
+                        .spawn(async move { arkor_launch::tools::lsfg_layer() })
+                        .await;
+                    let _ = this.update(cx, |this: &mut Library, _| this.tools.lsfg_info = info);
+                })
+                .detach();
                 arkor_launch::downloads::start();
                 lib.watch_progress(cx);
                 lib.startup_updates(cx);

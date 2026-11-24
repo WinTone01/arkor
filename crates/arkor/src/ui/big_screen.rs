@@ -4,9 +4,7 @@
 
 use std::sync::mpsc::{Receiver, channel};
 
-use gpui::{
-    Context, Div, KeyBinding, ObjectFit, StyledImage, Window, actions, div, img, prelude::*, px,
-};
+use gpui::{Context, Div, KeyBinding, Window, actions, div, prelude::*, px};
 
 use super::widgets::{self, theme::*};
 use super::{Library, Selection};
@@ -200,15 +198,7 @@ impl Library {
         for (row, &ix) in self.visible.iter().enumerate() {
             let game = &self.games[ix];
             let focused = row == self.big_focus;
-            let cover: gpui::AnyElement = match self.covers.get(&game.id.id).cloned().flatten() {
-                Some(path) => img(path)
-                    .w(px(TILE_W - 12.))
-                    .h(px(TILE_H))
-                    .rounded_lg()
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element(),
-                None => self.cover_tile(&game.id.id, &game.name, TILE_W - 12., TILE_H),
-            };
+            let cover = self.cover_tile(&game.id.id, &game.name, TILE_W - 12., TILE_H);
             let played = self.playtime(&game.id).0;
             grid = grid.child(
                 div()

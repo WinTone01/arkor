@@ -80,7 +80,7 @@ impl Library {
                     Ok(dir) => format!("{tag} ✓ {}", dir.display()).into(),
                     Err(e) => format!("{tag}: {e:#}").into(),
                 });
-                this.tools = super::enhance::GameTools::scan();
+                this.rescan_tools();
                 cx.notify();
             });
         })
@@ -133,7 +133,7 @@ impl Library {
                 l.required.running = false;
                 l.required.step = None;
                 l.required.error = result.err().map(|e| format!("{e:#}"));
-                l.tools = super::enhance::GameTools::scan();
+                l.rescan_tools();
                 cx.notify();
             });
         })
@@ -155,7 +155,7 @@ impl Library {
             let _ = this.update(cx, |this, cx| {
                 this.protons.updating = None;
                 this.report(result);
-                this.tools = super::enhance::GameTools::scan();
+                this.rescan_tools();
                 cx.notify();
             });
         })

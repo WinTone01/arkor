@@ -716,6 +716,7 @@ impl Library {
                     kind,
                     true,
                     a.backdrop_image.as_deref(),
+                    0.,
                 ))
                 .into_any_element();
             backdrops = backdrops.child(

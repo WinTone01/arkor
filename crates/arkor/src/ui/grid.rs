@@ -1,22 +1,21 @@
 //! Library page: search, sorting and filters on top, cover tiles of the matching games below.
 
 use gpui::prelude::FluentBuilder;
-use gpui::{Context, Div, FontWeight, ObjectFit, StyledImage, div, img, prelude::*, px};
+use gpui::{Context, Div, FontWeight, div, prelude::*, px};
 
 use super::style::{self, pal};
-use super::{Library, Selection, Sort, widgets};
+use super::{Library, Selection, Sort, cover_art, widgets};
 
 impl Library {
     /// A cover image, or a placeholder tile with the game's initial.
     pub(super) fn cover_tile(&self, id: &str, name: &str, w: f32, h: f32) -> gpui::AnyElement {
         let radius = px((w * 0.06).clamp(4., 12.));
         match self.covers.get(id).cloned().flatten() {
-            Some(path) => img(path)
+            // Tiny covers (the sidebar) stay still.
+            Some(path) => cover_art::cover(path, f32::from(radius), w >= 80. && self.moving())
                 .w(px(w))
                 .h(px(h))
-                .rounded(radius)
-                .object_fit(ObjectFit::Cover)
-                .id(gpui::SharedString::from(format!("cover-{id}-{w}")))
+                .flex_none()
                 .into_any_element(),
             None => div()
                 .w(px(w))
@@ -44,14 +43,29 @@ impl Library {
     /// A cover that fills its tile's width (2:3), animated covers playing.
     fn cover_fill(&self, id: &str, name: &str, h: f32) -> gpui::AnyElement {
         match self.covers.get(id).cloned().flatten() {
-            Some(path) => img(path)
+            Some(path) => {
+                let radius = 12.;
+                // While the start-up animation carries this cover, its place stays empty.
+                let shown = !self.intro_carries(id);
+                let slot = self.intro_slot(id);
+                let animate = self.moving();
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        if let Some(slot) = slot {
+                            slot(bounds, window.content_mask().bounds);
+                        }
+                    },
+                    move |bounds, _, window, _| {
+                        if shown {
+                            let animate = animate && window.is_window_active();
+                            cover_art::paint(&path, bounds, radius, animate, false, window);
+                        }
+                    },
+                )
                 .w(px(h / 1.5))
                 .h(px(h))
-                .rounded(px(12.))
-                .object_fit(ObjectFit::Cover)
-                // An id keeps the frame position, so GIF/WebP covers animate.
-                .id(gpui::SharedString::from(format!("cover-{id}")))
-                .into_any_element(),
+                .into_any_element()
+            }
             None => div()
                 .w(px(h / 1.5))
                 .h(px(h))
@@ -80,7 +94,11 @@ impl Library {
         let mut sorts = style::card().p_1().flex().gap_1();
         for (ix, (sort, icon, label)) in [
             (Sort::Name, "arrow-down-a-z", self.tr("Name", "Ad")),
-            (Sort::Recent, "history", self.tr("Recent", "Son oynanan")),
+            (
+                Sort::Recent,
+                "calendar-clock",
+                self.tr("Recent", "Son oynanan"),
+            ),
             (
                 Sort::Playtime,
                 "clock",
@@ -252,8 +270,9 @@ impl Library {
         // on large windows); the covers then grow to fill the row, so nothing is left empty.
         let scale = (self.viewport_w / 1320.).clamp(1., 1.45);
         let preferred = self.global.appearance.grid_size.cover_width() * scale;
-        // Sidebar, panel frame and page padding around the grid (measured: 341 px).
-        let available = (self.viewport_w - 346.).max(preferred);
+        // Around the grid: the sidebar and the panel's frame, and six rems of padding.
+        let around = 242. + 6. * self.global.appearance.font_size() as f32;
+        let available = (self.viewport_w - around).max(preferred);
         let gap = 20.;
         let cols = (((available + gap) / (preferred + gap)).floor() as u16).max(2);
         let tile_w = ((available - gap * f32::from(cols - 1)) / f32::from(cols)).floor();

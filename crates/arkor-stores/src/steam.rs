@@ -1,7 +1,10 @@
 //! Steam: reads installed games straight from libraryfolders.vdf + appmanifest_*.acf.
 //! No Steam API or running client needed.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use arkor_core::{Game, GameId, Store};
@@ -155,12 +158,28 @@ pub fn installed_games() -> (Vec<Game>, Vec<anyhow::Error>) {
     (games, errors)
 }
 
+/// How long Steam's play times are reused before its files are read again.
+const PLAYTIME_AGE: Duration = Duration::from_secs(15);
+/// App id → (minutes, last played), with the time it was read.
+type Playtimes = Option<(Instant, HashMap<String, (u64, u64)>)>;
+static PLAYTIMES: Mutex<Playtimes> = Mutex::new(None);
+
 /// Steam's own play time (minutes) and last-played time for an app, summed / maxed over all
-/// local Steam users (`userdata/<id>/config/localconfig.vdf`).
+/// local Steam users. Cheap to call while drawing: Steam's files are read rarely.
 pub fn playtime(appid: &str) -> Option<(u64, u64)> {
-    let mut total = 0u64;
-    let mut last = 0u64;
-    let mut found = false;
+    let mut cache = PLAYTIMES.lock().unwrap_or_else(|e| e.into_inner());
+    if cache
+        .as_ref()
+        .is_none_or(|(t, _)| t.elapsed() > PLAYTIME_AGE)
+    {
+        *cache = Some((Instant::now(), read_playtimes()));
+    }
+    cache.as_ref()?.1.get(appid).copied()
+}
+
+/// Every app's play time from `userdata/<id>/config/localconfig.vdf`.
+fn read_playtimes() -> HashMap<String, (u64, u64)> {
+    let mut out: HashMap<String, (u64, u64)> = HashMap::new();
     for root in steam_roots() {
         let Ok(users) = std::fs::read_dir(root.join("userdata")) else {
             continue;
@@ -171,26 +190,25 @@ pub fn playtime(appid: &str) -> Option<(u64, u64)> {
                 continue;
             };
             let Ok(doc) = vdf::parse(&text) else { continue };
-            let app = doc
+            let Some(apps) = doc
                 .obj("UserLocalConfigStore")
                 .and_then(|o| o.obj("Software"))
                 .and_then(|o| o.obj("Valve"))
                 .and_then(|o| o.obj("Steam"))
                 .and_then(|o| o.obj("apps"))
-                .and_then(|o| o.obj(appid));
-            if let Some(app) = app {
-                found = true;
-                total += app
-                    .str("Playtime")
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
-                last = last.max(
-                    app.str("LastPlayed")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0),
-                );
+            else {
+                continue;
+            };
+            for (appid, value) in &apps.0 {
+                let vdf::Value::Obj(app) = value else {
+                    continue;
+                };
+                let number = |key: &str| app.str(key).and_then(|v| v.parse().ok()).unwrap_or(0);
+                let entry = out.entry(appid.clone()).or_default();
+                entry.0 += number("Playtime");
+                entry.1 = entry.1.max(number("LastPlayed"));
             }
         }
     }
-    found.then_some((total, last))
+    out
 }

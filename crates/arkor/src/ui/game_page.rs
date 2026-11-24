@@ -1371,10 +1371,17 @@ pub(super) fn ago(secs: u64, lang: arkor_core::Language) -> String {
 }
 
 impl Library {
-    fn refresh_cover(&mut self, id: &str) {
+    pub(super) fn refresh_cover(&mut self, id: &str) {
         if let Some(g) = self.library.get(id) {
-            self.covers
-                .insert(id.to_string(), arkor_launch::covers::cover_for(g));
+            let path = arkor_launch::covers::cover_for(g);
+            // A new picture can have the same file name as the old one.
+            for p in [path.as_ref(), self.covers.get(id).and_then(Option::as_ref)]
+                .into_iter()
+                .flatten()
+            {
+                super::cover_art::forget(p);
+            }
+            self.covers.insert(id.to_string(), path);
         }
     }
 

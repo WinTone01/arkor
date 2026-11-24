@@ -89,7 +89,25 @@ pub struct LsfgLayer {
     pub version: Option<String>,
 }
 
+/// The lsfg-vk layer with its package version (asks pacman the first time: slow).
 pub fn lsfg_layer() -> Option<LsfgLayer> {
+    lsfg_layer_with(true)
+}
+
+/// Like `lsfg_layer`, without asking pacman for a version that is not known yet.
+pub fn lsfg_layer_quick() -> Option<LsfgLayer> {
+    lsfg_layer_with(false)
+}
+
+/// Whether vkBasalt's layer is installed.
+pub fn vkbasalt_installed() -> bool {
+    layer_installed("vkBasalt")
+}
+
+fn lsfg_layer_with(ask: bool) -> Option<LsfgLayer> {
+    /// Package version of a layer library, for the file it had then.
+    type Known = Option<(PathBuf, Option<std::time::SystemTime>, Option<String>)>;
+    static KNOWN: std::sync::Mutex<Known> = std::sync::Mutex::new(None);
     const JSON: &str = "VkLayer_LSFGVK_frame_generation.json";
     let mut dirs: Vec<(PathBuf, bool)> = vec![
         ("/usr/share/vulkan/implicit_layer.d".into(), false),
@@ -109,18 +127,29 @@ pub fn lsfg_layer() -> Option<LsfgLayer> {
         dir.join(lib)
     };
     let library = std::fs::canonicalize(&library).unwrap_or(library);
-    let version = std::process::Command::new("pacman")
-        .arg("-Qqo")
-        .arg(&library)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| pacman_version(String::from_utf8_lossy(&o.stdout).trim()))
-        .or_else(|| {
-            json["layer"]["implementation_version"]
-                .as_str()
-                .map(|v| format!("{v}.x"))
-        });
+    let changed = std::fs::metadata(&library).and_then(|m| m.modified()).ok();
+    let mut known = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    let package = match &*known {
+        Some((path, time, version)) if *path == library && *time == changed => version.clone(),
+        _ if !ask => None,
+        _ => {
+            let version = std::process::Command::new("pacman")
+                .arg("-Qqo")
+                .arg(&library)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| pacman_version(String::from_utf8_lossy(&o.stdout).trim()));
+            *known = Some((library.clone(), changed, version.clone()));
+            version
+        }
+    };
+    drop(known);
+    let version = package.or_else(|| {
+        json["layer"]["implementation_version"]
+            .as_str()
+            .map(|v| format!("{v}.x"))
+    });
     Some(LsfgLayer {
         library,
         user,

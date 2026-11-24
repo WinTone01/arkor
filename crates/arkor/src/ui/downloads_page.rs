@@ -303,7 +303,7 @@ impl Library {
                             }
                             this.status = Some(last.report.into());
                         }
-                        this.tools = super::enhance::GameTools::scan();
+                        this.rescan_tools();
                     }
                     cx.notify();
                 });
@@ -334,7 +334,7 @@ impl Library {
                     Err(e) => format!("{e:#}").into(),
                 });
                 // Game pages read download state from here.
-                this.tools = super::enhance::GameTools::scan();
+                this.rescan_tools();
                 cx.notify();
             });
         })

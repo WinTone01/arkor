@@ -214,7 +214,7 @@ impl Library {
                     .pt_2()
                     .pb_2()
                     .items_center()
-                    .child(style::logo(32.))
+                    .child(self.sidebar_logo())
                     .child(
                         div()
                             .flex()
@@ -538,6 +538,7 @@ impl Render for Library {
         self.viewport_w = f32::from(window.viewport_size().width);
         self.apply_theme(window, cx);
         self.watch_progress(cx);
+        self.keep_moving(window, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         // After a page or mode change a focused field may no longer be drawn; keys would
         // then reach nothing, so focus goes back to the window.
@@ -548,6 +549,7 @@ impl Render for Library {
         let look = self.global.appearance.clone();
         let base = div()
             .size_full()
+            .capture_key_down(cx.listener(|this, _, _, cx| this.skip_intro(cx)))
             .relative()
             .overflow_hidden()
             .bg(pal::bg())
@@ -558,11 +560,11 @@ impl Render for Library {
                 look.backdrop,
                 look.reduce_motion,
                 look.backdrop_image.as_deref(),
+                self.motion.0,
             ));
-        // The start-up screen lies over the finished page, so fading it out reveals the
-        // library (drawn underneath all along) rather than an empty background.
-        let boot = self.render_boot(window, cx);
-        let reveal = self.boot_reveal();
+        // The start-up animation lies over the page, which is drawn underneath all along.
+        let page_in = self.step_intro(window);
+        let intro = self.render_intro(window, cx);
         use big_screen::*;
         if self.big_screen {
             let big = self.render_big(window, cx);
@@ -596,7 +598,7 @@ impl Render for Library {
                     this.nav(big_screen::Nav::Details, w, cx)
                 }))
                 .child(div().absolute().inset_0().child(big))
-                .children(boot);
+                .children(intro);
         }
         let detail = self.render_detail(window, cx);
         let sidebar = self.render_sidebar(cx);
@@ -631,12 +633,20 @@ impl Render for Library {
                 div()
                     .absolute()
                     .inset_0()
-                    // While the start-up screen fades, the page settles up into place.
-                    .when_some(reveal, |d, k| d.top(px(18. * (1. - k))))
                     .flex()
                     .p_4()
                     .gap_4()
-                    .child(sidebar)
+                    .child(
+                        div()
+                            .h_full()
+                            .flex_none()
+                            .relative()
+                            .when_some(page_in, |d, p| {
+                                d.left(px(-56. * (1. - p.sidebar)))
+                                    .opacity(p.sidebar.max(0.02))
+                            })
+                            .child(sidebar),
+                    )
                     .child(
                         div()
                             .flex()
@@ -645,6 +655,10 @@ impl Render for Library {
                             .min_w_0()
                             .h_full()
                             .gap_3()
+                            .relative()
+                            .when_some(page_in, |d, p| {
+                                d.top(px(34. * (1. - p.panel))).opacity(p.panel.max(0.02))
+                            })
                             .child(self.render_topbar(cx))
                             .child(
                                 style::panel()
@@ -656,6 +670,6 @@ impl Render for Library {
                     ),
             )
             .children(self.render_sgdb_picker(cx))
-            .children(boot)
+            .children(intro)
     }
 }

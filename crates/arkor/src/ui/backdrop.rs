@@ -2,14 +2,14 @@
 //! are blurred box shadows, so no image assets are needed.
 
 use arkor_core::profile::Backdrop as Background;
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use std::f32::consts::TAU;
-use std::time::Duration;
 
 use super::style::pal;
 
 /// Deterministic pseudo-random number in 0..1 for particle `i`.
-fn rnd(i: u32, salt: u32) -> f32 {
+pub(super) fn rnd(i: u32, salt: u32) -> f32 {
     let mut x = i.wrapping_mul(0x9e37_79b9) ^ salt.wrapping_mul(0x85eb_ca6b);
     x ^= x >> 15;
     x = x.wrapping_mul(0x2c1b_3c6d);
@@ -27,7 +27,7 @@ fn hue_shift(c: Hsla, dh: f32) -> Hsla {
 }
 
 /// A blurred ellipse centred at (`x`, `y`) given as fractions of the window.
-fn glow(x: f32, y: f32, w: f32, h: f32, blur: f32, color: Hsla) -> Div {
+pub(super) fn glow(x: f32, y: f32, w: f32, h: f32, blur: f32, color: Hsla) -> Div {
     div()
         .absolute()
         .left(relative(x))
@@ -75,7 +75,14 @@ fn layer() -> Div {
 }
 
 /// The background layer for `kind`. With `still`, animated kinds stay in place.
-pub fn render(kind: Background, still: bool, image: Option<&std::path::Path>) -> AnyElement {
+/// `secs` is how long it has been moving.
+pub fn render(
+    kind: Background,
+    still: bool,
+    image: Option<&std::path::Path>,
+    secs: f32,
+) -> AnyElement {
+    let turn = |period: f32| (secs / period).fract();
     let a = pal::accent();
     // Glows are softer on the light palette.
     let a = if pal::is_light() { a.opacity(0.45) } else { a };
@@ -173,87 +180,78 @@ pub fn render(kind: Background, still: bool, image: Option<&std::path::Path>) ->
                 .into_any_element()
         }
         Background::Aurora => layer()
-            .with_animation(
-                "bg-aurora",
-                Animation::new(Duration::from_secs(28)).repeat(),
-                move |el, d| {
-                    let p = d * TAU;
-                    el.child(glow(
-                        0.5 + 0.28 * p.sin(),
-                        0.3 + 0.14 * (2. * p).sin(),
-                        760.,
-                        420.,
-                        260.,
-                        a.opacity(0.8),
-                    ))
-                    .child(glow(
-                        0.45 - 0.3 * (p + 1.9).sin(),
-                        0.62 + 0.12 * (p + 0.7).cos(),
-                        640.,
-                        380.,
-                        260.,
-                        hue_shift(a, 0.12).opacity(0.55),
-                    ))
-                    .child(glow(
-                        0.6 + 0.22 * (p + 4.).cos(),
-                        0.45 + 0.2 * (3. * p).sin() * 0.5,
-                        520.,
-                        520.,
-                        280.,
-                        hue_shift(a, -0.08).opacity(0.4),
-                    ))
-                },
-            )
+            .map(|el| {
+                let d = turn(28.);
+                let p = d * TAU;
+                el.child(glow(
+                    0.5 + 0.28 * p.sin(),
+                    0.3 + 0.14 * (2. * p).sin(),
+                    760.,
+                    420.,
+                    260.,
+                    a.opacity(0.8),
+                ))
+                .child(glow(
+                    0.45 - 0.3 * (p + 1.9).sin(),
+                    0.62 + 0.12 * (p + 0.7).cos(),
+                    640.,
+                    380.,
+                    260.,
+                    hue_shift(a, 0.12).opacity(0.55),
+                ))
+                .child(glow(
+                    0.6 + 0.22 * (p + 4.).cos(),
+                    0.45 + 0.2 * (3. * p).sin() * 0.5,
+                    520.,
+                    520.,
+                    280.,
+                    hue_shift(a, -0.08).opacity(0.4),
+                ))
+            })
             .into_any_element(),
         Background::Tide => layer()
-            .with_animation(
-                "bg-tide",
-                Animation::new(Duration::from_secs(20)).repeat(),
-                move |el, d| {
-                    let p = d * TAU;
-                    el.child(glow(
-                        0.5 + 0.06 * p.cos(),
-                        0.28 + 0.09 * p.sin(),
-                        1500.,
-                        200.,
-                        180.,
-                        a.opacity(0.65),
-                    ))
-                    .child(glow(
-                        0.5 - 0.06 * p.cos(),
-                        0.74 - 0.09 * p.sin(),
-                        1500.,
-                        180.,
-                        180.,
-                        hue_shift(a, 0.1).opacity(0.5),
-                    ))
-                },
-            )
+            .map(|el| {
+                let d = turn(20.);
+                let p = d * TAU;
+                el.child(glow(
+                    0.5 + 0.06 * p.cos(),
+                    0.28 + 0.09 * p.sin(),
+                    1500.,
+                    200.,
+                    180.,
+                    a.opacity(0.65),
+                ))
+                .child(glow(
+                    0.5 - 0.06 * p.cos(),
+                    0.74 - 0.09 * p.sin(),
+                    1500.,
+                    180.,
+                    180.,
+                    hue_shift(a, 0.1).opacity(0.5),
+                ))
+            })
             .into_any_element(),
         Background::Drift => layer()
             .child(glow(0.5, 1.05, 1200., 300., 260., a.opacity(0.35)))
-            .with_animation(
-                "bg-drift",
-                Animation::new(Duration::from_secs(36)).repeat(),
-                move |mut el, d| {
-                    for i in 0..22u32 {
-                        let size = 10. + 34. * rnd(i, 1);
-                        let laps = 1. + (rnd(i, 2) * 2.).floor();
-                        let y = 1.1 - ((rnd(i, 3) + d * laps).fract() * 1.25);
-                        let x = rnd(i, 4) + 0.03 * ((d * 3. + rnd(i, 5)) * TAU).sin();
-                        let color = if i % 3 == 0 { hue_shift(a, 0.1) } else { a };
-                        el = el.child(glow(
-                            x,
-                            y,
-                            size,
-                            size,
-                            size * 0.9,
-                            color.opacity(0.25 + 0.3 * rnd(i, 6)),
-                        ));
-                    }
-                    el
-                },
-            )
+            .map(|mut el| {
+                let d = turn(36.);
+                for i in 0..22u32 {
+                    let size = 10. + 34. * rnd(i, 1);
+                    let laps = 1. + (rnd(i, 2) * 2.).floor();
+                    let y = 1.1 - ((rnd(i, 3) + d * laps).fract() * 1.25);
+                    let x = rnd(i, 4) + 0.03 * ((d * 3. + rnd(i, 5)) * TAU).sin();
+                    let color = if i % 3 == 0 { hue_shift(a, 0.1) } else { a };
+                    el = el.child(glow(
+                        x,
+                        y,
+                        size,
+                        size,
+                        size * 0.9,
+                        color.opacity(0.25 + 0.3 * rnd(i, 6)),
+                    ));
+                }
+                el
+            })
             .into_any_element(),
         Background::Plain => layer().into_any_element(),
         Background::Image => match image {

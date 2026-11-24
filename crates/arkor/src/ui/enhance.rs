@@ -98,7 +98,7 @@ impl GameTools {
         Self {
             protons: tools::installed_protons(),
             lossless_dll: tools::lossless_dll().is_some(),
-            lsfg_info: tools::lsfg_layer(),
+            lsfg_info: tools::lsfg_layer_quick(),
             ls_dir: tools::lossless_scaling_dir(),
             gpus: tools::gpus(),
             manifest: None,
@@ -108,9 +108,7 @@ impl GameTools {
             rs_downloaded: None,
             rs_proxy: "dxgi",
             rs_32bit: false,
-            vkbasalt_installed: tools::tool_status()
-                .iter()
-                .any(|t| t.name == "vkBasalt" && t.found.is_some()),
+            vkbasalt_installed: tools::vkbasalt_installed(),
             opti_channel: optiscaler::Channel::Stable,
             sl_manifest: None,
             sl_downloaded: None,
