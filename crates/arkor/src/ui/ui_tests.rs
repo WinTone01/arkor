@@ -665,10 +665,12 @@ fn console_folder_choice_password_and_tools() {
         disk: arkor_launch::admin::Disk {
             path: format!("/dev/sdx{n}"),
             label: String::new(),
+            uuid: format!("uuid-{n}"),
             fstype: "ext4".into(),
             size: "465,8G".into(),
         },
         mount,
+        space: None,
     };
     view.update(cx, |l, cx| {
         l.console.drives = vec![
@@ -703,6 +705,22 @@ fn console_folder_choice_password_and_tools() {
         l.console_overlay(Overlay::Folder(FolderFor::Games, start.clone()));
         cx.notify();
     });
+    // It can be left from anywhere: with its own button, and with Start.
+    cx.simulate_keystrokes("right right enter");
+    let open = |cx: &mut gpui_test::VisualTestContext| {
+        view.read_with(cx, |l, _| l.console.overlay.is_some())
+    };
+    assert!(!open(cx), "cancelled");
+    let reopen = |cx: &mut gpui_test::VisualTestContext| {
+        view.update(cx, |l, cx| {
+            l.console_overlay(Overlay::Folder(FolderFor::Games, start.clone()));
+            cx.notify();
+        });
+    };
+    reopen(cx);
+    cx.simulate_keystrokes("f10");
+    assert!(!open(cx), "Start leaves it");
+    reopen(cx);
     // Down past the places to the first folder and into it; back leaves it.
     cx.simulate_keystrokes("down down down enter");
     let dir = |cx: &mut gpui_test::VisualTestContext| {
@@ -804,4 +822,56 @@ fn console_login_message_answers_the_gamepad() {
     assert!(view.read_with(cx, |l, _| {
         l.shops.login.is_none() && l.console.secret.is_some()
     }));
+}
+
+#[test]
+fn console_intro_is_skipped_by_the_first_button_only() {
+    use super::gamepad::Nav;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#settings"));
+        lib.play_console_intro(false);
+        lib
+    });
+    cx.run_until_parked();
+    let state = |cx: &mut gpui_test::VisualTestContext| {
+        view.read_with(cx, |l, _| (l.console_intro_opens(), l.console.focus().row))
+    };
+    let press = |nav: Nav, cx: &mut gpui_test::VisualTestContext| {
+        view.update_in(cx, |l, w, cx| l.nav(nav, w, cx));
+        cx.run_until_parked();
+    };
+    assert_eq!(state(cx), (Some(false), 0));
+    press(Nav::Down, cx);
+    assert_eq!(state(cx).1, 0, "this press only skipped the animation");
+    assert_ne!(state(cx).0, Some(false));
+    press(Nav::Down, cx);
+    assert_eq!(state(cx).1, 1, "the next one is the console's");
+    // Switched off, or with less motion, there is none.
+    view.update(cx, |l, _| {
+        l.console.intro = None;
+        l.global.console_no_intro = true;
+        l.play_console_intro(false);
+        assert!(l.console.intro.is_none());
+        l.global.console_no_intro = false;
+        l.global.appearance.reduce_motion = true;
+        l.play_console_intro(false);
+        assert!(l.console.intro.is_none());
+        // The volume is a choice like any other.
+        l.opt_turn(&super::console::Opt::ConsoleVolume, 1);
+        assert_eq!(l.global.console_volume, Some(85));
+        l.global.appearance.sounds = false;
+        assert_eq!(l.console_volume(), 0.);
+    });
 }

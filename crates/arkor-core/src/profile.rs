@@ -375,6 +375,10 @@ pub struct Global {
     pub start_in_console: bool,
     /// Games started from console mode run as they are (not full screen in gamescope).
     pub console_windowed: bool,
+    /// Console mode opens without its start-up animation.
+    pub console_no_intro: bool,
+    /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
+    pub console_volume: Option<u8>,
     /// Environment for every game (each game's own `env` overrides it).
     pub env: BTreeMap<String, String>,
     /// Close Arkor's window after starting a game.

@@ -7,7 +7,9 @@ mod app_update;
 mod backdrop;
 mod bench_page;
 mod console;
+mod console_intro;
 mod console_settings;
+mod console_sound;
 mod console_tools;
 mod console_view;
 mod cover_art;
@@ -36,6 +38,7 @@ mod sounds;
 mod splash;
 mod steam_card;
 mod style;
+mod synth;
 mod system_page;
 mod text_input;
 mod tray;
@@ -933,6 +936,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 arkor_launch::downloads::start();
                 if lib.console.on {
                     lib.console_first(cx);
+                    lib.start_console_intro();
                 }
                 lib.watch_progress(cx);
                 lib.startup_updates(cx);

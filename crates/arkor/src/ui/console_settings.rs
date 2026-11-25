@@ -97,16 +97,18 @@ pub(super) enum AppCat {
     Games,
     Stores,
     Proton,
+    Tools,
     System,
 }
 
 impl AppCat {
-    pub(super) const ALL: [AppCat; 6] = [
+    pub(super) const ALL: [AppCat; 7] = [
         AppCat::General,
         AppCat::Looks,
         AppCat::Games,
         AppCat::Proton,
         AppCat::Stores,
+        AppCat::Tools,
         AppCat::System,
     ];
 }
@@ -916,6 +918,7 @@ impl Library {
             AppCat::Games => ("gamepad-2", self.tr("Games", "Oyunlar")),
             AppCat::Stores => ("store", self.tr("Stores", "Mağazalar")),
             AppCat::Proton => ("wine", self.tr("Proton & Wine", "Proton ve Wine")),
+            AppCat::Tools => ("wrench", self.tr("Tools", "Araçlar")),
             AppCat::System => ("cpu", self.tr("System", "Sistem")),
         }
     }
@@ -989,6 +992,16 @@ impl Library {
                 line(Opt::Accent, "palette", t("Accent colour", "Vurgu rengi")),
                 line(Opt::Motion, "zap", t("Reduce motion", "Hareketi azalt")),
                 line(Opt::Sounds, "bell", t("Sounds", "Sesler")),
+                line(
+                    Opt::ConsoleVolume,
+                    "volume-2",
+                    t("Console sounds", "Konsol sesleri"),
+                ),
+                line(
+                    Opt::ConsoleIntro,
+                    "sparkles",
+                    t("Start-up animation", "Giriş animasyonu"),
+                ),
             ],
             AppCat::Games => vec![
                 line(
@@ -1020,6 +1033,7 @@ impl Library {
                 ),
             ],
             AppCat::Proton => self.console_proton_rows(),
+            AppCat::Tools => self.console_program_rows(),
             AppCat::System => self.console_system_rows(),
             AppCat::Stores => Shop::ALL
                 .into_iter()
@@ -1074,6 +1088,16 @@ impl Library {
             Opt::Accent => super::style::pal::ACCENTS
                 .iter()
                 .map(|(c, en, tr)| (s(self.tr(en, tr)), format!("{c:06x}")))
+                .collect(),
+            Opt::ConsoleVolume => [0, 20, 40, 55, 70, 85, 100]
+                .into_iter()
+                .map(|v| {
+                    let label = match v {
+                        0 => s(self.tr("Off", "Kapalı")),
+                        v => self.percent(v as f32 / 100.),
+                    };
+                    (label, v.to_string())
+                })
                 .collect(),
             Opt::Updates => vec![
                 (s(self.tr("Every day", "Her gün")), s("daily")),
@@ -1137,6 +1161,7 @@ impl Library {
                     .accent
                     .unwrap_or(super::style::pal::DEFAULT_ACCENT)
             ),
+            Opt::ConsoleVolume => g.console_volume.unwrap_or(70).to_string(),
             Opt::Updates => match g.update_interval() {
                 UpdateInterval::Daily => "daily",
                 UpdateInterval::Weekly => "weekly",
@@ -1165,6 +1190,7 @@ impl Library {
             Opt::Tray => Value::Switch(g.tray),
             Opt::Motion => Value::Switch(g.appearance.reduce_motion),
             Opt::Sounds => Value::Switch(g.appearance.sounds),
+            Opt::ConsoleIntro => Value::Switch(!g.console_no_intro),
             Opt::GlobalHud => Value::Switch(g.mangohud.enabled),
             Opt::FullScreen => Value::Switch(!g.console_windowed),
             Opt::InstallMenu => Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.menu)),
@@ -1207,6 +1233,7 @@ impl Library {
                 }
             }
             Opt::Accent => g.appearance.accent = u32::from_str_radix(key, 16).ok(),
+            Opt::ConsoleVolume => g.console_volume = key.parse().ok(),
             Opt::Updates => {
                 g.no_auto_updates = false;
                 g.update_interval = match key {
@@ -1248,6 +1275,7 @@ impl Library {
             Opt::Tray => g.tray = !g.tray,
             Opt::Motion => g.appearance.reduce_motion = !g.appearance.reduce_motion,
             Opt::Sounds => g.appearance.sounds = !g.appearance.sounds,
+            Opt::ConsoleIntro => g.console_no_intro = !g.console_no_intro,
             Opt::GlobalHud => g.mangohud.enabled = !g.mangohud.enabled,
             Opt::FullScreen => g.console_windowed = !g.console_windowed,
             _ => return,

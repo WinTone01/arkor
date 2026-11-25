@@ -12,15 +12,28 @@ use arkor_launch::proton_dl::Variant;
 use gpui::Context;
 
 use super::Library;
-use super::console::{Act, FolderFor, Item, Kind, Overlay, Row, Value};
+use super::console::{Act, FolderFor, Item, Kind, Overlay, Row, Screen, Value};
+use super::console_settings::AppCat;
 
 /// What the administrator password is asked for.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum NeedsPassword {
     /// Packages from the repositories.
     Packages(Vec<String>),
-    /// A disk to mount, and the folder choice to go back to.
-    Mount(Disk, FolderFor),
+    /// A disk to mount, and what comes then.
+    Mount(Disk, AfterDisk),
+    /// A disk to take out of use, by where it is mounted.
+    Unmount(String),
+}
+
+/// What a disk was mounted for.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum AfterDisk {
+    /// The folder choice goes on there.
+    Folder(FolderFor),
+    /// A game on it starts.
+    Play(String),
+    Stay,
 }
 
 impl Library {
@@ -232,8 +245,9 @@ impl Library {
 
     // ---- The system's programs ----
 
-    pub(super) fn console_system_rows(&self) -> Vec<Row> {
-        let Some((info, tools)) = &self.system.info else {
+    /// The programs games use (Tools).
+    pub(super) fn console_program_rows(&self) -> Vec<Row> {
+        let Some((_, tools)) = &self.system.info else {
             return vec![self.line(
                 Act::Nothing,
                 "loader-circle",
@@ -295,6 +309,21 @@ impl Library {
             }
             rows.push(row);
         }
+        rows
+    }
+
+    /// The disks and this computer (System).
+    pub(super) fn console_system_rows(&self) -> Vec<Row> {
+        let mut rows = self.console_disk_rows();
+        let Some((info, _)) = &self.system.info else {
+            rows.push(self.line(
+                Act::Nothing,
+                "loader-circle",
+                self.tr("Looking…", "Bakılıyor…"),
+                Value::None,
+            ));
+            return rows;
+        };
         for (n, (key, value)) in info.iter().enumerate() {
             let (icon, label) = super::system_page::info_look(key, self);
             let mut row = self.line(
@@ -309,6 +338,164 @@ impl Library {
             rows.push(row);
         }
         rows
+    }
+
+    /// How a disk is called.
+    fn disk_name(&self, d: &Disk) -> String {
+        if d.label.is_empty() {
+            format!("Disk {}", d.size)
+        } else {
+            d.label.clone()
+        }
+    }
+
+    /// "120 GB free of 465 GB".
+    fn room(&self, (all, free): (u64, u64)) -> String {
+        let (all, free) = (
+            arkor_launch::progress::human_bytes(all),
+            arkor_launch::progress::human_bytes(free),
+        );
+        match self.global.language {
+            arkor_core::Language::Tr => format!("{free} boş / {all}"),
+            arkor_core::Language::En => format!("{free} free of {all}"),
+        }
+    }
+
+    fn console_disk_rows(&self) -> Vec<Row> {
+        let share = |(all, free): (u64, u64)| {
+            (all > 0).then(|| (all.saturating_sub(free)) as f32 / all as f32)
+        };
+        let mut items = Vec::new();
+        if let Some(space) = self.console.system_space {
+            let mut i = Item::line(
+                Act::Nothing,
+                "hard-drive",
+                self.tr("System disk", "Sistem diski"),
+                Value::Text(self.room(space)),
+            );
+            i.progress = share(space);
+            i.sub = "/".into();
+            items.push(i);
+        }
+        for d in &self.console.drives {
+            let path = d.disk.path.clone();
+            let (act, icon, value) = match (&d.mount, d.space) {
+                (Some(_), space) => (
+                    Act::DiskMenu(path),
+                    "hard-drive",
+                    space.map(|s| self.room(s)).unwrap_or_default(),
+                ),
+                (None, _) if self.console.mounting => (
+                    Act::Nothing,
+                    "loader-circle",
+                    self.tr("Mounting…", "Bağlanıyor…").to_string(),
+                ),
+                (None, _) => (
+                    Act::Mount(path),
+                    "hard-drive-download",
+                    self.tr("Not mounted · mount", "Bağlı değil · bağla")
+                        .to_string(),
+                ),
+            };
+            let mut i = Item::line(act, icon, self.disk_name(&d.disk), Value::Text(value));
+            i.sub = match &d.mount {
+                Some(m) => format!("{} · {m}", d.disk.fstype),
+                None => format!("{} · {}", d.disk.fstype, d.disk.path),
+            };
+            i.progress = d.space.and_then(share);
+            items.push(i);
+        }
+        let mut rows: Vec<Row> = items
+            .into_iter()
+            .map(|i| Row::new(Kind::Line, vec![i]))
+            .collect();
+        if let Some(first) = rows.first_mut() {
+            first.title = Some(self.tr("Disks", "Diskler").into());
+        }
+        rows
+    }
+
+    /// What can be done with a mounted disk.
+    pub(super) fn console_disk_menu(&mut self, path: &str) {
+        let Some(d) = self.console.drives.iter().find(|d| d.disk.path == path) else {
+            return;
+        };
+        let Some(mount) = d.mount.clone() else {
+            return;
+        };
+        let title = self.disk_name(&d.disk);
+        let options = vec![
+            (
+                self.tr("Choose a games folder on it", "Üzerinde oyun klasörü seç")
+                    .to_string(),
+                Act::FolderAt(PathBuf::from(&mount)),
+                false,
+            ),
+            (
+                self.tr("Unmount", "Bağlantısını kes").to_string(),
+                Act::Unmount(path.to_string()),
+                false,
+            ),
+            (self.tr("Close", "Kapat").to_string(), Act::Close, false),
+        ];
+        self.console_overlay(Overlay::Pick(title, options));
+    }
+
+    /// Takes a disk out of use: without a password when allowed, else asks.
+    pub(super) fn console_unmount(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.console.overlay = None;
+        let Some(d) = self.console.drives.iter().find(|d| d.disk.path == path) else {
+            return;
+        };
+        let (disk, Some(point)) = (d.disk.clone(), d.mount.clone()) else {
+            return;
+        };
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg.spawn(async move { admin::unmount(&disk) }).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.console_unmounted(Ok(())),
+                    Err(MountError::NeedsPassword) => {
+                        this.console_password(NeedsPassword::Unmount(point))
+                    }
+                    Err(MountError::Failed(e)) => this.console_unmounted(Err(anyhow::anyhow!(e))),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn console_unmounted(&mut self, result: anyhow::Result<()>) {
+        self.console.drives_at = None;
+        self.status = Some(match result {
+            Ok(()) => self.tr("Unmounted.", "Bağlantısı kesildi.").into(),
+            Err(e) if e.to_string().contains("busy") => self
+                .tr(
+                    "Something on that disk is in use.",
+                    "O diskteki bir şey kullanılıyor.",
+                )
+                .into(),
+            Err(e) => self.password_error(&e),
+        });
+    }
+
+    /// The disk a game is on, when it is not where the game expects it.
+    pub(super) fn game_disk(&self, id: &arkor_core::GameId) -> Option<admin::Drive> {
+        let g = self.library.get(&id.id)?;
+        let paths = [
+            g.exe.clone(),
+            g.effective_prefix(&self.global.prefixes_dir()),
+        ];
+        // Looked at only when something is missing (it takes a moment).
+        let missing = paths
+            .iter()
+            .any(|p| admin::disk_folder(p).is_some() && !p.exists());
+        if cfg!(test) || !missing {
+            return None;
+        }
+        admin::missing_disk(&paths, &admin::drives())
     }
 
     // ---- The password, and what it is for ----
@@ -356,13 +543,27 @@ impl Library {
                 })
                 .detach();
             }
-            NeedsPassword::Mount(disk, what) => {
+            NeedsPassword::Mount(disk, then) => {
+                self.console.mounting = true;
                 cx.spawn(async move |this, cx| {
                     let result = bg
                         .spawn(async move { admin::mount_with_password(&disk, &password) })
                         .await;
                     let _ = this.update(cx, |this, cx| {
-                        this.console_mounted(result, what);
+                        this.console.mounting = false;
+                        this.console_mounted(result, then, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            NeedsPassword::Unmount(point) => {
+                cx.spawn(async move |this, cx| {
+                    let result = bg
+                        .spawn(async move { admin::unmount_with_password(&point, &password) })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.console_unmounted(result);
                         cx.notify();
                     });
                 })
@@ -379,20 +580,29 @@ impl Library {
         }
     }
 
-    /// Mounts a disk from the folder choice: without a password when allowed, else asks.
-    pub(super) fn console_mount(&mut self, path: &str, what: FolderFor, cx: &mut Context<Self>) {
-        let Some(disk) = self
-            .console
-            .drives
-            .iter()
-            .find(|d| d.disk.path == path)
-            .map(|d| d.disk.clone())
-        else {
-            return;
-        };
+    /// Mounts one of the listed disks.
+    pub(super) fn console_mount(&mut self, path: &str, then: AfterDisk, cx: &mut Context<Self>) {
+        let drive = self.console.drives.iter().find(|d| d.disk.path == path);
+        if let Some(d) = drive.cloned() {
+            self.console_mount_drive(d, then, cx);
+        }
+    }
+
+    /// Mounts a disk: without a password when allowed, else asks for it.
+    pub(super) fn console_mount_drive(
+        &mut self,
+        drive: admin::Drive,
+        then: AfterDisk,
+        cx: &mut Context<Self>,
+    ) {
+        // Mounted elsewhere already: it goes to its own place too.
+        if drive.mount.is_some() {
+            return self.console_password(NeedsPassword::Mount(drive.disk, then));
+        }
         if std::mem::replace(&mut self.console.mounting, true) {
             return;
         }
+        let disk = drive.disk;
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let d = disk.clone();
@@ -400,11 +610,13 @@ impl Library {
             let _ = this.update(cx, |this, cx| {
                 this.console.mounting = false;
                 match result {
-                    Ok(point) => this.console_mounted(Ok(point), what),
+                    Ok(point) => this.console_mounted(Ok(point), then, cx),
                     Err(MountError::NeedsPassword) => {
-                        this.console_password(NeedsPassword::Mount(disk, what))
+                        this.console_password(NeedsPassword::Mount(disk, then))
                     }
-                    Err(MountError::Failed(e)) => this.status = Some(e.into()),
+                    Err(MountError::Failed(e)) => {
+                        this.console_mounted(Err(anyhow::anyhow!(e)), then, cx)
+                    }
                 }
                 cx.notify();
             });
@@ -412,14 +624,36 @@ impl Library {
         .detach();
     }
 
-    fn console_mounted(&mut self, result: anyhow::Result<String>, what: FolderFor) {
+    fn console_mounted(
+        &mut self,
+        result: anyhow::Result<String>,
+        then: AfterDisk,
+        cx: &mut Context<Self>,
+    ) {
         self.console.drives_at = None;
-        match result {
-            Ok(point) if !point.is_empty() => {
+        // The list of folders may have been looked at while the disk was away.
+        *self.console.folders.borrow_mut() = None;
+        match (result, then) {
+            (Ok(point), AfterDisk::Folder(what)) if !point.is_empty() => {
                 self.console_overlay(Overlay::Folder(what, PathBuf::from(point)));
             }
-            Ok(_) => {}
-            Err(e) => self.status = Some(self.password_error(&e)),
+            (Ok(_), AfterDisk::Play(id)) => self.console_play(&id, cx),
+            (Ok(point), _) => {
+                self.status = Some(format!("{}: {point}", self.tr("Mounted", "Bağlandı")).into());
+            }
+            (Err(e), then) => {
+                self.cue(super::console_sound::Cue::Error);
+                self.status = Some(self.password_error(&e));
+                self.console_disk_not_mounted(&then);
+            }
+        }
+    }
+
+    /// The disk stays away: back to where it was asked for.
+    pub(super) fn console_disk_not_mounted(&mut self, then: &AfterDisk) {
+        if let AfterDisk::Folder(what) = then {
+            let home = dirs::home_dir().unwrap_or_default();
+            self.console_overlay(Overlay::Folder(*what, home));
         }
     }
 
@@ -432,22 +666,30 @@ impl Library {
         self.console.drives_at = Some(Instant::now());
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let found = bg.spawn(async { admin::drives() }).await;
+            let look = || (admin::drives(), admin::space(std::path::Path::new("/")));
+            let (found, system) = bg.spawn(async move { look() }).await;
             let _ = this.update(cx, |this, cx| {
-                if this.console.drives != found {
+                if this.console.drives != found || this.console.system_space != system {
                     this.console.drives = found;
+                    this.console.system_space = system;
                     cx.notify();
                 }
             });
             // A disk plugged in while the choice is open shows up by itself.
             bg.timer(Duration::from_secs(5)).await;
             let _ = this.update(cx, |this, cx| {
-                if matches!(this.console.overlay, Some(Overlay::Folder(..))) {
+                if this.console_shows_disks() {
                     cx.notify();
                 }
             });
         })
         .detach();
+    }
+
+    pub(super) fn console_shows_disks(&self) -> bool {
+        self.console.on
+            && (matches!(self.console.overlay, Some(Overlay::Folder(..)))
+                || self.console.screen() == Screen::SettingsCat(AppCat::System))
     }
 
     /// The places to jump to: home, then every disk (one that is not mounted yet gets
@@ -461,11 +703,7 @@ impl Library {
             items.push(i);
         }
         for d in &self.console.drives {
-            let name = if d.disk.label.is_empty() {
-                format!("{} {}", self.tr("Disk", "Disk"), d.disk.size)
-            } else {
-                d.disk.label.clone()
-            };
+            let name = self.disk_name(&d.disk);
             let (act, icon, sub) = match &d.mount {
                 Some(m) => (
                     Act::FolderOpen(PathBuf::from(m)),

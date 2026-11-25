@@ -12,6 +12,8 @@ use arkor_launch::progress;
 use arkor_launch::shops::{self, Shop};
 use gpui::{Context, KeyBinding, Window, actions};
 
+use super::console_sound::Cue;
+use super::console_tools::{AfterDisk, NeedsPassword};
 pub(super) use super::gamepad::Nav;
 use super::{Library, Selection, cover_art, shops_page};
 
@@ -111,6 +113,9 @@ pub(super) enum Opt {
     DefaultProton,
     Motion,
     Sounds,
+    /// Console mode's own sounds, and its start-up animation.
+    ConsoleVolume,
+    ConsoleIntro,
     StartHere,
     Autostart,
     /// Games started from console mode full screen in gamescope.
@@ -148,6 +153,12 @@ pub(super) enum Act {
     InstallRelease(String),
     InstallTools(Vec<String>),
     Mount(String),
+    /// A mounted disk: what can be done with it.
+    DiskMenu(String),
+    Unmount(String),
+    /// The games folder is chosen from here on.
+    FolderAt(PathBuf),
+
     Folder(FolderFor),
     FolderOpen(PathBuf),
     FolderUp,
@@ -504,7 +515,15 @@ pub(super) struct Console {
     /// The disks, when they were looked for, and whether one is being mounted.
     pub(super) drives: Vec<arkor_launch::admin::Drive>,
     pub(super) drives_at: Option<Instant>,
+    /// All the room of the system's disk, and what is free.
+    pub(super) system_space: Option<(u64, u64)>,
     pub(super) mounting: bool,
+    /// The start-up animation, while it plays.
+    pub(super) intro: Option<super::console_intro::ConsoleIntro>,
+    /// It covers the console (which comes in when it opens).
+    pub(super) intro_covers: bool,
+    /// When the edge of a row was last heard.
+    edge_at: Option<Instant>,
     /// The folders of the folder being looked at.
     pub(super) folders: std::cell::RefCell<Option<(PathBuf, Vec<String>)>>,
     /// The screen in device pixels (games started from console mode fill it).
@@ -540,7 +559,7 @@ impl Console {
 
     /// Draw again soon: something moves by itself.
     pub(super) fn moving(&self) -> bool {
-        self.on && self.unsettled
+        self.on && (self.unsettled || self.intro.is_some())
     }
 }
 
@@ -1389,6 +1408,7 @@ impl Library {
                             self.tr("Up", "Üst klasör"),
                             false,
                         ),
+                        Item::pill(Act::Close, "x", self.tr("Cancel", "Vazgeç"), false),
                     ],
                 )];
                 rows.extend(self.drive_rows());
@@ -1509,6 +1529,10 @@ impl Library {
             Some("system") => vec![
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::System),
+            ],
+            Some("tools") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Tools),
             ],
             Some("general") => vec![
                 Screen::Settings,
@@ -1631,6 +1655,10 @@ impl Library {
     }
 
     pub(super) fn set_console(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.console.on && !on {
+            self.cue(Cue::Bye);
+            self.console.intro = None;
+        }
         self.console.on = on;
         // Leave any focused text field so the keys reach the console.
         self.refocus = true;
@@ -1639,6 +1667,8 @@ impl Library {
         self.console.entered = Some(Instant::now());
         self.shops.game = None;
         if on {
+            super::console_sound::warm();
+            self.start_console_intro();
             self.guard_steam(cx);
             if self.console.stack.is_empty() {
                 self.console.stack = vec![Screen::Home];
@@ -1668,7 +1698,9 @@ impl Library {
                     self.load_releases(v, cx);
                 }
             }
-            Screen::SettingsCat(super::console_settings::AppCat::System) => {
+            Screen::SettingsCat(
+                super::console_settings::AppCat::System | super::console_settings::AppCat::Tools,
+            ) => {
                 if self.system.info.is_none() {
                     self.scan_system(cx);
                 }
@@ -1709,7 +1741,10 @@ impl Library {
         }
         if self.console.overlay.take().is_some() {
             self.console.edit = None;
-            self.console.secret = None;
+            // No password, no disk: back to the folders it was wanted for.
+            if let Some((NeedsPassword::Mount(_, then), _)) = self.console.secret.take() {
+                self.console_disk_not_mounted(&then);
+            }
             cx.notify();
             return;
         }
@@ -1816,16 +1851,21 @@ impl Library {
         }
         // The start-up animation ends with the first input.
         self.skip_intro(cx);
+        if self.skip_console_intro(cx) {
+            return;
+        }
         if self.shops.login.is_some() {
             let rows = self.login_rows();
             let focus = &mut self.console.over_focus;
             focus.clamp(&rows);
             match nav {
                 Nav::Left | Nav::Up => {
-                    focus.step(&rows, -1, 0);
+                    let moved = focus.step(&rows, -1, 0);
+                    self.cue_step(moved, 0.);
                 }
                 Nav::Right | Nav::Down => {
-                    focus.step(&rows, 1, 0);
+                    let moved = focus.step(&rows, 1, 0);
+                    self.cue_step(moved, 0.);
                 }
                 Nav::Accept => {
                     let act = rows[0].items.get(focus.col()).map(|i| i.act.clone());
@@ -1833,7 +1873,10 @@ impl Library {
                         self.console_do(act, window, cx);
                     }
                 }
-                Nav::Back => self.console_back(cx),
+                Nav::Back => {
+                    self.cue(Cue::Back);
+                    self.console_back(cx)
+                }
                 _ => {}
             }
             cx.notify();
@@ -1878,6 +1921,7 @@ impl Library {
             }) = self.focused_item(&rows)
             && self.opt_turn(&o, dx)
         {
+            self.cue(Cue::Turn);
             cx.notify();
             return;
         }
@@ -1889,12 +1933,18 @@ impl Library {
             };
             focus.clamp(&rows);
             let before = (focus.row, focus.col());
-            if focus.step(&rows, dx, dy) {
+            let moved = focus.step(&rows, dx, dy);
+            let (row, col) = (focus.row, focus.col());
+            if moved {
                 if over.is_none() {
                     self.console.left = Some(before);
                 }
                 self.console.moved = Some(Instant::now());
             }
+            // Heard from where it is.
+            let wide = rows.get(row).map_or(1, |r| r.items.len().max(1)) as f32;
+            let pan = (col as f32 + 0.5) / wide - 0.5;
+            self.cue_step(moved, pan);
             cx.notify();
             return;
         }
@@ -1912,7 +1962,10 @@ impl Library {
                     self.console_do(item.act.clone(), window, cx);
                 }
             }
-            Nav::Back => self.console_back(cx),
+            Nav::Back => {
+                self.cue(Cue::Back);
+                self.console_back(cx)
+            }
             Nav::Extra if keyboard => self.console_do(Act::Backspace, window, cx),
             Nav::Extra if matches!(over, Some(Overlay::Folder(..))) => {
                 self.console_do(Act::FolderPick, window, cx)
@@ -1920,16 +1973,25 @@ impl Library {
             Nav::Search if keyboard => self.console_do(Act::Key(' '), window, cx),
             Nav::Menu if keyboard => self.console_do(Act::Done, window, cx),
             Nav::Menu => {
-                if over == Some(Overlay::Menu) {
+                if matches!(over, Some(Overlay::Menu | Overlay::Folder(..))) {
+                    self.cue(Cue::Back);
                     self.console.overlay = None;
                 } else if over.is_none() {
+                    self.cue(Cue::Open);
                     self.console_overlay(Overlay::Menu);
                 }
             }
             _ if over.is_some() => {}
-            Nav::PrevTab => self.step_tab(-1, cx),
-            Nav::NextTab => self.step_tab(1, cx),
+            Nav::PrevTab => {
+                self.cue(Cue::Tab);
+                self.step_tab(-1, cx)
+            }
+            Nav::NextTab => {
+                self.cue(Cue::Tab);
+                self.step_tab(1, cx)
+            }
             Nav::Search => {
+                self.cue(Cue::Open);
                 if !matches!(self.console.screen(), Screen::Library | Screen::Stores) {
                     self.console_open(Screen::Library, cx);
                 }
@@ -2017,24 +2079,103 @@ impl Library {
 
     // ---- Doing ----
 
+    /// Starts a game; a disk it needs is mounted first.
+    pub(super) fn console_play(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.games.iter().position(|g| g.id.to_string() == id) else {
+            return;
+        };
+        if let Some(drive) = self.game_disk(&self.games[ix].id) {
+            self.status = Some(
+                self.tr(
+                    "The game is on a disk that has to be mounted first.",
+                    "Oyun, önce bağlanması gereken bir diskte.",
+                )
+                .into(),
+            );
+            return self.console_mount_drive(drive, AfterDisk::Play(id.to_string()), cx);
+        }
+        self.cue(Cue::Launch);
+        self.select(Selection::Game(ix), cx);
+        self.console.launching = Some(Launch {
+            id: self.games[ix].id.id.clone(),
+            at: Instant::now(),
+            playing: false,
+            dismissed: false,
+        });
+        self.play(cx);
+        self.launch_over_soon(cx);
+    }
+
+    /// How loud console mode's sounds are, 0…1.
+    pub(super) fn console_volume(&self) -> f32 {
+        if !self.global.appearance.sounds {
+            return 0.;
+        }
+        f32::from(self.global.console_volume.unwrap_or(70).min(100)) / 100.
+    }
+
+    /// One of console mode's sounds. Silent while a game has the screen.
+    pub(super) fn cue(&self, cue: Cue) {
+        self.cue_at(cue, 0.);
+    }
+
+    fn cue_at(&self, cue: Cue, pan: f32) {
+        if self.console.on {
+            super::console_sound::play(cue, self.console_volume(), pan);
+        }
+    }
+
+    /// The focus moved, or there was nothing further that way (said once, not for as long
+    /// as the direction is held).
+    fn cue_step(&mut self, moved: bool, pan: f32) {
+        if moved {
+            self.console.edge_at = None;
+            self.cue_at(Cue::Move, pan);
+            return;
+        }
+        let now = Instant::now();
+        let again = self
+            .console
+            .edge_at
+            .is_none_or(|t| now - t > Duration::from_millis(350));
+        self.console.edge_at = Some(now);
+        if again {
+            self.cue(Cue::Edge);
+        }
+    }
+
+    /// What choosing `act` sounds like.
+    fn act_cue(&self, act: &Act) -> Option<Cue> {
+        Some(match act {
+            Act::Nothing => Cue::Edge,
+            Act::Key(_) | Act::Shift | Act::Symbols => Cue::Key,
+            Act::Backspace => Cue::Erase,
+            // These come again as `Play`, or say how they went themselves.
+            Act::Play(_) | Act::ShopPlay(..) | Act::Desktop | Act::DesktopPage(_) => return None,
+            Act::Close | Act::LoginClose | Act::FolderUp | Act::ClearSearch => Cue::Back,
+            Act::Search | Act::AskQuit | Act::AskPower(_) | Act::Folder(_) => Cue::Open,
+            Act::AskUninstall(..) | Act::AskRemoveTool(_) | Act::ToolMenu(_) => Cue::Open,
+            Act::DiskMenu(_) | Act::FolderAt(_) => Cue::Open,
+            Act::GameLanguage => Cue::Open,
+            Act::ShopTab(_) | Act::Filter(_) | Act::ProtonVariant(_) => Cue::Tab,
+            Act::Opt(o) => match self.opt_value(o) {
+                Value::Switch(true) => Cue::Off,
+                Value::Switch(false) => Cue::On,
+                _ => Cue::Open,
+            },
+            _ => Cue::Accept,
+        })
+    }
+
     pub(super) fn console_do(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(cue) = self.act_cue(&act) {
+            self.cue(cue);
+        }
         match act {
             Act::Nothing => {}
             Act::Screen(s) => self.console_open(s, cx),
             Act::Close => self.console.overlay = None,
-            Act::Play(id) => {
-                if let Some(ix) = self.games.iter().position(|g| g.id.to_string() == id) {
-                    self.select(Selection::Game(ix), cx);
-                    self.console.launching = Some(Launch {
-                        id: self.games[ix].id.id.clone(),
-                        at: Instant::now(),
-                        playing: false,
-                        dismissed: false,
-                    });
-                    self.play(cx);
-                    self.launch_over_soon(cx);
-                }
-            }
+            Act::Play(id) => self.console_play(&id, cx),
             Act::ShopPlay(shop, id) => {
                 self.shop_show_in_library(shop, &id, cx);
                 if let Some(entry) = self.shop_entry(shop, &id)
@@ -2173,12 +2314,15 @@ impl Library {
             Act::InstallRelease(tag) => self.console_install_release(&tag, cx),
             Act::InstallTools(packages) => self.console_install_tools(packages),
             Act::Mount(path) => {
-                let what = match &self.console.overlay {
-                    Some(Overlay::Folder(what, _)) => *what,
-                    _ => FolderFor::Games,
+                let then = match &self.console.overlay {
+                    Some(Overlay::Folder(what, _)) => AfterDisk::Folder(*what),
+                    _ => AfterDisk::Stay,
                 };
-                self.console_mount(&path, what, cx);
+                self.console_mount(&path, then, cx);
             }
+            Act::DiskMenu(path) => self.console_disk_menu(&path),
+            Act::Unmount(path) => self.console_unmount(&path, cx),
+            Act::FolderAt(path) => self.console_overlay(Overlay::Folder(FolderFor::Games, path)),
             Act::InstallAnyway => {
                 self.console.overlay = None;
                 self.shop_install(cx);
@@ -2448,6 +2592,7 @@ impl Library {
             tail.push(why.to_string());
         }
         self.console.launching = None;
+        self.cue(Cue::Error);
         self.console_overlay(Overlay::Failed(id.id.clone(), name.to_string(), tail));
     }
 

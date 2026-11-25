@@ -5,6 +5,7 @@
 //! build could be read by it.
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
@@ -70,8 +71,36 @@ pub struct Disk {
     /// `/dev/nvme0n1p3`.
     pub path: String,
     pub label: String,
+    pub uuid: String,
     pub fstype: String,
     pub size: String,
+}
+
+impl Disk {
+    /// The folder a desktop mounts it at, below /run/media/<user>: its label, else its UUID
+    /// (never its device name: that changes from one start to the next).
+    fn folder(&self) -> String {
+        let name = [&self.label, &self.uuid]
+            .into_iter()
+            .find(|n| !n.is_empty())
+            .cloned()
+            .unwrap_or_else(|| self.path.rsplit('/').next().unwrap_or("disk").to_string());
+        let name: String = name
+            .chars()
+            .map(|c| if c == '/' || c.is_control() { '_' } else { c })
+            .collect();
+        if name.trim_matches('.').is_empty() {
+            "disk".into()
+        } else {
+            name
+        }
+    }
+
+    /// Where it is mounted, or would be.
+    fn point(&self) -> anyhow::Result<PathBuf> {
+        let user = std::env::var("USER").context("no user")?;
+        Ok(Path::new("/run/media").join(user).join(self.folder()))
+    }
 }
 
 #[derive(Deserialize)]
@@ -83,6 +112,7 @@ struct Lsblk {
 struct Dev {
     path: Option<String>,
     label: Option<String>,
+    uuid: Option<String>,
     fstype: Option<String>,
     size: Option<String>,
     #[serde(rename = "type")]
@@ -99,6 +129,48 @@ struct Dev {
 pub struct Drive {
     pub disk: Disk,
     pub mount: Option<String>,
+    /// All of its room and what is free, in bytes, when it is mounted.
+    pub space: Option<(u64, u64)>,
+}
+
+/// All the room of the file system at `path`, and what is free.
+pub fn space(path: &Path) -> Option<(u64, u64)> {
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    // SAFETY: the path ends with a zero and the answer is written to a struct of its own.
+    let s = unsafe {
+        let mut s: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c.as_ptr(), &mut s) != 0 {
+            return None;
+        }
+        s
+    };
+    Some((s.f_blocks * s.f_frsize, s.f_bavail * s.f_frsize))
+}
+
+/// The disk one of `paths` is on when it is not where that path expects it: not mounted, or
+/// mounted somewhere else.
+pub fn missing_disk(paths: &[PathBuf], drives: &[Drive]) -> Option<Drive> {
+    paths.iter().find_map(|p| {
+        let name = disk_folder(p)?;
+        let root = p.ancestors().find(|a| a.ends_with(&name))?;
+        if drives
+            .iter()
+            .any(|d| d.mount.as_deref().is_some_and(|m| Path::new(m) == root))
+        {
+            return None;
+        }
+        drives
+            .iter()
+            .find(|d| !name.is_empty() && (d.disk.label == name || d.disk.uuid == name))
+            .cloned()
+    })
+}
+
+/// `Games` for `/run/media/<user>/Games/…`.
+pub fn disk_folder(path: &Path) -> Option<String> {
+    let mut parts = path.strip_prefix("/run/media").ok()?.components();
+    parts.next()?;
+    Some(parts.next()?.as_os_str().to_string_lossy().into_owned())
 }
 
 /// The partitions with a file system, the system's own ones (root, boot, recovery) and the
@@ -108,10 +180,14 @@ pub fn drives() -> Vec<Drive> {
         .args([
             "-J",
             "-o",
-            "PATH,LABEL,FSTYPE,SIZE,TYPE,PARTTYPE,MOUNTPOINTS",
+            "PATH,LABEL,UUID,FSTYPE,SIZE,TYPE,PARTTYPE,MOUNTPOINTS",
         ])
         .output();
-    out.map(|o| parse_drives(&o.stdout)).unwrap_or_default()
+    let mut found = out.map(|o| parse_drives(&o.stdout)).unwrap_or_default();
+    for d in &mut found {
+        d.space = d.mount.as_deref().and_then(|m| space(Path::new(m)));
+    }
+    found
 }
 
 fn parse_drives(json: &[u8]) -> Vec<Drive> {
@@ -154,10 +230,12 @@ fn parse_drives(json: &[u8]) -> Vec<Drive> {
                     disk: Disk {
                         path: path.clone(),
                         label: d.label.clone().unwrap_or_default(),
+                        uuid: d.uuid.clone().unwrap_or_default(),
                         fstype: fs,
                         size: d.size.clone().unwrap_or_default(),
                     },
                     mount: mounts.first().map(|m| m.to_string()),
+                    space: None,
                 });
             }
             walk(&d.children, out);
@@ -199,46 +277,89 @@ pub enum MountError {
     Failed(String),
 }
 
-/// Mounts a disk with the password, under /run/media/<user>/<label>, owned by the user.
-/// Blocking.
-pub fn mount_with_password(disk: &Disk, password: &str) -> anyhow::Result<String> {
-    let user = std::env::var("USER").context("no user")?;
-    let name: String = if disk.label.is_empty() {
-        disk.path.rsplit('/').next().unwrap_or("disk").to_string()
-    } else {
-        disk.label.clone()
-    }
-    .chars()
-    .map(|c| {
-        if c.is_alphanumeric() || "-_ ".contains(c) {
-            c
-        } else {
-            '_'
-        }
-    })
-    .collect();
-    let point = format!("/run/media/{user}/{name}");
-    let out = sudo(password, &["mkdir", "-p", &point])?;
-    anyhow::ensure!(out.status.success(), "could not make {point}");
-    // File systems without owners get the user as owner.
-    let ids = format!(
-        "uid={},gid={}",
-        // SAFETY: these calls cannot fail.
-        unsafe { libc::getuid() },
-        unsafe { libc::getgid() }
-    );
-    let mut cmd = vec!["mount"];
-    if ["vfat", "exfat", "ntfs", "ntfs3"].contains(&disk.fstype.as_str()) {
-        cmd.extend(["-o", ids.as_str()]);
-    }
-    cmd.extend([disk.path.as_str(), point.as_str()]);
-    let out = sudo(password, &cmd)?;
+/// Mounts a disk, letting the desktop ask for what it needs. Blocking.
+pub fn mount_asking(disk: &Disk) -> anyhow::Result<()> {
+    let out = Command::new("udisksctl")
+        .args(["mount", "-b", &disk.path])
+        .stdin(Stdio::null())
+        .output()
+        .context("running udisksctl")?;
     anyhow::ensure!(
         out.status.success(),
-        "mount failed: {}",
+        "{}",
         String::from_utf8_lossy(&out.stderr).trim()
     );
+    Ok(())
+}
+
+/// Mounts a disk with the password where the desktop would, owned by the user. Blocking.
+pub fn mount_with_password(disk: &Disk, password: &str) -> anyhow::Result<String> {
+    let point = disk.point()?;
+    let taken = std::fs::read_to_string("/proc/self/mounts").is_ok_and(|m| {
+        m.lines()
+            .filter_map(|l| l.split(' ').nth(1))
+            .any(|p| Path::new(&unescape(p)) == point)
+    });
+    anyhow::ensure!(!taken, "{} is in use", point.display());
+    let point = point.display().to_string();
+    let out = sudo(password, &["mkdir", "-p", "--", &point])?;
+    anyhow::ensure!(out.status.success(), "could not make {point}");
+    // As the desktop does: no programs with other people's rights, no devices.
+    let mut options = "nosuid,nodev".to_string();
+    // File systems without owners get the user as owner.
+    if ["vfat", "exfat", "ntfs", "ntfs3"].contains(&disk.fstype.as_str()) {
+        // SAFETY: these calls cannot fail.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        options += &format!(",uid={uid},gid={gid}");
+    }
+    let out = sudo(
+        password,
+        &["mount", "-o", &options, "--", &disk.path, &point],
+    )?;
+    if !out.status.success() {
+        let _ = sudo(password, &["rmdir", "--", &point]);
+        anyhow::bail!(
+            "mount failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
     Ok(point)
+}
+
+/// `/proc/self/mounts` writes spaces as `\040`.
+fn unescape(s: &str) -> String {
+    s.replace("\\040", " ").replace("\\134", "\\")
+}
+
+/// Takes a disk out of use without a password, when that is allowed. Blocking.
+pub fn unmount(disk: &Disk) -> Result<(), MountError> {
+    let out = Command::new("udisksctl")
+        .args(["unmount", "--no-user-interaction", "-b", &disk.path])
+        .output()
+        .map_err(|e| MountError::Failed(e.to_string()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let text = String::from_utf8_lossy(&out.stderr).into_owned();
+    if text.contains("NotAuthorized") || text.contains("not authorized") {
+        return Err(MountError::NeedsPassword);
+    }
+    Err(MountError::Failed(text.trim().to_string()))
+}
+
+/// Takes the disk mounted at `point` out of use with the password. Blocking.
+pub fn unmount_with_password(point: &str, password: &str) -> anyhow::Result<()> {
+    let out = sudo(password, &["umount", "--", point])?;
+    anyhow::ensure!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    // The empty folder that was made for it.
+    if point.starts_with("/run/media/") {
+        let _ = sudo(password, &["rmdir", "--", point]);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -264,6 +385,49 @@ mod tests {
                 .map(|d| (d.disk.path.as_str(), d.mount.as_deref()))
                 .collect::<Vec<_>>(),
             [("/dev/sda1", None), ("/dev/sdb1", Some("/data/games"))]
+        );
+    }
+
+    #[test]
+    fn a_disk_is_found_by_the_path_of_a_game() {
+        let drive = |path: &str, label: &str, uuid: &str, mount: Option<&str>| Drive {
+            disk: Disk {
+                path: path.into(),
+                label: label.into(),
+                uuid: uuid.into(),
+                fstype: "btrfs".into(),
+                size: "1T".into(),
+            },
+            mount: mount.map(Into::into),
+            space: None,
+        };
+        let drives = [
+            drive("/dev/sda1", "", "4cb5-67", Some("/run/media/me/nvme1n1p1")),
+            drive("/dev/sdb1", "My Games", "77", None),
+            drive("/dev/sdc1", "Here", "88", Some("/run/media/me/Here")),
+        ];
+        let find = |p: &str| {
+            missing_disk(&[PathBuf::from("/home/me/x"), PathBuf::from(p)], &drives)
+                .map(|d| d.disk.path)
+        };
+        // Mounted under another name, not mounted, and where it should be.
+        assert_eq!(
+            find("/run/media/me/4cb5-67/a/b.exe").as_deref(),
+            Some("/dev/sda1")
+        );
+        assert_eq!(
+            find("/run/media/me/My Games/b.exe").as_deref(),
+            Some("/dev/sdb1")
+        );
+        assert_eq!(find("/run/media/me/Here/b.exe"), None);
+        assert_eq!(find("/run/media/me/other/b.exe"), None);
+        assert_eq!(find("/mnt/b.exe"), None);
+        // The desktop's folder: the label, else the UUID, never the device's name.
+        assert_eq!(drives[0].disk.folder(), "4cb5-67");
+        assert_eq!(drives[1].disk.folder(), "My Games");
+        assert_eq!(
+            unescape("/run/media/me/My\\040Games"),
+            "/run/media/me/My Games"
         );
     }
 }

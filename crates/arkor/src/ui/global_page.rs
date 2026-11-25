@@ -378,7 +378,18 @@ impl Library {
     }
 
     pub(super) fn sound(&self, sound: super::sounds::Sound) {
-        if self.global.appearance.sounds {
+        use super::console_sound::Cue;
+        if self.console.on {
+            // Console mode has sounds of its own (a start is heard when it is chosen).
+            match sound {
+                super::sounds::Sound::GameStart => {}
+                super::sounds::Sound::GameExit => self.cue(Cue::Return),
+                // Not over a game.
+                super::sounds::Sound::Done if !self.running.is_empty() => {}
+                super::sounds::Sound::Done => self.cue(Cue::Done),
+                super::sounds::Sound::Error => self.cue(Cue::Error),
+            }
+        } else if self.global.appearance.sounds {
             super::sounds::play(sound);
         }
     }

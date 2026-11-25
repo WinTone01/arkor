@@ -43,6 +43,39 @@ impl Library {
     /// CLI) in its own process group, logging its output; reports a failure when it ends badly.
     pub(super) fn play(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else { return };
+        // On a disk that is not mounted: the desktop mounts it (asking what it needs to).
+        // Console mode did that before.
+        if !self.console.on
+            && let Some(drive) = self.game_disk(&id).filter(|d| d.mount.is_none())
+        {
+            self.status = Some(
+                self.tr("Mounting the game's disk…", "Oyunun diski bağlanıyor…")
+                    .into(),
+            );
+            cx.notify();
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let result = bg
+                    .spawn(async move { arkor_launch::admin::mount_asking(&drive.disk) })
+                    .await;
+                let _ = this.update(cx, |this, cx| match result {
+                    Ok(()) => {
+                        this.select_game(&id, cx);
+                        // Once: a disk that still is not there ends here.
+                        if this.game_disk(&id).is_none() {
+                            this.play(cx);
+                        }
+                    }
+                    Err(e) => {
+                        this.status = Some(format!("{e:#}").into());
+                        this.sound(super::sounds::Sound::Error);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
         let screen = self.console.on.then_some(self.console.screen_px);
         let (mut child, log) = match spawn_launch(&id, screen) {
             Ok(c) => c,

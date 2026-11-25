@@ -123,6 +123,9 @@ impl Library {
             cover_art::trim_wide(window);
             cover_art::trim("arkor/stores", 140, window);
         }
+        if self.console_shows_disks() {
+            self.console_look_drives(cx);
+        }
         let rows = self.console_rows();
         // Never lost: what had the focus may be gone.
         self.console_focus(&rows).step(&rows, 0, 0);
@@ -163,6 +166,20 @@ impl Library {
                 .into_any_element(),
             _ => self.console_body(&rows, top, f, cx),
         };
+        // The start-up animation: the console comes in when it opens.
+        if self.step_console_intro(window) {
+            self.console.unsettled = true;
+        }
+        match self.console_intro_opens() {
+            Some(true) if std::mem::take(&mut self.console.intro_covers) => {
+                self.console.entered = Some(now);
+            }
+            Some(false) => self.console.intro_covers = true,
+            _ => {}
+        }
+        let logo = 48. * u;
+        let intro =
+            self.render_console_intro((vw, vh), (f.margin + logo / 2., self.logo_y(u), logo), cx);
         let over = self.console_overlay_view(f, cx);
         let launching = self.console_launching(f, window, cx);
         if self.console.unsettled {
@@ -205,6 +222,7 @@ impl Library {
             .children(self.render_shop_login(f, cx))
             .child(self.console_footer(&item, f, cx))
             .children(launching)
+            .children(intro)
     }
 
     /// A store's login (its page is a window of its own; this is what is around it).
@@ -576,6 +594,11 @@ impl Library {
 
     // ---- The top and the bottom ----
 
+    /// The middle of the logo at the top (the tabs beside it are a little taller).
+    fn logo_y(&self, u: f32) -> f32 {
+        40. * u + 10. * u + 25. * u * 1.618 / 2.
+    }
+
     fn console_top(&self, f: Frame, cx: &mut Context<Self>) -> Div {
         let u = f.u;
         let tab = self.console.tab();
@@ -677,7 +700,12 @@ impl Library {
                     .flex()
                     .items_center()
                     .gap(px(22. * u))
-                    .child(style::logo(48. * u))
+                    .child(
+                        // The start-up animation brings it.
+                        div()
+                            .opacity(if self.console.intro.is_some() { 0. } else { 1. })
+                            .child(style::logo(48. * u)),
+                    )
                     .child(hint("LB", "⇧Tab"))
                     .child(tabs)
                     .child(hint("RB", "Tab")),
@@ -775,6 +803,8 @@ impl Library {
                 if pad { "☰" } else { "F10" },
                 if keyboard {
                     self.tr("Done", "Tamam")
+                } else if folder {
+                    self.tr("Cancel", "Vazgeç")
                 } else {
                     self.tr("Menu", "Menü")
                 },
@@ -1614,7 +1644,6 @@ impl Library {
                             .child(p),
                     );
             }
-            self.console_look_drives(cx);
             let mut pills = div().flex().gap(px(12. * u));
             for (c, item) in rows[0].items.iter().enumerate() {
                 let glow = if row == 0 && c == col { 1. } else { 0. };
