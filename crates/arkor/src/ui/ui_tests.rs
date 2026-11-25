@@ -906,6 +906,7 @@ fn console_steps_aside_while_steam_updates_a_game() {
         speed: 0.,
         running: false,
         update: true,
+        step: arkor_launch::steam_downloads::Step::Waiting,
     };
     let launch = || Launch {
         id: "shooter".into(),
@@ -963,4 +964,70 @@ fn console_steps_aside_while_steam_updates_a_game() {
     );
     view.update_in(cx, |l, w, cx| l.console_do(Act::DoNotStart, w, cx));
     assert!(view.read_with(cx, |l, _| l.console.after_update.is_none()));
+}
+
+#[test]
+fn console_shows_removal_and_arkors_update() {
+    use super::console::{Act, Overlay, Screen};
+    use arkor_launch::shops::Shop;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#gog/42"));
+        lib
+    });
+    cx.run_until_parked();
+    let pills = |l: &Library| {
+        l.console_rows()
+            .first()
+            .map(|r| r.items.iter().map(|i| i.act.clone()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    // While it is removed its screen stays, with a button that only turns.
+    view.update(cx, |l, cx| {
+        l.shop_uninstall(Shop::Gog, "42", cx);
+        assert_eq!(pills(l), [Act::Nothing]);
+        assert_eq!(l.console.screen(), Screen::ShopGame(Shop::Gog, "42".into()));
+        // Gone: the screen goes with it.
+        l.console_left_by(&(Shop::Gog, "42".into()));
+        assert_eq!(l.console.screen(), Screen::Stores);
+    });
+    // A newer Arkor: in the settings and among the downloads, asked before it is installed.
+    view.update_in(cx, |l, w, cx| {
+        let acts = |l: &Library| {
+            l.console_rows()
+                .iter()
+                .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+                .collect::<Vec<_>>()
+        };
+        l.console_open(
+            Screen::SettingsCat(super::console_settings::AppCat::General),
+            cx,
+        );
+        assert!(acts(l).contains(&Act::CheckArkor));
+        l.app_update.available = Some(arkor_launch::self_update::Release {
+            version: "9.9.9".into(),
+            url: String::new(),
+            size: 1000,
+            notes: String::new(),
+        });
+        assert!(acts(l).contains(&Act::AskArkor));
+        l.console_open(Screen::Downloads, cx);
+        assert!(acts(l).contains(&Act::AskArkor));
+        l.console_do(Act::AskArkor, w, cx);
+        assert!(matches!(
+            &l.console.overlay,
+            Some(Overlay::Ask(t, _, Act::UpdateArkor)) if t.contains("9.9.9")
+        ));
+    });
 }

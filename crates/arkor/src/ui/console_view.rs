@@ -126,6 +126,7 @@ impl Library {
         if self.console_shows_disks() {
             self.console_look_drives(cx);
         }
+        self.console_note(cx);
         let rows = self.console_rows();
         // Never lost: what had the focus may be gone.
         self.console_focus(&rows).step(&rows, 0, 0);
@@ -643,6 +644,25 @@ impl Library {
             .gap(px(26. * u))
             .text_size(px(23. * u))
             .text_color(pal::text_soft());
+        // A newer Arkor.
+        if let Some(r) = &self.app_update.available
+            && !self.app_update.installing
+        {
+            right = right.child(
+                div()
+                    .id("console-arkor")
+                    .flex()
+                    .items_center()
+                    .gap(px(8. * u))
+                    .cursor_pointer()
+                    .text_color(pal::accent_light())
+                    .child(style::icon("sparkles", 22. * u, pal::accent_light()))
+                    .child(format!("Arkor {}", r.version))
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        this.console_do(super::console::Act::AskArkor, w, cx)
+                    })),
+            );
+        }
         // What is downloading.
         let active = arkor_launch::progress::list();
         if let Some(e) = active.iter().find(|e| e.fraction().is_some()) {
@@ -1384,7 +1404,11 @@ impl Library {
                         .hover(|h| h.bg(pal::text().opacity(0.18)))
                 }
             })
-            .child(style::icon(icon, 23. * u, color))
+            .child(if icon == "loader-circle" {
+                super::loader::spinner(30. * u, f.still)
+            } else {
+                style::icon(icon, 23. * u, color).into_any_element()
+            })
             .child(item.label.clone())
             .on_click(cx.listener(move |this, _, w, cx| {
                 this.console_click(over, (id.1, id.2), act.clone(), w, cx)
@@ -1410,6 +1434,20 @@ impl Library {
         } else {
             (pal::text(), pal::muted())
         };
+        // Bars glide to where they are, however rarely that is known.
+        let bar = item.progress.map(|p| {
+            let at = self.console.bars.entry(item.label.clone()).or_insert(p);
+            if f.still || p < *at {
+                *at = p;
+            }
+            *at += (p - *at) * f.ease * 0.22;
+            if p - *at > 0.0005 {
+                self.console.unsettled = true;
+            } else {
+                *at = p;
+            }
+            *at
+        });
         let picture = art.as_ref().map(|a| {
             let (w, h) = (60. * u, 80. * u);
             self.console_art(a, "", (w, h, 8. * u), cx)
@@ -1489,6 +1527,7 @@ impl Library {
             })
             .child(match picture {
                 Some(p) => p,
+                None if *icon == "loader-circle" => super::loader::spinner(34. * u, f.still),
                 None => style::icon(icon, 28. * u, soft).into_any_element(),
             })
             .child(
@@ -1516,7 +1555,7 @@ impl Library {
                     }),
             )
             .children(value)
-            .children(item.progress.map(|p| {
+            .children(bar.map(|p| {
                 div()
                     .absolute()
                     .left(px(24. * u))

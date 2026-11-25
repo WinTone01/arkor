@@ -1067,8 +1067,14 @@ impl Library {
         if !self.shops.removing.insert(key.clone()) {
             return;
         }
-        self.shops.game = None;
+        // Console mode stays on its screen until it is gone.
+        if !self.console.on {
+            self.shops.game = None;
+        }
         cx.notify();
+        if cfg!(test) {
+            return;
+        }
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let (shop, id) = key.clone();
@@ -1077,7 +1083,10 @@ impl Library {
                 this.shops.removing.remove(&key);
                 this.shops.read_installed(key.0);
                 match result {
-                    Ok(()) => this.forget_shop_game(&key),
+                    Ok(()) => {
+                        this.console_left_by(&key);
+                        this.forget_shop_game(&key);
+                    }
                     Err(e) => {
                         this.status = Some(this.shop_error(&format!("{e:#}")).into());
                         this.sound(super::sounds::Sound::Error);
@@ -1093,8 +1102,10 @@ impl Library {
     pub(super) fn steam_do(
         &mut self,
         what: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+        then: impl FnOnce(&mut Self) -> Option<&'static str> + 'static,
         cx: &mut Context<Self>,
     ) {
+        cx.notify();
         if cfg!(test) {
             return;
         }
@@ -1103,9 +1114,17 @@ impl Library {
             let result = bg.spawn(async move { what() }).await;
             let _ = this.update(cx, |this, cx| {
                 this.shops.read_installed(Shop::Steam);
-                if let Err(e) = result {
-                    this.status = Some(this.shop_error(&format!("{e:#}")).into());
-                    this.sound(super::sounds::Sound::Error);
+                let said = then(this);
+                match result {
+                    Ok(()) => {
+                        if let Some(text) = said {
+                            this.status = Some(text.into());
+                        }
+                    }
+                    Err(e) => {
+                        this.status = Some(this.shop_error(&format!("{e:#}")).into());
+                        this.sound(super::sounds::Sound::Error);
+                    }
                 }
                 this.watch_progress(cx);
                 cx.notify();

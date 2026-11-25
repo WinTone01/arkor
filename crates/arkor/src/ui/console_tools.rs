@@ -41,6 +41,50 @@ impl Library {
         Row::new(Kind::Line, vec![Item::line(act, icon, label, value)])
     }
 
+    /// Arkor itself: its version, a look for a newer one and its installation.
+    pub(super) fn console_arkor_row(&self) -> Row {
+        let u = &self.app_update;
+        let (act, icon, value) = if u.installing {
+            (
+                Act::Nothing,
+                "loader-circle",
+                self.tr("Updating…", "Güncelleniyor…").to_string(),
+            )
+        } else if u.checking {
+            (
+                Act::Nothing,
+                "loader-circle",
+                self.tr("Looking…", "Bakılıyor…").to_string(),
+            )
+        } else if let Some(r) = &u.available {
+            (
+                Act::AskArkor,
+                "sparkles",
+                format!("{} {}", self.tr("Update to", "Güncelle:"), r.version),
+            )
+        } else {
+            (
+                Act::CheckArkor,
+                "sparkles",
+                self.tr("Look for an update", "Güncelleme denetle")
+                    .to_string(),
+            )
+        };
+        let version = arkor_launch::self_update::current_version();
+        let mut row = self.line(act, icon, &format!("Arkor {version}"), Value::Text(value));
+        row.items[0].sub = match (&u.message, &u.available) {
+            (Some(m), _) => m.clone(),
+            (None, Some(r)) => format!(
+                "{} {} · {}",
+                self.tr("New version:", "Yeni sürüm:"),
+                r.version,
+                arkor_launch::progress::human_bytes(r.size)
+            ),
+            (None, None) => String::new(),
+        };
+        row
+    }
+
     /// The Downloads screen's part below the queue: updates, then what is installed.
     pub(super) fn console_tool_rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
@@ -78,6 +122,10 @@ impl Library {
         let mut row = Row::new(Kind::Pills, pills);
         row.title = Some(self.tr("Updates", "Güncellemeler").into());
         rows.push(row);
+        // Only when there is something to see; looking is in Settings too.
+        if self.app_update.available.is_some() || self.app_update.installing {
+            rows.push(self.console_arkor_row());
+        }
         for u in waiting {
             let value = if u.latest.is_empty() {
                 self.tr("Update", "Güncelle").to_string()

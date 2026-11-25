@@ -10,12 +10,12 @@ use super::{Library, widgets};
 
 #[derive(Default)]
 pub(super) struct AppUpdate {
-    checking: bool,
-    installing: bool,
+    pub(super) checking: bool,
+    pub(super) installing: bool,
     /// A newer release, once found.
     pub(super) available: Option<Release>,
     /// Result of the last check or install, for the card.
-    message: Option<String>,
+    pub(super) message: Option<String>,
 }
 
 impl Library {
@@ -55,7 +55,7 @@ impl Library {
     }
 
     /// Downloads the update, replaces the program and starts it again.
-    fn install_app_update(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn install_app_update(&mut self, cx: &mut Context<Self>) {
         let Some(release) = self.app_update.available.clone() else {
             return;
         };
@@ -76,7 +76,8 @@ impl Library {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.app_update.installing = false;
-                match result.and_then(|exe| self_update::restart(&exe)) {
+                let console = this.console.on;
+                match result.and_then(|exe| self_update::restart(&exe, console)) {
                     Ok(()) => cx.quit(),
                     Err(e) => {
                         this.app_update.message = Some(format!("{e:#}"));

@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 
 use arkor_launch::downloads::{self, State};
 use arkor_launch::progress::{self, Phase};
+use arkor_launch::steam_downloads;
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, div, prelude::*, px};
 
@@ -353,11 +354,21 @@ impl Library {
             .into_iter()
             .filter(|i| !progress::running(&i.key))
             .collect();
+        let steam: Vec<steam_downloads::Item> = steam_downloads::items()
+            .into_iter()
+            .filter(|i| {
+                let key = arkor_launch::shops::key(
+                    arkor_launch::shops::Shop::Steam,
+                    &i.appid.to_string(),
+                );
+                !i.running && !items.iter().any(|o| o.key == key) && !progress::running(&key)
+            })
+            .collect();
         let mut out = div().flex().flex_col().gap_3().child(section_title(
             self.tr("Up next", "Sıradakiler"),
-            Some(items.len()),
+            Some(items.len() + steam.len()),
         ));
-        if items.is_empty() {
+        if items.is_empty() && steam.is_empty() {
             return out.child(
                 style::card()
                     .px_4()
@@ -367,8 +378,30 @@ impl Library {
                     .child(self.tr("Nothing waiting.", "Bekleyen bir şey yok.")),
             );
         }
-        let n = items.len();
+        let n = items.len() + steam.len();
         let mut list = style::card().overflow_hidden().flex().flex_col();
+        for (ix, item) in steam.iter().enumerate() {
+            let key =
+                arkor_launch::shops::key(arkor_launch::shops::Shop::Steam, &item.appid.to_string());
+            let mut detail = format!("Steam · {}", self.steam_step(item));
+            if item.total > 0 {
+                detail += &format!(
+                    " · {} / {}",
+                    progress::human_bytes(item.done),
+                    progress::human_bytes(item.total)
+                );
+            }
+            let picture = art(self, &key, 64., 36., cx);
+            list = list.child(self.queue_row(
+                picture,
+                item.name.clone(),
+                detail,
+                pal::muted(),
+                div(),
+                ix + 1 == n,
+            ));
+        }
+        let after = steam.len();
         for (ix, item) in items.into_iter().enumerate() {
             let (detail, color) = match &item.state {
                 State::Queued => (self.tr("Waiting", "Bekliyor").to_string(), pal::muted()),
@@ -422,7 +455,7 @@ impl Library {
                 detail,
                 color,
                 actions,
-                ix + 1 == n,
+                after + ix + 1 == n,
             ));
         }
         out = out.child(list);

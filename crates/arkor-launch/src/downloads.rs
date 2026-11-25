@@ -352,8 +352,39 @@ pub fn pending(key: &str) -> bool {
             .any(|i| i.key == key && i.state == State::Queued)
 }
 
+/// Keys the user wanted to go (on) in this session, not only loaded from the saved queue.
+static ASKED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Whether the user asked for `key` in this session; asked once, answered once.
+pub(crate) fn asked_to_go_on(key: &str) -> bool {
+    let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+    let before = asked.len();
+    asked.retain(|k| k != key);
+    asked.len() != before
+}
+
+/// Moves a waiting `key` one place up or down among those waiting.
+pub fn shift(key: &str, up: bool) {
+    with(|q| shift_in(q, key, up, progress::running));
+}
+
+fn shift_in(q: &mut [Item], key: &str, up: bool, running: impl Fn(&str) -> bool) {
+    let waiting: Vec<usize> = (0..q.len()).filter(|i| !running(&q[*i].key)).collect();
+    let Some(at) = waiting.iter().position(|i| q[*i].key == key) else {
+        return;
+    };
+    let to = if up { at.checked_sub(1) } else { Some(at + 1) };
+    if let Some(to) = to.and_then(|t| waiting.get(t)) {
+        q.swap(waiting[at], *to);
+    }
+}
+
 /// Adds `key` to the queue (a paused or failed one starts again). Already there: no-op.
 pub fn enqueue(key: &str) {
+    ASKED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(key.to_string());
     with(|q| match q.iter_mut().find(|i| i.key == key) {
         Some(i) => i.state = State::Queued,
         None => q.push(Item {
@@ -547,6 +578,31 @@ pub fn retry(key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn waiting_downloads_change_places() {
+        let mut q: Vec<Item> = ["run", "a", "b", "c"]
+            .map(|k| Item {
+                key: k.into(),
+                label: k.into(),
+                state: State::Queued,
+            })
+            .into();
+        let running = |k: &str| k == "run";
+        let keys = |q: &[Item]| q.iter().map(|i| i.key.clone()).collect::<Vec<_>>();
+        shift_in(&mut q, "c", true, running);
+        assert_eq!(keys(&q), ["run", "a", "c", "b"]);
+        shift_in(&mut q, "a", true, running);
+        assert_eq!(
+            keys(&q),
+            ["run", "a", "c", "b"],
+            "not over the one that runs"
+        );
+        shift_in(&mut q, "a", false, running);
+        shift_in(&mut q, "b", false, running);
+        shift_in(&mut q, "run", false, running);
+        assert_eq!(keys(&q), ["run", "c", "a", "b"]);
+    }
 
     #[test]
     fn labels_and_needs() {

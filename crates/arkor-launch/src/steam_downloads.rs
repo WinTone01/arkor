@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,23 @@ use arkor_stores::steam_library as lib;
 
 use crate::{downloads, progress, shops, steam_link};
 
-/// One app Steam has something to download for.
+/// What Steam does with a download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Step {
+    /// Steam is closed.
+    #[default]
+    Off,
+    /// Its turn comes.
+    Waiting,
+    Paused,
+    /// Looks at what is there and makes room.
+    Preparing,
+    Downloading,
+    /// Puts it in its place.
+    Installing,
+}
+
+/// One app Steam has something to download for, in the order of Steam's queue.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub appid: u32,
@@ -25,6 +41,7 @@ pub struct Item {
     pub running: bool,
     /// It is installed and only gets newer.
     pub update: bool,
+    pub step: Step,
 }
 
 impl Item {
@@ -65,6 +82,7 @@ pub fn pending(appid: u32) -> Option<Item> {
         speed: 0.,
         running: false,
         update: true,
+        step: Step::Off,
     })
 }
 
@@ -79,10 +97,37 @@ pub fn steam_on() -> bool {
         && std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "steam")
 }
 
-/// Which apps Steam works on, by the end of its content log.
-fn working(log: &str) -> HashMap<u32, bool> {
-    let mut out = HashMap::new();
+/// What the log tells about one app.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Told {
+    step: Step,
+    /// Downloaded before this run and in all; put together before and in all.
+    from: u64,
+    total: u64,
+    staged: u64,
+    to_stage: u64,
+    /// Its files were given their full size beforehand: their size says nothing.
+    preallocated: bool,
+}
+
+/// "download 0/2180800320" in a line.
+fn pair(line: &str, what: &str) -> Option<(u64, u64)> {
+    let rest = line.split_once(&format!("{what} "))?.1;
+    let (a, b) = rest.split([',', ' ']).next()?.split_once('/')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+/// What Steam does, by the end of its content log: each app, and the order of its queue.
+fn told(log: &str) -> (Vec<u32>, HashMap<u32, Told>) {
+    let mut queue: Vec<u32> = Vec::new();
+    let mut out: HashMap<u32, Told> = HashMap::new();
     for line in log.lines() {
+        // Steam started: what was before counts no more.
+        if line.contains("] Client version:") {
+            queue.clear();
+            out.clear();
+            continue;
+        }
         let Some((_, rest)) = line.split_once("AppID ") else {
             continue;
         };
@@ -90,19 +135,59 @@ fn working(log: &str) -> HashMap<u32, bool> {
             continue;
         };
         let Ok(id) = id.parse::<u32>() else { continue };
-        if let Some(steps) = what.strip_prefix("App update changed : ") {
-            out.insert(
-                id,
-                steps.contains("Running Update") && !steps.contains("Stopping"),
-            );
-        } else if let Some(state) = what.strip_prefix("state changed : ") {
-            // "…, (Suspended)" or "Fully Installed,": nothing goes on.
-            if !state.contains("Update Running") {
-                out.insert(id, false);
+        if let Some(p) = what.strip_prefix("scheduler update : ") {
+            if p.starts_with("Priority First") || p.starts_with("Priority User") {
+                queue.retain(|q| *q != id);
+                queue.insert(0, id);
+            } else if !queue.contains(&id) {
+                queue.push(id);
             }
+            continue;
+        }
+        if what.starts_with("scheduler finished : removed") {
+            queue.retain(|q| *q != id);
+            continue;
+        }
+        let t = out.entry(id).or_default();
+        if let Some(steps) = what.strip_prefix("App update changed : ") {
+            if steps.contains("Running Update") && !steps.contains("Stopping") {
+                t.step = if steps.contains("Downloading") {
+                    Step::Downloading
+                } else if steps.contains("Committing") || steps.contains("Staging") {
+                    Step::Installing
+                } else if t.step == Step::Downloading || t.step == Step::Installing {
+                    // Between two of them.
+                    t.step
+                } else {
+                    Step::Preparing
+                };
+            } else if !matches!(t.step, Step::Paused) {
+                t.step = Step::Waiting;
+            }
+        } else if let Some(state) = what.strip_prefix("state changed : ") {
+            if state.contains("(Suspended)") {
+                t.step = Step::Paused;
+            } else if state.contains("Update Running") {
+                if matches!(t.step, Step::Off | Step::Waiting | Step::Paused) {
+                    t.step = Step::Preparing;
+                }
+            } else {
+                t.step = Step::Waiting;
+            }
+        } else if what.starts_with("update started : ") {
+            if let Some((a, b)) = pair(what, "download") {
+                (t.from, t.total) = (a, b);
+            }
+            if let Some((a, b)) = pair(what, "stage") {
+                (t.staged, t.to_stage) = (a, b);
+            }
+        } else if what.starts_with("update canceled") {
+            t.step = Step::Paused;
+        } else if let Some(n) = what.strip_prefix("preallocated ") {
+            t.preallocated = !n.starts_with("0 files");
         }
     }
-    out
+    (queue, out)
 }
 
 /// The end of Steam's content log.
@@ -139,20 +224,17 @@ fn on_disk(dir: &Path) -> u64 {
     sum
 }
 
-/// Where a download stands: its manifest is only written now and then, what Steam has put
-/// together in its download folder grows all the time.
-fn done(p: &lib::Progress, staged: u64) -> u64 {
-    if p.total == 0 {
-        return 0;
-    }
-    let share = if p.to_stage > 0 {
-        staged as f64 / p.to_stage as f64
+/// Where a running download stands. Its manifest is only written when Steam stops; what
+/// Steam has put together in its download folder grows all the time.
+fn live(t: &Told, on_disk: u64) -> u64 {
+    let grown = on_disk.saturating_sub(t.staged) as f64;
+    let all = t.to_stage.saturating_sub(t.staged) as f64;
+    let share = if all > 0. && !t.preallocated {
+        (grown / all).min(1.)
     } else {
         0.
     };
-    p.done
-        .max((share.min(1.) * p.total as f64) as u64)
-        .min(p.total)
+    (t.from + (share * t.total.saturating_sub(t.from) as f64) as u64).min(t.total)
 }
 
 /// How fast each of them went.
@@ -182,45 +264,66 @@ impl Speeds {
 
 fn look(speeds: &mut Speeds) -> Vec<Item> {
     let on = steam_on();
-    let log = match lib::root() {
-        Some(root) if on => working(&log_tail(&root)),
-        _ => HashMap::new(),
+    let (queue, log) = match lib::root() {
+        Some(root) if on => told(&log_tail(&root)),
+        _ => Default::default(),
     };
     let now = Instant::now();
     let mut out = Vec::new();
     for m in lib::manifests() {
         let p = m.progress;
-        // Up to date, or only a small part of Steam itself without anything to fetch.
-        if !p.unfinished() || (p.total == 0 && (m.runtime || p.state & 4 != 0)) {
+        let t = log.get(&m.appid).cloned().unwrap_or_default();
+        let running = matches!(
+            t.step,
+            Step::Preparing | Step::Downloading | Step::Installing
+        );
+        if !p.unfinished() && !running {
             continue;
         }
-        let running = log.get(&m.appid).copied().unwrap_or(false);
-        let folder: Option<PathBuf> = m
-            .path
-            .parent()
-            .map(|d| d.join("downloading").join(m.appid.to_string()));
-        let staged = match &folder {
-            Some(d) if running => on_disk(d),
-            _ => p.staged,
+        // A part of Steam without anything to fetch, that Steam does not care for now.
+        let total = if t.total > 0 { t.total } else { p.total };
+        if total == 0 && !running && !queue.contains(&m.appid) && p.state & 4 != 0 {
+            continue;
+        }
+        let done = if running && t.total > 0 {
+            let folder = m.path.parent().map(|d| d.join("downloading"));
+            match (t.step, folder) {
+                (Step::Installing, _) => t.total,
+                (_, Some(d)) => live(&t, on_disk(&d.join(m.appid.to_string()))),
+                _ => t.from,
+            }
+        } else if running {
+            0
+        } else {
+            p.done.min(total)
         };
-        let done = done(&p, staged);
         out.push(Item {
             appid: m.appid,
             name: m.name,
             done,
-            total: p.total,
-            speed: if running {
+            total,
+            speed: if t.step == Step::Downloading {
                 speeds.of(m.appid, done, now)
             } else {
                 0.
             },
             running,
-            update: p.needs_update(),
+            update: p.state & 4 != 0,
+            step: match t.step {
+                _ if !on => Step::Off,
+                Step::Off => Step::Waiting,
+                s => s,
+            },
         });
     }
     speeds
         .0
         .retain(|id, _| out.iter().any(|i| i.appid == *id && i.running));
+    // What runs, then as Steam's queue has them.
+    out.sort_by_key(|i| {
+        let place = queue.iter().position(|q| *q == i.appid);
+        (!i.running, place.unwrap_or(usize::MAX))
+    });
     out
 }
 
@@ -232,6 +335,11 @@ pub(crate) fn start() {
             let mut speeds = Speeds::default();
             let mut before: Vec<Item> = Vec::new();
             loop {
+                // A game that was put first and is there now gets its own setting back, when
+                // Steam is closed (it would write over it).
+                if !steam_on() {
+                    shops::steam_first_over();
+                }
                 let now = look(&mut speeds);
                 let running: Vec<progress::External> = now
                     .iter()
@@ -263,7 +371,7 @@ pub(crate) fn start() {
                     progress::touch();
                 }
                 before = now;
-                std::thread::sleep(Duration::from_secs(if any { 2 } else { 4 }));
+                std::thread::sleep(Duration::from_millis(if any { 1000 } else { 2500 }));
             }
         });
 }
@@ -282,48 +390,99 @@ pub fn let_steam_update() -> anyhow::Result<bool> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn reads_what_steam_works_on() {
-        let log = "\
-[2026-11-25 13:52:00] AppID 730 state changed : Update Required,Fully Installed,Update Queued,Update Running,Update Started,
-[2026-11-25 13:52:00] AppID 730 App update changed : Running Update,Downloading,Staging,
-[2026-11-25 13:52:01] AppID 10 App update changed : Running Update,Downloading,Staging,
-[2026-11-25 13:52:02] Current download rate: 50.121 Mbps
-[2026-11-25 13:52:11] AppID 730 App update changed : Running Update,Downloading,Staging,Stopping,
-[2026-11-25 13:52:11] AppID 730 App update changed : None
-[2026-11-25 13:52:11] AppID 730 state changed : Update Required,Fully Installed,Update Queued,Update Started, (Suspended)
-[2026-11-25 13:52:12] AppID x App update changed : Running Update,
-[2026-11-25 13:52:13] AppID 20 App update changed : Running Update,Committing,
-[2026-11-25 13:52:14] AppID 20 state changed : Fully Installed,
+    /// Lines as Steam writes them.
+    const LOG: &str = "\
+[2026-11-25 13:52:00] AppID 999 scheduler update : Priority First, not played for 0 seconds, update disabled for 0 seconds
+[2026-11-25 14:21:29] Client version: 1794536281
+[2026-11-25 14:21:31] AppID 730 scheduler update : Priority Auto Update, not played for 917923 seconds, update disabled for 0 seconds
+[2026-11-25 14:21:31] AppID 730 state changed : Update Required,Fully Installed,Update Queued,Update Started,
+[2026-11-25 14:21:31] AppID 228980 scheduler update : Priority Auto Update, not played for 1795605691 seconds, update disabled for 0 seconds
+[2026-11-25 14:21:31] AppID 228980 state changed : Update Required,Fully Installed,Update Queued,
+[2026-11-25 14:21:31] AppID 1305420 scheduler update : Priority Auto Update, not played for 1795605691 seconds, update disabled for 0 seconds
+[2026-11-25 14:21:31] AppID 1305420 state changed : Update Required,Update Queued,Update Started,
+[2026-11-25 14:21:31] AppID 730 state changed : Update Required,Fully Installed,Update Queued,Update Running,Update Started,
+[2026-11-25 14:21:31] AppID 730 App update changed : Running Update,Reconfiguring,
+[2026-11-25 14:21:31] AppID 730 preallocated 0 files (0 MB)
+[2026-11-25 14:21:31] AppID 730 update started : download 244471968/320765200, store 0/0, reuse 402060357/430371909, delta 0/0, stage 705200172/931611808
+[2026-11-25 14:21:31] AppID 730 App update changed : Running Update,Downloading,Staging,
 ";
-        let w = working(log);
-        assert_eq!(w.get(&730), Some(&false), "paused");
-        assert_eq!(w.get(&10), Some(&true));
-        assert_eq!(w.get(&20), Some(&false), "finished");
-        assert_eq!(w.len(), 3);
+
+    #[test]
+    fn reads_what_steam_does_and_in_which_order() {
+        let (queue, t) = told(LOG);
+        assert_eq!(
+            queue,
+            [730, 228980, 1305420],
+            "what was before is forgotten"
+        );
+        let cs = &t[&730];
+        assert_eq!(cs.step, Step::Downloading);
+        assert_eq!((cs.from, cs.total), (244_471_968, 320_765_200));
+        assert_eq!((cs.staged, cs.to_stage), (705_200_172, 931_611_808));
+        assert_eq!(t[&1305420].step, Step::Waiting);
+        // Done, and the next one.
+        let more = format!(
+            "{LOG}\
+[x] AppID 730 App update changed : Running Update,Committing,
+[x] AppID 730 App update changed : None
+[x] AppID 730 state changed : Fully Installed,
+[x] AppID 730 scheduler finished : removed from schedule (result No Error, state 0xc)
+[x] AppID 1305420 scheduler update : Priority First, not played for 1 seconds, update disabled for 0 seconds
+[x] AppID 1305420 state changed : Update Required,Update Queued,Update Running,Update Started,
+[x] AppID 1305420 App update changed : Running Update,
+[x] AppID 1305420 update started : download 0/2180800320, store 0/0, reuse 0/0, delta 0/0, stage 0/8295996582
+"
+        );
+        let (queue, t) = told(&more);
+        assert_eq!(queue, [1305420, 228980], "moved to the front");
+        assert_eq!(t[&1305420].step, Step::Preparing);
+        assert_eq!(t[&1305420].total, 2_180_800_320);
+        // Paused in Steam.
+        let paused = format!(
+            "{more}\
+[x] AppID 1305420 App update changed : Running Update,Downloading,Staging,
+[x] AppID 1305420 update canceled : Disabled (Suspended)
+[x] AppID 1305420 App update changed : Running Update,Stopping,
+[x] AppID 1305420 App update changed : None
+[x] AppID 1305420 state changed : Update Required,Update Queued,Update Started, (Suspended)
+[x] AppID 1305420 scheduler finished : staying in schedule (result Suspended, state 0x40a)
+"
+        );
+        let (queue, t) = told(&paused);
+        assert_eq!(t[&1305420].step, Step::Paused);
+        assert!(queue.contains(&1305420));
     }
 
     #[test]
-    fn the_folder_tells_more_than_the_manifest() {
-        let p = lib::Progress {
-            state: 1030,
-            done: 100,
-            total: 1000,
-            staged: 0,
-            to_stage: 4000,
+    fn a_running_download_is_measured_by_its_folder() {
+        // As Steam had it: 879330703 of 8295996582 put together.
+        let t = Told {
+            step: Step::Downloading,
+            total: 2_180_800_320,
+            to_stage: 8_295_996_582,
+            ..Told::default()
         };
-        assert_eq!(done(&p, 0), 100);
-        assert_eq!(done(&p, 2000), 500);
-        assert_eq!(done(&p, 9000), 1000, "never more than all of it");
-        assert!(p.needs_update() && p.unfinished() && !p.installed());
-        let installing = lib::Progress { state: 1026, ..p };
-        assert!(!installing.needs_update() && installing.unfinished());
-        let fine = lib::Progress {
-            state: 4,
-            done: 1000,
-            ..p
+        let done = live(&t, 879_330_703);
+        assert!(
+            (done as f64 / 2_180_800_320. - 0.106).abs() < 0.001,
+            "{done}"
+        );
+        assert_eq!(live(&t, u64::MAX / 2), t.total, "never more than all of it");
+        // It goes on from where it was.
+        let half = Told {
+            from: 1000,
+            total: 2000,
+            staged: 400,
+            to_stage: 800,
+            ..Told::default()
         };
-        assert!(!fine.unfinished() && fine.installed());
+        assert_eq!((live(&half, 400), live(&half, 600)), (1000, 1500));
+        assert_eq!(live(&half, 0), 1000);
+        let full = Told {
+            preallocated: true,
+            ..half
+        };
+        assert_eq!(live(&full, 800), 1000, "a full folder that says nothing");
     }
 
     #[test]

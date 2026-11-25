@@ -8,10 +8,11 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use arkor_stores::steam_library as lib;
+use arkor_stores::{steam_library as lib, vdf_edit};
 
 use super::{Installed, Order, Owned, Shop};
 use crate::progress::{self, Transfer};
+use crate::steam_downloads::{self, Step};
 use crate::{steam_link, tools};
 
 const CDN: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps";
@@ -87,13 +88,18 @@ pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
             lib::write_install_manifest(&root, appid, &info, &owner)?;
             start_silent()?;
         }
-    } else if !lib::progress(appid).is_some_and(|p| p.installed())
-        && !crate::steam_downloads::items()
-            .iter()
-            .any(|i| i.appid == appid && i.running)
-    {
-        // Begun before, and paused or called off in Steam.
-        go_on()?;
+    } else if !lib::progress(appid).is_some_and(|p| p.installed()) {
+        if !steam_link::steam_running() {
+            start_silent()?;
+        } else if crate::downloads::asked_to_go_on(&super::key(Shop::Steam, id))
+            && steam_downloads::items()
+                .iter()
+                .any(|i| i.appid == appid && i.step == Step::Paused)
+        {
+            // Paused in Steam, and the user wants it to go on (a list that was only loaded
+            // again does not close Steam).
+            go_on()?;
+        }
     }
     watch(appid, &order.title)
 }
@@ -103,8 +109,6 @@ pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
 fn watch(appid: u32, label: &str) -> anyhow::Result<()> {
     let transfer = Transfer::begin(label, None);
     let began = Instant::now();
-    let mut last = (Instant::now(), 0u64);
-    let mut speed = 0.;
     let mut seen_work = false;
     loop {
         if progress::stop_requested() {
@@ -113,14 +117,15 @@ fn watch(appid: u32, label: &str) -> anyhow::Result<()> {
         match lib::progress(appid) {
             Some(p) => {
                 seen_work |= p.total > 0 || p.state & 1024 != 0;
-                let secs = last.0.elapsed().as_secs_f64();
-                if secs >= 1. {
-                    let now = p.done as f64;
-                    speed = ((now - last.1 as f64) / secs).max(0.);
-                    last = (Instant::now(), p.done);
-                }
-                let total = (p.total > 0).then_some(p.total);
-                if !transfer.report(p.done, total, speed) {
+                // Measured as it happens (the manifest is only written when Steam stops).
+                let item = steam_downloads::items()
+                    .into_iter()
+                    .find(|i| i.appid == appid);
+                let (done, total, speed) = match &item {
+                    Some(i) => (i.done, i.total, i.speed),
+                    None => (p.done, p.total, 0.),
+                };
+                if !transfer.report(done, (total > 0).then_some(total), speed) {
                     anyhow::bail!(tools::STOPPED);
                 }
                 if p.installed() && (seen_work || began.elapsed() > Duration::from_secs(20)) {
@@ -134,7 +139,7 @@ fn watch(appid: u32, label: &str) -> anyhow::Result<()> {
             }
             None => {}
         }
-        std::thread::sleep(Duration::from_millis(700));
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -235,9 +240,116 @@ pub(super) fn go_on() -> anyhow::Result<()> {
     start_silent()
 }
 
+/// What was changed to put a game first: its manifest and what stood there.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct First {
+    path: std::path::PathBuf,
+    before: String,
+}
+
+const BEHAVIOR: [&str; 2] = ["AppState", "AutoUpdateBehavior"];
+
+fn first_file() -> Option<std::path::PathBuf> {
+    Some(dirs::state_dir()?.join("arkor/steam-first.json"))
+}
+
+fn set_behavior(path: &std::path::Path, value: &str) -> anyhow::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    let before = vdf_edit::get(&text, &BEHAVIOR)?.unwrap_or_else(|| "0".into());
+    if before != value {
+        let tmp = path.with_extension("acf.arkor-tmp");
+        std::fs::write(&tmp, vdf_edit::set(&text, &BEHAVIOR, value)?)?;
+        std::fs::rename(&tmp, path)?;
+    }
+    Ok(before)
+}
+
+/// Puts a game before Steam's other downloads: its update behaviour becomes Steam's own
+/// "high priority" (what Properties → Updates sets), and the one put first before gets its
+/// own back. Steam only reads this when it starts, so it is closed for a moment.
+pub(super) fn first(appid: u32) -> anyhow::Result<()> {
+    anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
+    let path = lib::manifest(appid).context("the game is not in Steam")?;
+    steam_link::shutdown()?;
+    let result = put_first(&path, first_file().as_deref());
+    start_silent()?;
+    result
+}
+
+/// The game that was put first is there (or gone): its own setting comes back.
+pub(super) fn first_over() {
+    let Some(note) = first_file().filter(|f| f.is_file()) else {
+        return;
+    };
+    let old: Option<First> = std::fs::read_to_string(&note)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    if let Some(old) = old
+        && let Some(m) = lib::read_manifest(old.path.clone())
+    {
+        if !m.progress.installed() || steam_link::steam_running() {
+            return;
+        }
+        let _ = set_behavior(&old.path, &old.before);
+    }
+    let _ = std::fs::remove_file(note);
+}
+
+/// See `first`; what was changed is noted in `note`. Steam must be closed.
+fn put_first(path: &std::path::Path, note: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let old: Option<First> = note
+        .and_then(|n| std::fs::read_to_string(n).ok())
+        .and_then(|t| serde_json::from_str(&t).ok());
+    if let Some(old) = old
+        && old.path.is_file()
+    {
+        set_behavior(&old.path, &old.before)?;
+    }
+    let before = set_behavior(path, "2")?;
+    if let Some(note) = note {
+        if let Some(dir) = note.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let now = First {
+            path: path.to_path_buf(),
+            before,
+        };
+        std::fs::write(note, serde_json::to_vec(&now)?)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_game_is_first_and_the_one_before_gets_its_own_back() {
+        let (tmp, apps) = library();
+        let note = tmp.path().join("state/first.json");
+        let write = |id: u32, behavior: &str| {
+            let path = apps.join(format!("appmanifest_{id}.acf"));
+            std::fs::write(
+                &path,
+                format!("\"AppState\"\n{{\n\t\"appid\"\t\t\"{id}\"\n\t\"AutoUpdateBehavior\"\t\t\"{behavior}\"\n}}\n"),
+            )
+            .unwrap();
+            path
+        };
+        let (a, b) = (write(10, "0"), write(11, "1"));
+        let of = |p: &std::path::Path| {
+            let t = std::fs::read_to_string(p).unwrap();
+            vdf_edit::get(&t, &BEHAVIOR).unwrap().unwrap()
+        };
+        put_first(&b, Some(&note)).unwrap();
+        assert_eq!((of(&a), of(&b)), ("0".into(), "2".into()));
+        put_first(&a, Some(&note)).unwrap();
+        assert_eq!((of(&a), of(&b)), ("2".into(), "1".into()));
+        // Twice the same: its own value is not forgotten.
+        put_first(&a, Some(&note)).unwrap();
+        put_first(&b, Some(&note)).unwrap();
+        assert_eq!((of(&a), of(&b)), ("0".into(), "2".into()));
+    }
 
     fn library() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();

@@ -150,6 +150,16 @@ pub(super) enum Act {
     /// What Steam began to install is called off; what it paused goes on.
     CallOff(u32),
     SteamGoOn,
+    /// Before Steam's other downloads.
+    SteamFirst(u32),
+    /// What can be done with a download of the queue, and its place in it.
+    DownloadMenu(String),
+    MoveDownload(String, bool),
+    FirstDownload(String),
+    /// Arkor's own update: look, ask, install.
+    CheckArkor,
+    AskArkor,
+    UpdateArkor,
     ShowSteam,
     Shift,
     Symbols,
@@ -539,6 +549,12 @@ pub(super) struct Console {
     pub(super) behind_art: Option<(Art, Instant)>,
     /// A text of the game's settings on the keyboard (else it types the search).
     pub(super) edit: Option<(super::console_settings::GameOpt, String)>,
+    /// The note at the bottom and when it came (it goes by itself).
+    pub(super) said: Option<(gpui::SharedString, Instant)>,
+    /// Where the bars of downloads are drawn (they glide).
+    pub(super) bars: HashMap<String, f32>,
+    /// Arkor's own update was looked for in this session.
+    pub(super) looked: bool,
     /// When Steam was opened to log in.
     pub(super) steam_wanted: Option<Instant>,
     /// Steam's windows were asked for.
@@ -879,14 +895,86 @@ impl Library {
         rows
     }
 
+    /// A Steam game's download by its queue key.
+    fn steam_item(&self, key: &str) -> Option<steam_downloads::Item> {
+        let (shop, id, _) = shops::parse_key(key)?;
+        (shop == Shop::Steam).then_some(())?;
+        let id: u32 = id.parse().ok()?;
+        steam_downloads::items().into_iter().find(|i| i.appid == id)
+    }
+
+    /// What Steam does with a download, and what it is.
+    pub(super) fn steam_step(&self, i: &steam_downloads::Item) -> &'static str {
+        use steam_downloads::Step;
+        match i.step {
+            Step::Off => self.tr("Steam is closed", "Steam kapalı"),
+            Step::Waiting => self.tr("Waiting in Steam", "Steam'de sırada"),
+            Step::Paused => self.tr("Paused in Steam", "Steam'de duraklatıldı"),
+            Step::Preparing => self.tr("Preparing", "Hazırlanıyor"),
+            Step::Downloading => self.tr("Downloading", "İndiriliyor"),
+            Step::Installing => self.tr("Installing", "Kuruluyor"),
+        }
+    }
+
+    /// A line for something Steam downloads, or has waiting.
+    fn steam_row(&self, i: &steam_downloads::Item) -> Row {
+        use steam_downloads::Step;
+        let what = if i.update {
+            self.tr("Update", "Güncelleme")
+        } else {
+            self.tr("Installation", "Kurulum")
+        };
+        let value = if i.running && i.total > 0 {
+            self.percent(i.done as f32 / i.total as f32)
+        } else {
+            self.steam_step(i).to_string()
+        };
+        let icon = match i.step {
+            Step::Preparing | Step::Downloading | Step::Installing => "download",
+            Step::Waiting => "clock",
+            Step::Paused | Step::Off => "play",
+        };
+        let mut item = Item::line(
+            Act::SteamDownload(i.appid),
+            icon,
+            i.name.clone(),
+            Value::Text(value),
+        );
+        let mut sub = vec![format!("Steam · {what}")];
+        if i.running && i.step != Step::Downloading {
+            sub.push(self.steam_step(i).into());
+        }
+        if i.total > 0 {
+            sub.push(format!(
+                "{} / {}",
+                progress::human_bytes(i.done),
+                progress::human_bytes(i.total)
+            ));
+        }
+        if i.speed > 1. {
+            sub.push(format!("{}/s", progress::human_bytes(i.speed as u64)));
+        }
+        item.sub = sub.join(" · ");
+        item.progress = (i.total > 0).then(|| i.done as f32 / i.total as f32);
+        if let Look::Line { art, .. } = &mut item.look {
+            *art = Some(Art::Shop(Shop::Steam, i.appid.to_string()));
+        }
+        Row::new(Kind::Line, vec![item])
+    }
+
     fn download_rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
         let art =
             |key: &str| shops::parse_key(key).map(|(shop, id, _)| Art::Shop(shop, id.to_string()));
         let active = progress::list();
+        let steam = steam_downloads::items();
+        // What goes on now: Arkor's own, then Steam's.
         for e in &active {
+            if self.steam_item(&e.key).is_some() {
+                continue;
+            }
             let mut item = Item::line(
-                Act::Download(e.key.clone()),
+                Act::DownloadMenu(e.key.clone()),
                 "download",
                 e.label.clone(),
                 Value::Text(match e.fraction() {
@@ -894,13 +982,6 @@ impl Library {
                     None => String::new(),
                 }),
             );
-            if e.external {
-                item.act = Act::SteamDownload(
-                    shops::parse_key(&e.key)
-                        .and_then(|(_, id, _)| id.parse().ok())
-                        .unwrap_or(0),
-                );
-            }
             item.sub = match e.total {
                 Some(t) => format!(
                     "{} / {} · {}/s",
@@ -910,19 +991,27 @@ impl Library {
                 ),
                 None => self.tr("Preparing", "Hazırlanıyor").into(),
             };
-            if e.external {
-                // The speed is known after a moment.
-                let sub = item.sub.trim_end_matches(" · 0 KB/s").to_string();
-                item.sub = format!("Steam · {sub}");
-            }
             item.progress = Some(e.fraction().unwrap_or(0.));
             if let Look::Line { art: a, .. } = &mut item.look {
                 *a = art(&e.key);
             }
             rows.push(Row::new(Kind::Line, vec![item]));
         }
+        rows.extend(
+            steam
+                .iter()
+                .filter(|i| i.running)
+                .map(|i| self.steam_row(i)),
+        );
+        // Then what waits, in its order: Steam's queue, Arkor's queue.
+        rows.extend(
+            steam
+                .iter()
+                .filter(|i| !i.running)
+                .map(|i| self.steam_row(i)),
+        );
         for i in downloads::items() {
-            if active.iter().any(|e| e.key == i.key) {
+            if active.iter().any(|e| e.key == i.key) || self.steam_item(&i.key).is_some() {
                 continue;
             }
             let (icon, text) = match &i.state {
@@ -931,7 +1020,7 @@ impl Library {
                 State::Failed(_) => ("rotate-ccw", self.tr("Failed", "Başarısız").to_string()),
             };
             let mut item = Item::line(
-                Act::Download(i.key.clone()),
+                Act::DownloadMenu(i.key.clone()),
                 icon,
                 i.label.clone(),
                 Value::Text(text),
@@ -944,7 +1033,6 @@ impl Library {
             }
             rows.push(Row::new(Kind::Line, vec![item]));
         }
-        rows.extend(self.steam_waiting_rows());
         if let Some(first) = rows.first_mut() {
             first.title = Some(self.tr("Downloads", "İndirilenler").into());
         }
@@ -975,132 +1063,105 @@ impl Library {
         rows
     }
 
-    /// What Steam has to download but does not at the moment.
-    fn steam_waiting_rows(&self) -> Vec<Row> {
-        let on = steam_downloads::steam_on();
-        steam_downloads::items()
-            .into_iter()
-            .filter(|i| !i.running)
-            .filter(|i| !progress::running(&shops::key(Shop::Steam, &i.appid.to_string())))
-            .map(|i| {
-                let what = if i.update {
-                    self.tr("Update", "Güncelleme")
-                } else {
-                    self.tr("Installation", "Kurulum")
-                };
-                let value = match on {
-                    true => self.tr("Waiting in Steam", "Steam'de bekliyor"),
-                    false => self.tr("Continue", "Devam et"),
-                };
-                let mut item = Item::line(
-                    Act::SteamDownload(i.appid),
-                    if on { "clock" } else { "play" },
-                    i.name.clone(),
-                    Value::Text(value.into()),
-                );
-                item.sub = match i.total {
-                    0 => format!("Steam · {what}"),
-                    t => format!(
-                        "Steam · {what} · {} / {}",
-                        progress::human_bytes(i.done),
-                        progress::human_bytes(t)
-                    ),
-                };
-                item.progress = (i.total > 0).then(|| i.done as f32 / i.total as f32);
-                if let Look::Line { art, .. } = &mut item.look {
-                    *art = Some(Art::Shop(Shop::Steam, i.appid.to_string()));
-                }
-                Row::new(Kind::Line, vec![item])
-            })
-            .collect()
-    }
-
     /// One of Steam's downloads was chosen.
     fn console_steam_download(&mut self, appid: u32) {
-        let Some(i) = steam_downloads::items()
-            .into_iter()
-            .find(|i| i.appid == appid)
-        else {
+        use steam_downloads::Step;
+        let items = steam_downloads::items();
+        let Some(i) = items.iter().find(|i| i.appid == appid).cloned() else {
             return;
         };
-        // An installation with Steam closed: go on with it or call it off.
-        if !i.update && !steam_downloads::steam_on() {
-            let options = vec![
-                (
-                    self.tr("Go on", "Sürdür").to_string(),
-                    Act::SteamGoOn,
-                    false,
-                ),
-                (
-                    self.tr("Call the installation off", "Kurulumu iptal et")
-                        .to_string(),
-                    Act::CallOff(appid),
-                    false,
-                ),
-                (self.tr("Close", "Kapat").to_string(), Act::Close, false),
-            ];
-            let title = match self.global.language {
-                arkor_core::Language::Tr => format!("{}: kurulum yarım kaldı.", i.name),
-                arkor_core::Language::En => format!("{}: not fully installed.", i.name),
-            };
-            return self.console_overlay(Overlay::Pick(title, options));
+        let mut options = Vec::new();
+        if matches!(i.step, Step::Paused | Step::Off) {
+            options.push((self.tr("Go on", "Sürdür"), Act::SteamGoOn));
         }
-        match let_steam_update() {
-            Ok(true) => {
-                self.status = Some(
-                    self.tr(
-                        "Steam starts in the background and goes on.",
-                        "Steam arka planda açılıyor ve devam edecek.",
-                    )
-                    .into(),
-                );
-            }
-            Ok(false) => {
-                let title = match (i.running, self.global.language) {
-                    (true, arkor_core::Language::Tr) => {
-                        format!(
-                            "{}: Steam indiriyor. Duraklatmak Steam'den yapılır.",
-                            i.name
-                        )
-                    }
-                    (true, _) => {
-                        format!(
-                            "{}: Steam is downloading it. Only Steam can pause it.",
-                            i.name
-                        )
-                    }
-                    (false, arkor_core::Language::Tr) => {
-                        format!("{}: Steam'de sırada ya da duraklatılmış.", i.name)
-                    }
-                    (false, _) => format!("{}: waiting or paused in Steam.", i.name),
-                };
-                let mut options = Vec::new();
-                if !i.running {
+        // Not the one that comes first anyway.
+        if !i.running && items.len() > 1 && items[0].appid != appid {
+            options.push((
+                self.tr(
+                    "Download it first (Steam restarts)",
+                    "Önce bunu indir (Steam yeniden başlar)",
+                ),
+                Act::SteamFirst(appid),
+            ));
+        }
+        if !i.update {
+            options.push((
+                self.tr("Call the installation off", "Kurulumu iptal et"),
+                Act::CallOff(appid),
+            ));
+        }
+        options.push((
+            self.tr("Open Steam's downloads", "Steam'in indirmelerini aç"),
+            Act::ShowSteam,
+        ));
+        options.push((self.tr("Close", "Kapat"), Act::Close));
+        let title = format!("{} · {}", i.name, self.steam_step(&i));
+        let options = options
+            .into_iter()
+            .map(|(t, a)| (t.to_string(), a, false))
+            .collect();
+        self.console_overlay(Overlay::Pick(title, options));
+    }
+
+    /// One of Arkor's downloads was chosen.
+    fn console_download_menu(&mut self, key: &str) {
+        let items = downloads::items();
+        let item = items.iter().find(|i| i.key == key);
+        let running = progress::running(key);
+        let label = item
+            .map(|i| i.label.clone())
+            .or_else(|| {
+                progress::list()
+                    .into_iter()
+                    .find(|e| e.key == key)
+                    .map(|e| e.label)
+            })
+            .unwrap_or_default();
+        let mut options = Vec::new();
+        if let Some(i) = item {
+            options.push(match &i.state {
+                State::Queued => (self.tr("Pause", "Duraklat"), Act::Download(key.into())),
+                State::Paused => (self.tr("Go on", "Sürdür"), Act::Download(key.into())),
+                State::Failed(_) => (
+                    self.tr("Try again", "Yeniden dene"),
+                    Act::Download(key.into()),
+                ),
+            });
+            // Its place among those that wait.
+            let waiting: Vec<&str> = items
+                .iter()
+                .filter(|i| !progress::running(&i.key) && self.steam_item(&i.key).is_none())
+                .map(|i| i.key.as_str())
+                .collect();
+            if !running && let Some(at) = waiting.iter().position(|k| *k == key) {
+                if at > 0 {
                     options.push((
-                        self.tr("Go on", "Sürdür").to_string(),
-                        Act::SteamGoOn,
-                        false,
+                        self.tr("To the front", "En öne al"),
+                        Act::FirstDownload(key.into()),
+                    ));
+                    options.push((
+                        self.tr("Move up", "Yukarı taşı"),
+                        Act::MoveDownload(key.into(), true),
                     ));
                 }
-                if !i.update {
+                if at + 1 < waiting.len() {
                     options.push((
-                        self.tr("Call the installation off", "Kurulumu iptal et")
-                            .to_string(),
-                        Act::CallOff(appid),
-                        false,
+                        self.tr("Move down", "Aşağı taşı"),
+                        Act::MoveDownload(key.into(), false),
                     ));
                 }
-                options.push((
-                    self.tr("Open Steam's downloads", "Steam'in indirmelerini aç")
-                        .to_string(),
-                    Act::ShowSteam,
-                    false,
-                ));
-                options.push((self.tr("Close", "Kapat").to_string(), Act::Close, false));
-                self.console_overlay(Overlay::Pick(title, options));
             }
-            Err(e) => self.status = Some(format!("{e:#}").into()),
+            options.push((
+                self.tr("Cancel it", "İptal et"),
+                Act::CancelDownload(key.into()),
+            ));
         }
+        options.push((self.tr("Close", "Kapat"), Act::Close));
+        let options = options
+            .into_iter()
+            .map(|(t, a)| (t.to_string(), a, false))
+            .collect();
+        self.console_overlay(Overlay::Pick(label, options));
     }
 
     fn game_rows(&self, id: &str) -> Vec<Row> {
@@ -1146,12 +1207,15 @@ impl Library {
             false,
         ));
         if let Some((shop, id)) = &shop {
-            pills.push(Item::pill(
-                Act::AskUninstall(*shop, id.clone()),
-                "trash",
-                self.tr("Uninstall", "Kaldır"),
-                false,
-            ));
+            pills.push(match self.removing_pill(*shop, id) {
+                Some(pill) => pill,
+                None => Item::pill(
+                    Act::AskUninstall(*shop, id.clone()),
+                    "trash",
+                    self.tr("Uninstall", "Kaldır"),
+                    false,
+                ),
+            });
         }
         let mut rows = vec![Row::new(Kind::Pills, pills)];
         // The switches need the game's profile, which is the selected game's.
@@ -1191,19 +1255,32 @@ impl Library {
         rows
     }
 
+    /// The button of a game that is being removed.
+    fn removing_pill(&self, shop: Shop, id: &str) -> Option<Item> {
+        self.shops
+            .removing
+            .contains(&(shop, id.to_string()))
+            .then(|| {
+                let text = if self.shops.is_installed(shop, id) {
+                    self.tr("Uninstalling…", "Kaldırılıyor…")
+                } else {
+                    self.tr("Calling it off…", "İptal ediliyor…")
+                };
+                Item::pill(Act::Nothing, "loader-circle", text, false)
+            })
+    }
+
     fn shop_game_rows(&self, shop: Shop, id: &str) -> Vec<Row> {
-        // Steam installs it by itself, or has stopped in the middle of it.
-        let own = |key: &str| {
-            downloads::pending(key) || progress::list().iter().any(|e| e.key == key && !e.external)
-        };
+        if let Some(pill) = self.removing_pill(shop, id) {
+            return vec![Row::new(Kind::Pills, vec![pill])];
+        }
+        // Steam installs it, or has stopped in the middle of it.
         if shop == Shop::Steam
-            && !own(&shops::key(shop, id))
-            && let Some(i) = steam_downloads::items()
-                .into_iter()
-                .find(|i| !i.update && i.appid.to_string() == id)
+            && let Some(i) = self.steam_item(&shops::key(shop, id)).filter(|i| !i.update)
         {
+            use steam_downloads::Step;
             let mut pills = Vec::new();
-            if !i.running {
+            if matches!(i.step, Step::Paused | Step::Off) {
                 pills.push(Item::main(
                     Act::SteamGoOn,
                     "play",
@@ -1216,24 +1293,7 @@ impl Library {
                 self.tr("Call the installation off", "Kurulumu iptal et"),
                 false,
             ));
-            let mut item = Item::line(
-                Act::SteamDownload(i.appid),
-                "download",
-                if i.running {
-                    self.tr("Steam is downloading it", "Steam indiriyor")
-                } else {
-                    self.tr("Not fully installed", "Kurulum yarım kaldı")
-                },
-                Value::Text(match i.total {
-                    0 => String::new(),
-                    t => self.percent(i.done as f32 / t as f32),
-                }),
-            );
-            item.progress = (i.total > 0).then(|| i.done as f32 / i.total as f32);
-            return vec![
-                Row::new(Kind::Pills, pills),
-                Row::new(Kind::Line, vec![item]),
-            ];
+            return vec![Row::new(Kind::Pills, pills), self.steam_row(&i)];
         }
         if let Some((key, fraction)) = self.shop_job(shop, id) {
             let mut item = Item::line(
@@ -1267,17 +1327,6 @@ impl Library {
             ];
         }
         let sid = id.to_string();
-        if self.shops.removing.contains(&(shop, sid.clone())) {
-            return vec![Row::new(
-                Kind::Line,
-                vec![Item::line(
-                    Act::Nothing,
-                    "trash",
-                    self.tr("Uninstalling…", "Kaldırılıyor…"),
-                    Value::None,
-                )],
-            )];
-        }
         if self.shops.is_installed(shop, id) {
             let mut pills = vec![Item::main(
                 Act::ShopPlay(shop, sid.clone()),
@@ -1821,6 +1870,63 @@ impl Library {
         }
         self.shops_opened(cx);
         self.guard_steam(cx);
+        self.console_look_for_arkor(cx);
+    }
+
+    /// A game is gone: so are its screens.
+    pub(super) fn console_left_by(&mut self, (shop, id): &super::shops::ShopGame) {
+        if !self.console.on {
+            return;
+        }
+        let entry = self.shop_entry(*shop, id);
+        let of_it = |s: &Screen| match s {
+            Screen::ShopGame(sh, i) => sh == shop && i == id,
+            Screen::Game(e) | Screen::GameSettings(e) | Screen::GameCat(e, _) => {
+                entry.as_deref() == Some(e.as_str())
+            }
+            _ => false,
+        };
+        if self.console.stack.iter().any(of_it) {
+            self.console.stack.truncate(1);
+            self.console.entered = Some(Instant::now());
+            self.shops.game = None;
+        }
+    }
+
+    /// A newer Arkor is looked for once a session (not when that is switched off).
+    fn console_look_for_arkor(&mut self, cx: &mut Context<Self>) {
+        let never = self.global.update_interval() == arkor_core::profile::UpdateInterval::Never;
+        if !cfg!(test) && !never && !std::mem::replace(&mut self.console.looked, true) {
+            self.check_app_update(true, cx);
+        }
+    }
+
+    /// The note at the bottom goes after some seconds.
+    pub(super) fn console_note(&mut self, cx: &mut Context<Self>) {
+        let now = self.status.clone();
+        let Some(text) = now else {
+            self.console.said = None;
+            return;
+        };
+        if self.console.said.as_ref().is_some_and(|(t, _)| *t == text) {
+            return;
+        }
+        self.console.said = Some((text.clone(), Instant::now()));
+        let timer = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            timer.timer(Duration::from_secs(7)).await;
+            let _ = this.update(cx, |this, cx| {
+                let old = this.console.said.as_ref().is_some_and(|(t, at)| {
+                    *t == text && at.elapsed() > Duration::from_millis(6500)
+                });
+                if this.console.on && old && this.status.as_ref() == Some(&text) {
+                    this.status = None;
+                    this.console.said = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(super) fn toggle_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1916,6 +2022,7 @@ impl Library {
             super::console_sound::warm();
             self.start_console_intro();
             self.guard_steam(cx);
+            self.console_look_for_arkor(cx);
             if self.console.stack.is_empty() {
                 self.console.stack = vec![Screen::Home];
             }
@@ -2268,7 +2375,11 @@ impl Library {
             Act::Screen(Screen::ShopGame(shop, id)) if self.shops.is_installed(*shop, id) => {
                 Some(Act::ShopPlay(*shop, id.clone()))
             }
-            Act::Download(key) => Some(Act::CancelDownload(key.clone())),
+            Act::Download(key) | Act::DownloadMenu(key)
+                if downloads::items().iter().any(|i| i.key == *key) =>
+            {
+                Some(Act::CancelDownload(key.clone()))
+            }
             _ => None,
         }
     }
@@ -2556,6 +2667,7 @@ impl Library {
             Act::AskUninstall(..) | Act::AskRemoveTool(_) | Act::ToolMenu(_) => Cue::Open,
             Act::DiskMenu(_) | Act::FolderAt(_) | Act::SteamDownload(_) => Cue::Open,
             Act::DoNotStart | Act::CallOff(_) => Cue::Back,
+            Act::DownloadMenu(_) | Act::AskArkor => Cue::Open,
             Act::GameLanguage => Cue::Open,
             Act::ShopTab(_) | Act::Filter(_) | Act::ProtonVariant(_) => Cue::Tab,
             Act::Opt(o) => match self.opt_value(o) {
@@ -2637,15 +2749,22 @@ impl Library {
             Act::SteamDownload(appid) => self.console_steam_download(appid),
             Act::CallOff(appid) => {
                 self.console.overlay = None;
-                self.status = Some(self.tr("Calling it off…", "İptal ediliyor…").into());
-                self.steam_do(
-                    move || {
-                        shops::steam_call_off(appid)?;
-                        steam_downloads::look_again();
-                        Ok(())
-                    },
-                    cx,
-                );
+                let key = (Shop::Steam, appid.to_string());
+                if self.shops.removing.insert(key) {
+                    self.steam_do(
+                        move || {
+                            let done = shops::steam_call_off(appid);
+                            steam_downloads::look_again();
+                            done
+                        },
+                        move |this| {
+                            let key = (Shop::Steam, appid.to_string());
+                            this.shops.removing.remove(&key);
+                            Some(this.tr("Called off.", "İptal edildi."))
+                        },
+                        cx,
+                    );
+                }
             }
             Act::SteamGoOn => {
                 self.console.overlay = None;
@@ -2656,7 +2775,46 @@ impl Library {
                     )
                     .into(),
                 );
-                self.steam_do(shops::steam_go_on, cx);
+                self.steam_do(shops::steam_go_on, |_| None, cx);
+            }
+            Act::SteamFirst(appid) => {
+                self.console.overlay = None;
+                self.status = Some(self.tr("Steam restarts…", "Steam yeniden başlıyor…").into());
+                self.steam_do(
+                    move || shops::steam_first(appid),
+                    |this| Some(this.tr("It comes first now.", "Artık ilk sırada.")),
+                    cx,
+                );
+            }
+            Act::DownloadMenu(key) => self.console_download_menu(&key),
+            Act::MoveDownload(key, up) => {
+                self.console.overlay = None;
+                downloads::shift(&key, up);
+            }
+            Act::FirstDownload(key) => {
+                self.console.overlay = None;
+                downloads::move_to_front(&key);
+            }
+            Act::CheckArkor => self.check_app_update(false, cx),
+            Act::AskArkor => {
+                if let Some(r) = &self.app_update.available {
+                    let text = format!(
+                        "Arkor {} ({}): {}",
+                        r.version,
+                        progress::human_bytes(r.size),
+                        self.tr(
+                            "download and install it? Arkor restarts; a running game goes on.",
+                            "indirilip kurulsun mu? Arkor yeniden başlar; açık oyun çalışmaya devam eder."
+                        )
+                    );
+                    let yes = self.tr("Update", "Güncelle").to_string();
+                    self.console_overlay(Overlay::Ask(text, yes, Act::UpdateArkor));
+                }
+            }
+            Act::UpdateArkor => {
+                self.console.overlay = None;
+                self.install_app_update(cx);
+                self.watch_progress(cx);
             }
             Act::ShowSteam => self.console_show_steam(Some("steam://nav/downloads"), cx),
             Act::LoginBrowser => self.shop_login_browser(cx),
@@ -2842,14 +3000,12 @@ impl Library {
                 self.console_overlay(Overlay::Ask(text, yes, Act::Uninstall(shop, id)));
             }
             Act::Uninstall(shop, id) => {
+                // Its screens go with it, when it is gone.
                 self.console.overlay = None;
-                // Its screens go with it.
-                if self.console.stack.len() > 1 {
-                    self.console.stack.truncate(1);
-                }
                 self.shop_uninstall(shop, &id, cx);
             }
             Act::Download(key) => {
+                self.console.overlay = None;
                 let state = downloads::items()
                     .into_iter()
                     .find(|i| i.key == key)
@@ -2860,7 +3016,14 @@ impl Library {
                     None => {}
                 }
             }
-            Act::CancelDownload(key) => downloads::cancel(&key),
+            Act::CancelDownload(key) => {
+                self.console.overlay = None;
+                // Steam has it, not only Arkor's queue.
+                match self.steam_item(&key).filter(|i| !i.update) {
+                    Some(i) => self.console_do(Act::CallOff(i.appid), window, cx),
+                    None => downloads::cancel(&key),
+                }
+            }
             Act::Desktop => self.toggle_console(window, cx),
             Act::DesktopPage(id) => {
                 self.toggle_console(window, cx);

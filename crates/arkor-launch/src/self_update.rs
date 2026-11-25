@@ -237,10 +237,15 @@ fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Starts the (updated) program again with the same arguments. The caller then quits.
-pub fn restart(exe: &Path) -> anyhow::Result<()> {
+/// Starts the (updated) program again, in console mode or with the same arguments. The
+/// caller then quits.
+pub fn restart(exe: &Path, console: bool) -> anyhow::Result<()> {
+    let args: Vec<std::ffi::OsString> = match console {
+        true => vec!["--console".into()],
+        false => std::env::args_os().skip(1).collect(),
+    };
     std::process::Command::new(exe)
-        .args(std::env::args_os().skip(1))
+        .args(args)
         .spawn()
         .with_context(|| format!("starting {}", exe.display()))?;
     Ok(())

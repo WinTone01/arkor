@@ -254,7 +254,7 @@ impl Progress {
 
     /// Fully installed and up to date.
     pub fn installed(&self) -> bool {
-        self.state & 4 != 0 && self.state & 2 == 0 && (self.total == 0 || self.done >= self.total)
+        self.state & 4 != 0 && self.state & 2 == 0
     }
 }
 

@@ -626,15 +626,33 @@ pub(crate) fn cancelled(key: &str) {
     }
 }
 
-/// Calls off what Steam began to install. Blocking.
+/// Calls off what Steam began to install, and waits until it is gone. Blocking.
 pub fn steam_call_off(appid: u32) -> anyhow::Result<()> {
     let key = key(Shop::Steam, &appid.to_string());
     // A job of Arkor's calls it off itself when it ends.
     if crate::downloads::items().iter().any(|i| i.key == key) {
         crate::downloads::cancel(&key);
+        let began = std::time::Instant::now();
+        while arkor_stores::steam_library::progress(appid).is_some_and(|p| p.state & 4 == 0) {
+            anyhow::ensure!(!crate::steam_link::any_game_running(), GAME_RUNS);
+            anyhow::ensure!(
+                began.elapsed() < std::time::Duration::from_secs(100),
+                "Steam did not let go of it"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
         return Ok(());
     }
     steam::call_off(appid)
+}
+
+/// Puts a game before Steam's other downloads. Blocking.
+pub fn steam_first(appid: u32) -> anyhow::Result<()> {
+    steam::first(appid)
+}
+
+pub(crate) fn steam_first_over() {
+    steam::first_over();
 }
 
 /// Makes Steam go on with what it paused (it starts anew for that). Blocking.

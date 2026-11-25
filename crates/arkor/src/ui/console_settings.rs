@@ -965,6 +965,7 @@ impl Library {
         };
         match c {
             AppCat::General => vec![
+                self.console_arkor_row(),
                 line(Opt::Language, "languages", t("Language", "Dil")),
                 line(
                     Opt::Autostart,
