@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use arkor_launch::downloads::{self, State};
 use arkor_launch::progress::{self, Phase};
-use arkor_launch::steam_downloads;
+use arkor_launch::{steam_control, steam_downloads};
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, div, prelude::*, px};
 
@@ -392,12 +392,40 @@ impl Library {
                 );
             }
             let picture = art(self, &key, 64., 36., cx);
+            let mut actions = div().flex().items_center().gap_2();
+            if steam_control::on() {
+                let id = item.appid;
+                if !item.held {
+                    actions = actions.child(
+                        style::icon_button(("sq-top", ix), "arrow-up-to-line", false).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.steam_do(move || steam_control::place(id, 0), |_| None, cx)
+                            }),
+                        ),
+                    );
+                }
+                let paused = item.step == steam_downloads::Step::Paused;
+                let icon = if paused { "play" } else { "pause" };
+                actions =
+                    actions.child(style::icon_button(("sq-pause", ix), icon, paused).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.steam_do(
+                                move || match paused {
+                                    true => steam_control::resume(id),
+                                    false => steam_control::pause(id),
+                                },
+                                |_| None,
+                                cx,
+                            )
+                        }),
+                    ));
+            }
             list = list.child(self.queue_row(
                 picture,
                 item.name.clone(),
                 detail,
                 pal::muted(),
-                div(),
+                actions,
                 ix + 1 == n,
             ));
         }

@@ -377,6 +377,9 @@ pub struct Global {
     pub console_windowed: bool,
     /// Console mode opens without its start-up animation.
     pub console_no_intro: bool,
+    /// Steam's downloads are controlled through its developer port (off unless asked for:
+    /// any program on the computer can use that port while it is open).
+    pub steam_control: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Environment for every game (each game's own `env` overrides it).

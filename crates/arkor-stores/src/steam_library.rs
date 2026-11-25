@@ -247,6 +247,11 @@ impl Progress {
         self.state & 4 != 0 && self.state & 2 != 0
     }
 
+    /// The user paused it: Steam leaves it alone until it is told to go on.
+    pub fn held(&self) -> bool {
+        self.state & 512 != 0
+    }
+
     /// Something is left to do: an installation or an update.
     pub fn unfinished(&self) -> bool {
         self.state & 2 != 0

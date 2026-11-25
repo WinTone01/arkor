@@ -1036,34 +1036,48 @@ impl Library {
             AppCat::Proton => self.console_proton_rows(),
             AppCat::Tools => self.console_program_rows(),
             AppCat::System => self.console_system_rows(),
-            AppCat::Stores => Shop::ALL
-                .into_iter()
-                .map(|shop| {
-                    let logged = self.shops.logged_in(shop);
-                    let value = match self.shops.account(shop) {
-                        Some(name) if shop == Shop::Steam => name.to_string(),
-                        Some(name) => format!("{name} · {}", t("log out", "çıkış yap")),
-                        None if logged => t("Log out", "Çıkış yap").to_string(),
-                        None => t("Log in", "Giriş yap").to_string(),
-                    };
-                    let act = if shop == Shop::Steam {
-                        Act::Nothing
-                    } else if logged {
-                        Act::Logout(shop)
-                    } else {
-                        Act::Login(shop)
-                    };
-                    Row::new(
-                        Kind::Line,
-                        vec![Item::line(
-                            act,
-                            super::shops_page::shop_icon(shop),
-                            shop.name(),
-                            Value::Text(value),
-                        )],
-                    )
-                })
-                .collect(),
+            AppCat::Stores => {
+                let mut rows: Vec<Row> = Shop::ALL
+                    .into_iter()
+                    .map(|shop| {
+                        let logged = self.shops.logged_in(shop);
+                        let value = match self.shops.account(shop) {
+                            Some(name) if shop == Shop::Steam => name.to_string(),
+                            Some(name) => format!("{name} · {}", t("log out", "çıkış yap")),
+                            None if logged => t("Log out", "Çıkış yap").to_string(),
+                            None => t("Log in", "Giriş yap").to_string(),
+                        };
+                        let act = if shop == Shop::Steam {
+                            Act::Nothing
+                        } else if logged {
+                            Act::Logout(shop)
+                        } else {
+                            Act::Login(shop)
+                        };
+                        Row::new(
+                            Kind::Line,
+                            vec![Item::line(
+                                act,
+                                super::shops_page::shop_icon(shop),
+                                shop.name(),
+                                Value::Text(value),
+                            )],
+                        )
+                    })
+                    .collect();
+                let mut control = line(
+                    Opt::SteamControl,
+                    "sliders-horizontal",
+                    t("Control Steam", "Steam'i yönet"),
+                );
+                control.items[0].sub = t(
+                    "Downloads, installing, moving, achievements; opens Steam's developer port",
+                    "İndirme, kurma, taşıma, başarımlar; Steam'in geliştirici kapısını açar",
+                )
+                .into();
+                rows.push(control);
+                rows
+            }
         }
     }
 
@@ -1089,6 +1103,13 @@ impl Library {
             Opt::Accent => super::style::pal::ACCENTS
                 .iter()
                 .map(|(c, en, tr)| (s(self.tr(en, tr)), format!("{c:06x}")))
+                .collect(),
+            Opt::SteamFolder => self
+                .console
+                .steam_folders
+                .iter()
+                .filter(|f| f.mounted)
+                .map(|f| (self.steam_folder_name(f), f.index.to_string()))
                 .collect(),
             Opt::ConsoleVolume => [0, 20, 40, 55, 70, 85, 100]
                 .into_iter()
@@ -1162,6 +1183,14 @@ impl Library {
                     .accent
                     .unwrap_or(super::style::pal::DEFAULT_ACCENT)
             ),
+            Opt::SteamFolder => {
+                let chosen = self.shops.game.as_ref().and_then(|g| g.steam_folder);
+                let usual = self.console.steam_folders.iter().find(|f| f.default);
+                chosen
+                    .or(usual.map(|f| f.index))
+                    .unwrap_or_default()
+                    .to_string()
+            }
             Opt::ConsoleVolume => g.console_volume.unwrap_or(70).to_string(),
             Opt::Updates => match g.update_interval() {
                 UpdateInterval::Daily => "daily",
@@ -1192,6 +1221,7 @@ impl Library {
             Opt::Motion => Value::Switch(g.appearance.reduce_motion),
             Opt::Sounds => Value::Switch(g.appearance.sounds),
             Opt::ConsoleIntro => Value::Switch(!g.console_no_intro),
+            Opt::SteamControl => Value::Switch(g.steam_control),
             Opt::GlobalHud => Value::Switch(g.mangohud.enabled),
             Opt::FullScreen => Value::Switch(!g.console_windowed),
             Opt::InstallMenu => Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.menu)),
@@ -1214,6 +1244,12 @@ impl Library {
         if *o == Opt::InstallProton {
             if let Some(g) = self.shops.game.as_mut() {
                 g.proton = Some(key.to_string()).filter(|k| !k.is_empty());
+            }
+            return;
+        }
+        if *o == Opt::SteamFolder {
+            if let Some(g) = self.shops.game.as_mut() {
+                g.steam_folder = key.parse().ok();
             }
             return;
         }

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use arkor_stores::steam_library as lib;
 
-use crate::{downloads, progress, shops, steam_link};
+use crate::{downloads, progress, shops, steam_api, steam_control, steam_link};
 
 /// What Steam does with a download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -42,6 +42,8 @@ pub struct Item {
     /// It is installed and only gets newer.
     pub update: bool,
     pub step: Step,
+    /// Paused by itself: it stays so when Steam starts again.
+    pub held: bool,
 }
 
 impl Item {
@@ -83,6 +85,7 @@ pub fn pending(appid: u32) -> Option<Item> {
         running: false,
         update: true,
         step: Step::Off,
+        held: m.progress.held(),
     })
 }
 
@@ -139,6 +142,9 @@ fn told(log: &str) -> (Vec<u32>, HashMap<u32, Told>) {
             if p.starts_with("Priority First") || p.starts_with("Priority User") {
                 queue.retain(|q| *q != id);
                 queue.insert(0, id);
+            } else if p.starts_with("Priority Paused") {
+                queue.retain(|q| *q != id);
+                queue.push(id);
             } else if !queue.contains(&id) {
                 queue.push(id);
             }
@@ -165,7 +171,7 @@ fn told(log: &str) -> (Vec<u32>, HashMap<u32, Told>) {
                 t.step = Step::Waiting;
             }
         } else if let Some(state) = what.strip_prefix("state changed : ") {
-            if state.contains("(Suspended)") {
+            if state.contains("(Suspended)") || state.contains("Update Paused") {
                 t.step = Step::Paused;
             } else if state.contains("Update Running") {
                 if matches!(t.step, Step::Off | Step::Waiting | Step::Paused) {
@@ -262,8 +268,55 @@ impl Speeds {
     }
 }
 
+/// Steam's downloads as Steam itself tells them.
+fn from_steam(state: steam_control::State, manifests: &[lib::Manifest]) -> Vec<Item> {
+    let mut items = state.items;
+    // The queue, then what is paused.
+    items.sort_by_key(|i| if i.place < 0 { i32::MAX } else { i.place });
+    let now = state.now;
+    items
+        .into_iter()
+        .map(|i| {
+            let m = manifests.iter().find(|m| m.appid == i.appid);
+            let live = now.as_ref().filter(|n| n.appid == i.appid);
+            let (done, total) = match live {
+                Some(n) if n.bytes.1 > 0. => n.bytes,
+                _ => i.bytes,
+            };
+            let step = match live.map(|n| n.state.as_str()) {
+                Some("Downloading") => Step::Downloading,
+                Some("Staging" | "Committing") => Step::Installing,
+                Some(_) => Step::Preparing,
+                None if i.paused => Step::Paused,
+                None if now.as_ref().is_some_and(|n| n.paused) => Step::Paused,
+                None => Step::Waiting,
+            };
+            Item {
+                appid: i.appid,
+                name: match m {
+                    Some(m) if i.name.is_empty() => m.name.clone(),
+                    _ => i.name,
+                },
+                done: done as u64,
+                total: total as u64,
+                speed: match (live, step) {
+                    (Some(n), Step::Downloading) => n.speed,
+                    _ => 0.,
+                },
+                running: live.is_some(),
+                update: m.is_some_and(|m| m.progress.state & 4 != 0),
+                step,
+                held: i.paused,
+            }
+        })
+        .collect()
+}
+
 fn look(speeds: &mut Speeds) -> Vec<Item> {
     let on = steam_on();
+    if on && let Some(state) = steam_control::state() {
+        return from_steam(state, &lib::manifests());
+    }
     let (queue, log) = match lib::root() {
         Some(root) if on => told(&log_tail(&root)),
         _ => Default::default(),
@@ -311,9 +364,11 @@ fn look(speeds: &mut Speeds) -> Vec<Item> {
             update: p.state & 4 != 0,
             step: match t.step {
                 _ if !on => Step::Off,
+                _ if !running && p.held() => Step::Paused,
                 Step::Off => Step::Waiting,
                 s => s,
             },
+            held: !running && p.held(),
         });
     }
     speeds
@@ -332,8 +387,10 @@ pub(crate) fn start() {
     let _ = std::thread::Builder::new()
         .name("arkor-steam-downloads".into())
         .spawn(|| {
+            steam_control::clean_up();
             let mut speeds = Speeds::default();
             let mut before: Vec<Item> = Vec::new();
+            let mut acted = (Vec::new(), None);
             loop {
                 // A game that was put first and is there now gets its own setting back, when
                 // Steam is closed (it would write over it).
@@ -371,7 +428,18 @@ pub(crate) fn start() {
                     progress::touch();
                 }
                 before = now;
-                std::thread::sleep(Duration::from_millis(if any { 1000 } else { 2500 }));
+                // A launch's steps are followed closely.
+                let acts = (steam_api::actions(), steam_api::moving());
+                let busy = !acts.0.is_empty() || acts.1.is_some();
+                if acts != acted || steam_api::has_news() {
+                    progress::touch();
+                }
+                acted = acts;
+                std::thread::sleep(Duration::from_millis(match (busy, any) {
+                    (true, _) => 400,
+                    _ if any || steam_control::on() => 1000,
+                    _ => 2500,
+                }));
             }
         });
 }
@@ -451,6 +519,56 @@ mod tests {
         let (queue, t) = told(&paused);
         assert_eq!(t[&1305420].step, Step::Paused);
         assert!(queue.contains(&1305420));
+    }
+
+    #[test]
+    fn steams_own_word_is_taken() {
+        let q = |appid, place, paused| steam_control::Queued {
+            appid,
+            name: format!("G{appid}"),
+            active: place == 0,
+            paused,
+            place,
+            bytes: (10., 100.),
+        };
+        let state = |state: &str, paused| steam_control::State {
+            now: Some(steam_control::Now {
+                appid: if paused { 0 } else { 2 },
+                state: state.into(),
+                speed: 5.,
+                paused,
+                bytes: (50., 100.),
+            }),
+            items: vec![q(3, -1, true), q(1, 1, false), q(2, 0, false)],
+            happening: Default::default(),
+        };
+        let items = from_steam(state("Downloading", false), &[]);
+        assert_eq!(items.iter().map(|i| i.appid).collect::<Vec<_>>(), [2, 1, 3]);
+        assert_eq!(
+            (items[0].step, items[0].done, items[0].speed),
+            (Step::Downloading, 50, 5.)
+        );
+        assert_eq!((items[1].step, items[1].running), (Step::Waiting, false));
+        assert_eq!((items[2].step, items[2].held), (Step::Paused, true));
+        assert_eq!(
+            from_steam(state("Committing", false), &[])[0].step,
+            Step::Installing
+        );
+        // Downloading is paused as a whole.
+        assert!(
+            from_steam(state("None", true), &[])
+                .iter()
+                .all(|i| i.step == Step::Paused)
+        );
+    }
+
+    #[test]
+    fn one_paused_by_itself_is_paused() {
+        let log = "\
+[x] AppID 1305420 scheduler update : Priority Paused, not played for 1 seconds, update disabled for 0 seconds
+[x] AppID 1305420 state changed : Update Required,Update Paused,Update Started,
+";
+        assert_eq!(told(log).1[&1305420].step, Step::Paused);
     }
 
     #[test]

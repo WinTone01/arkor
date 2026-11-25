@@ -907,6 +907,7 @@ fn console_steps_aside_while_steam_updates_a_game() {
         running: false,
         update: true,
         step: arkor_launch::steam_downloads::Step::Waiting,
+        held: false,
     };
     let launch = || Launch {
         id: "shooter".into(),
@@ -1029,5 +1030,214 @@ fn console_shows_removal_and_arkors_update() {
             &l.console.overlay,
             Some(Overlay::Ask(t, _, Act::UpdateArkor)) if t.contains("9.9.9")
         ));
+    });
+}
+
+#[test]
+fn console_shows_what_steam_has_and_asks() {
+    use super::console::{Act, Launch, Overlay, Screen, Value};
+    use super::console_steam::{SteamData, SteamPage};
+    use super::gamepad::Nav;
+    use arkor_launch::steam_api::{Achievement, Action, Dlc, Eula, News, Screenshot, WorkshopItem};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#library"));
+        lib
+    });
+    cx.run_until_parked();
+    let achievement = |name: &str, unlocked, hidden| Achievement {
+        name: name.into(),
+        description: "Do it".into(),
+        unlocked,
+        at: 1,
+        image: String::new(),
+        hidden,
+        progress: 3.,
+        most: 10.,
+        share: 12.,
+    };
+    let pages = [
+        (
+            SteamPage::Achievements,
+            SteamData::Achievements(vec![
+                achievement("First", true, false),
+                achievement("Secret", false, true),
+            ]),
+        ),
+        (
+            SteamPage::Screenshots,
+            SteamData::Screenshots(vec![Screenshot {
+                game: "730".into(),
+                handle: 1,
+                path: "/nowhere/a.jpg".into(),
+                at: 1,
+            }]),
+        ),
+        (
+            SteamPage::Dlc,
+            SteamData::Dlc(vec![Dlc {
+                id: 5,
+                name: "More".into(),
+                state: "installed".into(),
+                on: true,
+                size: 10.,
+            }]),
+        ),
+        (
+            SteamPage::Workshop,
+            SteamData::Workshop(vec![WorkshopItem {
+                id: "9".into(),
+                title: "Map".into(),
+                size: 10.,
+                off: false,
+                image: String::new(),
+            }]),
+        ),
+    ];
+    for (page, data) in pages {
+        view.update(cx, |l, cx| {
+            l.console_open(Screen::Steam(730, page), cx);
+            let rows = l.console_rows();
+            assert_eq!(rows[0].items[0].act, Act::Nothing, "loading");
+            l.console.steam_page = Some((730, page, Some(Ok(data))));
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+    view.update(cx, |l, cx| {
+        // A hidden one tells nothing; what is unlocked counts.
+        let l2 = SteamData::Achievements(vec![
+            achievement("First", true, false),
+            achievement("Secret", false, true),
+        ]);
+        l.console.steam_page = Some((730, SteamPage::Achievements, Some(Ok(l2))));
+        let rows = l.steam_page_rows(730, SteamPage::Achievements);
+        assert!(
+            rows[0]
+                .title
+                .as_ref()
+                .is_some_and(|t| t.starts_with("1 / 2"))
+        );
+        let secret = &rows[1].items[0];
+        assert!(!secret.label.contains("Secret") && !secret.sub.contains("Do it"));
+        // A switch is shown at once.
+        let dlc = SteamData::Dlc(vec![Dlc {
+            id: 5,
+            name: "More".into(),
+            state: String::new(),
+            on: true,
+            size: 0.,
+        }]);
+        l.console.steam_page = Some((730, SteamPage::Dlc, Some(Ok(dlc))));
+        l.steam_set_dlc(730, 5, false, cx);
+        let rows = l.steam_page_rows(730, SteamPage::Dlc);
+        assert!(matches!(
+            &rows[0].items[0].look,
+            super::console::Look::Line {
+                value: Value::Switch(false),
+                ..
+            }
+        ));
+    });
+    let launch = || Launch {
+        id: "shooter".into(),
+        at: std::time::Instant::now(),
+        playing: false,
+        dismissed: false,
+        steam: Some("730".into()),
+        came: false,
+        updating: false,
+    };
+    let ask = |request: &str, details: &str| Action {
+        id: 4,
+        game: "730".into(),
+        kind: "LaunchApp".into(),
+        request: request.into(),
+        details: details.into(),
+        ..Action::default()
+    };
+    let press = |nav: Nav, cx: &mut gpui_test::VisualTestContext| {
+        view.update_in(cx, |l, w, cx| l.nav(nav, w, cx));
+        cx.run_until_parked();
+    };
+    // A cloud conflict: the start screen steps aside, is back after the answer.
+    view.update(cx, |l, cx| {
+        l.console.launching = Some(launch());
+        l.steam_ask(ask("SynchronizingCloud", "cloudconflict"), cx);
+        assert!(l.console.launching.as_ref().unwrap().dismissed);
+        let acts: Vec<Act> = match &l.console.overlay {
+            Some(Overlay::Pick(_, o)) => o.iter().map(|o| o.1.clone()).collect(),
+            _ => Vec::new(),
+        };
+        assert_eq!(
+            acts,
+            [
+                Act::SteamAnswer(4, "KeepLocal".into()),
+                Act::SteamAnswer(4, "KeepRemote".into()),
+                Act::SteamCancelAction(4)
+            ]
+        );
+    });
+    // It begins at what changes nothing.
+    assert_eq!(view.read_with(cx, |l, _| l.console.over_focus.row), 2);
+    press(Nav::Up, cx);
+    press(Nav::Accept, cx);
+    view.read_with(cx, |l, _| {
+        assert!(l.console.overlay.is_none());
+        assert!(!l.console.launching.as_ref().unwrap().dismissed);
+    });
+    // Back is no answer: the launch is called off.
+    view.update(cx, |l, cx| {
+        l.steam_ask(ask("SynchronizingCloud", "syncfailed"), cx)
+    });
+    press(Nav::Back, cx);
+    assert!(view.read_with(cx, |l, _| l.console.launching.is_none()
+        && l.console.overlay.is_none()));
+    // A licence: only one that could be read here can be accepted here.
+    let eula = |text: &str| Eula {
+        id: "1".into(),
+        version: 1,
+        text: text.into(),
+    };
+    view.update(cx, |l, cx| {
+        let first = |l: &Library| match &l.console.overlay {
+            Some(Overlay::Read(_, _, o)) => o[0].1.clone(),
+            _ => Act::Nothing,
+        };
+        let (yes, no) = (Act::SteamLicence(4), Act::SteamCancelAction(4));
+        l.steam_show_licence(730, &[eula("")], yes.clone(), no.clone());
+        assert_eq!(first(l), Act::ShowSteamWindow);
+        l.steam_show_licence(730, &[eula("All of it"), eula("")], yes.clone(), no.clone());
+        assert_eq!(first(l), Act::ShowSteamWindow);
+        l.steam_show_licence(730, &[eula(&"Long text. ".repeat(4000))], yes, no);
+        assert_eq!(first(l), Act::SteamLicence(4));
+        assert_eq!(l.console.over_focus.col(), 1, "not on accepting");
+        cx.notify();
+    });
+    cx.run_until_parked();
+    press(Nav::Down, cx);
+    assert!(
+        view.read_with(cx, |l, _| l.console.read_at > 0.),
+        "it moves"
+    );
+    press(Nav::Back, cx);
+    assert!(view.read_with(cx, |l, _| l.console.overlay.is_none()));
+    // Steam says no: the start screen ends.
+    view.update(cx, |l, cx| {
+        l.console.launching = Some(launch());
+        l.steam_news(News::NotStarted("730".into(), "AppError_8".into()), cx);
+        assert!(l.console.launching.is_none());
+        assert!(matches!(l.console.overlay, Some(Overlay::Failed(..))));
     });
 }

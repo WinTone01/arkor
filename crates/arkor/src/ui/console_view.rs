@@ -14,6 +14,7 @@ use super::console::{Act, Art, Item, Kind, Look, Nav, Overlay, Row, Screen, Valu
 use super::cover_art::{self, Size};
 use super::style::{self, pal};
 use super::{Library, downloads_page, gamepad};
+use arkor_launch::shops::Shop;
 
 /// How much bigger the focused item is.
 const GROW: f32 = 0.07;
@@ -411,6 +412,7 @@ impl Library {
                     }
                     _ => None,
                 },
+                Art::File(..) => None,
                 Art::Shop(shop, id) => {
                     arkor_launch::shops::covers::wide(*shop, id).map(|p| (p, Size::Wide))
                 }
@@ -429,6 +431,7 @@ impl Library {
                 Some(Art::Game(id))
             }
             Screen::ShopGame(shop, id) => Some(Art::Shop(shop, id)),
+            Screen::Steam(app, _) => Some(Art::Shop(Shop::Steam, app.to_string())),
             _ => match item.as_ref().map(|i| &i.look) {
                 Some(Look::Cover(art)) => Some(art.clone()),
                 // Over buttons and lines the last picture stays.
@@ -899,6 +902,10 @@ impl Library {
                     ],
                 )
             }
+            Screen::Steam(app, page) => (
+                self.steam_name(app),
+                vec!["Steam".to_string(), self.steam_page_name(page).to_string()],
+            ),
             Screen::ShopGame(shop, id) => {
                 let title = self
                     .shops
@@ -1219,6 +1226,11 @@ impl Library {
                     .into_any_element(),
             },
             Art::Shop(shop, id) => self.shop_art(*shop, id, label, (w, h, radius), cx),
+            Art::File(path, _) => cover_art::cover(path.clone(), radius, false)
+                .w(px(w))
+                .h(px(h))
+                .flex_none()
+                .into_any_element(),
         }
     }
 
@@ -1449,7 +1461,11 @@ impl Library {
             *at
         });
         let picture = art.as_ref().map(|a| {
-            let (w, h) = (60. * u, 80. * u);
+            let (w, h) = match a {
+                Art::File(_, true) => (136. * u, 76. * u),
+                Art::File(_, false) => (72. * u, 72. * u),
+                _ => (60. * u, 80. * u),
+            };
             self.console_art(a, "", (w, h, 8. * u), cx)
         });
         let value = match value {
@@ -1611,7 +1627,10 @@ impl Library {
         }
         let title = match &overlay {
             Overlay::Menu => self.tr("Menu", "Menü").to_string(),
-            Overlay::Ask(text, _, _) | Overlay::Pick(text, _) => text.clone(),
+            Overlay::Ask(text, _, _) | Overlay::Pick(text, _) | Overlay::Read(text, _, _) => {
+                text.clone()
+            }
+            Overlay::Picture(_) => String::new(),
             Overlay::Keyboard => String::new(),
             Overlay::Folder(what, _) => match what {
                 super::console::FolderFor::Prefix => {
@@ -1624,7 +1643,26 @@ impl Library {
                 format!("{name} {}", self.tr("did not start", "açılamadı"))
             }
         };
-        let failed = matches!(overlay, Overlay::Failed(..) | Overlay::Folder(..));
+        let failed = matches!(
+            overlay,
+            Overlay::Failed(..) | Overlay::Folder(..) | Overlay::Read(..)
+        );
+        if let Overlay::Picture(path) = &overlay {
+            let act = Act::Close;
+            return Some(
+                back.bg(gpui::black())
+                    .on_click(
+                        cx.listener(move |this, _, w, cx| this.console_do(act.clone(), w, cx)),
+                    )
+                    .child(
+                        cover_art::backdrop(path.clone(), Size::Wide, 0.)
+                            .absolute()
+                            .inset_0()
+                            .size_full(),
+                    )
+                    .into_any_element(),
+            );
+        }
         let line_h = 84. * u;
         let mut body = div().flex().flex_col().gap(px(22. * u));
         if let Overlay::Failed(_, _, tail) = &overlay {
@@ -1753,6 +1791,47 @@ impl Library {
                 );
             }
             body = body.child(crumbs).child(pills).child(places).child(list);
+        } else if let Overlay::Read(_, text, _) = &overlay {
+            // Moved by lines; the end is guessed from its length.
+            let line = 30. * u;
+            let view = f.vh * 0.5;
+            let lines: f32 = text
+                .split('\n')
+                .map(|l| (l.chars().count() as f32 / 92.).ceil().max(1.))
+                .sum();
+            let most = ((lines * line - view * 0.7) / (line * 6.)).max(0.);
+            self.console.read_at = self.console.read_at.min(most);
+            let mut at = self.console.over_focus.scroll;
+            self.console.unsettled |= ease_to(&mut at, self.console.read_at * line * 6., f.ease);
+            self.console.over_focus.scroll = at;
+            let mut page = div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(px(-at))
+                .flex()
+                .flex_col()
+                .text_size(px(20. * u))
+                .line_height(px(line))
+                .text_color(pal::text_soft());
+            // Only what is near; a licence can be very long.
+            let mut y = 0.;
+            for part in text.split('\n') {
+                let h = (part.chars().count() as f32 / 92.).ceil().max(1.) * line;
+                page = if y + h < at - view || y > at + view * 2. {
+                    page.child(div().h(px(h)))
+                } else {
+                    page.child(div().min_h(px(line)).child(part.to_string()))
+                };
+                y += h;
+            }
+            body = body.child(div().relative().h(px(view)).overflow_hidden().child(page));
+            let mut line = div().flex().justify_end().gap(px(14. * u));
+            for (c, item) in rows[0].items.iter().enumerate() {
+                let glow = if c == col { 1. } else { 0. };
+                line = line.child(self.console_pill(item, ("over-pill", 0, c), glow, f, cx));
+            }
+            body = body.child(line);
         } else if matches!(overlay, Overlay::Ask(..) | Overlay::Failed(..)) {
             let mut line = div().flex().justify_end().gap(px(14. * u));
             for (c, item) in rows[0].items.iter().enumerate() {
@@ -2018,9 +2097,12 @@ impl Library {
                     .text_size(px(24. * u))
                     .text_color(gpui::white().opacity(0.7))
                     .child(super::loader::spinner(40. * u, f.still))
-                    .child(match l.steam {
-                        Some(_) => self.tr("Steam starts the game…", "Steam oyunu başlatıyor…"),
-                        None => self.t().launching,
+                    .child(match &l.steam {
+                        Some(app) => self.steam_launch_task(app).unwrap_or_else(|| {
+                            self.tr("Steam starts the game…", "Steam oyunu başlatıyor…")
+                                .to_string()
+                        }),
+                        None => self.t().launching.to_string(),
                     }),
             );
             // Nothing for a while: Steam may want an answer (a licence, a sync conflict).

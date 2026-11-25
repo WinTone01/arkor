@@ -13,7 +13,7 @@ use arkor_stores::{steam_library as lib, vdf_edit};
 use super::{Installed, Order, Owned, Shop};
 use crate::progress::{self, Transfer};
 use crate::steam_downloads::{self, Step};
-use crate::{steam_link, tools};
+use crate::{steam_api, steam_control, steam_link, tools};
 
 const CDN: &str = "https://shared.steamstatic.com/store_item_assets/steam/apps";
 
@@ -65,7 +65,10 @@ fn start_silent() -> anyhow::Result<()> {
 
 pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
     let appid: u32 = id.parse().context("not a Steam app")?;
-    if lib::progress(appid).is_none() {
+    if lib::progress(appid).is_none() && steam_control::on() {
+        // In the folder that was chosen, without closing Steam.
+        steam_api::install(appid, order.steam_folder, progress::stop_requested)?;
+    } else if lib::progress(appid).is_none() {
         // Steam is not closed under a running game: the download waits for it to end
         // (Steam's own install window would come up over the game otherwise).
         while steam_link::steam_running() && steam_link::any_game_running() {
@@ -98,7 +101,7 @@ pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
         {
             // Paused in Steam, and the user wants it to go on (a list that was only loaded
             // again does not close Steam).
-            go_on()?;
+            go_on(appid)?;
         }
     }
     watch(appid, &order.title)
@@ -144,6 +147,16 @@ fn watch(appid: u32, label: &str) -> anyhow::Result<()> {
 }
 
 pub(super) fn repair(game: &Installed) -> anyhow::Result<()> {
+    if steam_control::on() {
+        let transfer = Transfer::begin(&game.title, None);
+        return steam_api::verify(
+            game.id.parse().context("not a Steam app")?,
+            progress::stop_requested,
+            |done, total| {
+                transfer.report(done, (total > 0).then_some(total), 0.);
+            },
+        );
+    }
     steam_link::open_url(&format!("steam://validate/{}", game.id))
 }
 
@@ -163,6 +176,10 @@ pub(super) fn take_away(appid: u32) -> anyhow::Result<()> {
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
     anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
     let path = lib::manifest(appid).context("the game is not installed")?;
+    // Steam does it itself, without its question (the user was asked already).
+    if steam_control::on() && steam_api::uninstall(appid).unwrap_or(false) {
+        return Ok(());
+    }
     let on = steam_link::steam_running();
     steam_link::shutdown()?;
     // Read once Steam has written it for the last time.
@@ -233,12 +250,38 @@ pub(super) fn call_off(appid: u32) -> anyhow::Result<()> {
     }
 }
 
-/// Steam goes on with what it paused when it starts anew.
-pub(super) fn go_on() -> anyhow::Result<()> {
-    anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
-    steam_link::shutdown()?;
-    start_silent()
+/// Steam goes on with a download: told to, or (what it paused as a whole goes on when it
+/// starts) started anew.
+pub(super) fn go_on(appid: u32) -> anyhow::Result<()> {
+    if steam_control::on() {
+        return steam_control::resume(appid);
+    }
+    if !steam_link::steam_running() {
+        start_silent()?;
+    } else {
+        anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
+        if !lib::progress(appid).is_some_and(|p| p.held()) || steam_control::wanted() {
+            steam_link::shutdown()?;
+            start_silent()?;
+        }
+    }
+    if !lib::progress(appid).is_some_and(|p| p.held()) {
+        return Ok(());
+    }
+    // Paused by itself: only Steam's interface can undo that.
+    anyhow::ensure!(steam_control::wanted(), HELD);
+    let began = Instant::now();
+    loop {
+        if steam_control::on() {
+            return steam_control::resume(appid);
+        }
+        anyhow::ensure!(began.elapsed() < Duration::from_secs(60), HELD);
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
+
+/// A download the user paused in Steam itself.
+pub const HELD: &str = "it was paused in Steam: continue it there";
 
 /// What was changed to put a game first: its manifest and what stood there.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -268,6 +311,9 @@ fn set_behavior(path: &std::path::Path, value: &str) -> anyhow::Result<String> {
 /// "high priority" (what Properties → Updates sets), and the one put first before gets its
 /// own back. Steam only reads this when it starts, so it is closed for a moment.
 pub(super) fn first(appid: u32) -> anyhow::Result<()> {
+    if steam_control::on() {
+        return steam_control::place(appid, 0);
+    }
     anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
     let path = lib::manifest(appid).context("the game is not in Steam")?;
     steam_link::shutdown()?;

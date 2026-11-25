@@ -291,6 +291,7 @@ impl Library {
                 // The speed graph moves every tick while something downloads.
                 let graph_moved = this
                     .update(cx, |this, cx| {
+                        this.steam_tick(cx);
                         let moved = this.downloads.speed.sample();
                         if moved {
                             cx.notify();

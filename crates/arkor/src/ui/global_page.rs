@@ -277,6 +277,23 @@ impl Library {
                             }),
                         )),
                 )
+                                .child(
+                    widgets::section("Steam").child(widgets::setting_row(
+                        self.tr("Control Steam", "Steam'i yönet"),
+                        self.steam_control_text(),
+                        {
+                            let on = self.global.steam_control;
+                            let text = if on {
+                                self.tr("Switch off", "Kapat")
+                            } else {
+                                self.tr("Switch on", "Aç")
+                            };
+                            style::button("steam-control", text, on).on_click(cx.listener(
+                                move |this, _, _, cx| this.set_steam_control(!on, cx),
+                            ))
+                        },
+                    )),
+                )
                 .child(
                     widgets::section(self.tr("Store games", "Mağaza oyunları")).child(
                         widgets::setting_row(

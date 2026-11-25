@@ -381,6 +381,15 @@ pub fn shutdown() -> anyhow::Result<()> {
 /// Brings Steam's settings for the game in line with Arkor's, closing Steam first when it
 /// runs and something differs. Returns what was changed.
 pub fn sync(appid: &str, id: &GameId, profile: &Profile) -> anyhow::Result<Vec<&'static str>> {
+    // A Steam under control takes them as it runs.
+    if crate::steam_control::wanted()
+        && steam_running()
+        && crate::steam_api::ready()
+        && let Ok(app) = appid.parse::<u32>()
+        && let Ok(now) = crate::steam_api::app_settings(app)
+    {
+        return sync_live(app, &now, &wanted(id, profile));
+    }
     let changes = out_of_sync(appid, id, profile);
     if changes.is_empty() {
         return Ok(changes);
@@ -395,6 +404,34 @@ pub fn sync(appid: &str, id: &GameId, profile: &Profile) -> anyhow::Result<Vec<&
     }
     apply_in(&root, appid, id, profile)?;
     Ok(changes)
+}
+
+/// Brings a running Steam's settings in line with what is wanted.
+fn sync_live(
+    app: u32,
+    now: &crate::steam_api::AppSettings,
+    want: &Wanted,
+) -> anyhow::Result<Vec<&'static str>> {
+    let mut changed = Vec::new();
+    if let Some(tool) = &want.tool
+        && !same_tool(now, tool.as_deref())
+    {
+        crate::steam_api::set_tool(app, tool.as_deref())?;
+        changed.push("Proton");
+    }
+    if now.options.trim() != want.launch_options {
+        crate::steam_api::set_launch_options(app, &want.launch_options)?;
+        changed.push("launch options");
+    }
+    Ok(changed)
+}
+
+/// Whether Steam uses `tool` for a game already (`None`: its own choice).
+fn same_tool(now: &crate::steam_api::AppSettings, tool: Option<&str>) -> bool {
+    match tool {
+        Some(t) => now.priority == 250 && now.tool == t,
+        None => now.priority != 250,
+    }
 }
 
 /// Asks Steam to start `appid`. Steam is started on its own (not as a child of Arkor).
@@ -421,6 +458,7 @@ fn steam_command(url: Option<&str>) -> anyhow::Result<()> {
     // windows), so nothing of it shows over a game or Arkor.
     if program == "steam" && !steam_running() {
         cmd.args(["-silent", "-nofriendsui", "-nochatui"]);
+        crate::steam_control::before_start();
     }
     cmd.args(url)
         .stdin(std::process::Stdio::null())
@@ -556,6 +594,21 @@ pub fn launch(appid: &str, id: &GameId) -> anyhow::Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_running_steams_proton_is_compared() {
+        let now = |tool: &str, priority| crate::steam_api::AppSettings {
+            options: String::new(),
+            tool: tool.into(),
+            priority,
+        };
+        assert!(same_tool(&now("proton_9", 250), Some("proton_9")));
+        // The same one, but as Steam's own choice: not the user's yet.
+        assert!(!same_tool(&now("proton_9", 100), Some("proton_9")));
+        assert!(!same_tool(&now("proton_8", 250), Some("proton_9")));
+        assert!(same_tool(&now("steamlinuxruntime_sniper", 100), None));
+        assert!(!same_tool(&now("proton_9", 250), None));
+    }
 
     #[test]
     fn names_valve_protons() {

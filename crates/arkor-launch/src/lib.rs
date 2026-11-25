@@ -25,6 +25,8 @@ pub mod self_update;
 pub mod shops;
 pub mod shortcuts;
 pub mod start;
+pub mod steam_api;
+pub mod steam_control;
 pub mod steam_downloads;
 pub mod steam_link;
 pub mod streamline;

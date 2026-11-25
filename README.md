@@ -187,6 +187,8 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       Steam still starts them, and Arkor writes its choices into Steam: the game's
       <b>Proton</b> and launch options that run it <b>through Arkor</b>, so MangoHud, frame
       generation and the environment apply whether you press Play in Arkor or in Steam.
+      Optionally Arkor <b>controls Steam</b>: downloads and their order, installing, moving,
+      achievements, DLC and workshop, without Steam's windows.
     </td>
     <td valign="top">
       <img src="docs/icons/frames.svg" width="40"><br>

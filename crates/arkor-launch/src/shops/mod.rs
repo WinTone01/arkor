@@ -400,6 +400,8 @@ pub struct Order {
     /// Also an entry in the app menu, and one on the desktop.
     pub menu: bool,
     pub desktop: bool,
+    /// Steam's library folder it goes to (`None`: Steam's default one).
+    pub steam_folder: Option<i32>,
     /// The folder did not exist before, so an abandoned download may be deleted.
     fresh: bool,
     size: Option<u64>,
@@ -655,12 +657,12 @@ pub(crate) fn steam_first_over() {
     steam::first_over();
 }
 
-/// Makes Steam go on with what it paused (it starts anew for that). Blocking.
-pub fn steam_go_on() -> anyhow::Result<()> {
-    steam::go_on()
+/// Makes Steam go on with a download. Blocking.
+pub fn steam_go_on(appid: u32) -> anyhow::Result<()> {
+    steam::go_on(appid)
 }
 
-pub use steam::GAME_RUNS;
+pub use steam::{GAME_RUNS, HELD};
 
 /// Whether a game folder may be deleted as a whole: a real folder, and nothing that could
 /// hold more than one game (home, a drive, the games folder itself).

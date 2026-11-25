@@ -149,6 +149,8 @@ pub(super) struct GameUi {
     /// How it will run (Windows builds): its Proton (`None` = the default) and prefix.
     pub(super) proton: Option<String>,
     pub(super) prefix: Option<PathBuf>,
+    /// Steam's library folder it goes to.
+    pub(super) steam_folder: Option<i32>,
     pub(super) proton_open: bool,
     /// Also in the app menu, and on the desktop.
     pub(super) menu: bool,
@@ -446,6 +448,12 @@ impl Library {
             self.tr(
                 "A Steam game is running: close it first",
                 "Bir Steam oyunu açık: önce onu kapat",
+            )
+            .into()
+        } else if error.contains(shops::HELD) {
+            self.tr(
+                "It was paused in Steam: continue it there",
+                "Steam'de duraklatılmış: oradan sürdür",
             )
             .into()
         } else if error.contains("uses the same folder") {
@@ -897,6 +905,7 @@ impl Library {
             proton: None,
             prefix: None,
             proton_open: false,
+            steam_folder: None,
             menu: true,
             desktop: false,
             compat: None,
@@ -1047,6 +1056,7 @@ impl Library {
         order.prefix = g.prefix.clone();
         order.menu = g.menu;
         order.desktop = g.desktop;
+        order.steam_folder = g.steam_folder;
         match shops::install(g.shop, &g.game.id, order) {
             Ok(()) => self.shops.game = None,
             Err(e) => g.error = Some(format!("{e:#}")),
@@ -1096,6 +1106,39 @@ impl Library {
             });
         })
         .detach();
+    }
+
+    /// What the control of Steam is and what it opens.
+    pub(super) fn steam_control_text(&self) -> &'static str {
+        self.tr(
+            "Through Steam's developer port Arkor can steer its downloads, install, remove and move games, and show achievements, screenshots, DLC and workshop items. While Steam runs with it, every program on this computer (games too) could use that port without a password, with your Steam account. Steam restarts now.",
+            "Arkor, Steam'in geliştirici bağlantı noktasıyla indirmeleri yönetebilir, oyun kurup kaldırabilir ve taşıyabilir; başarımları, ekran görüntülerini, DLC ve atölyeyi gösterebilir. Steam böyle açıkken bu bilgisayardaki her program (oyunlar da) bu kapıyı şifresiz, Steam hesabınla kullanabilir. Steam şimdi yeniden başlar.",
+        )
+    }
+
+    /// Switches the control of Steam's downloads on or off; a Steam that runs starts anew.
+    pub(super) fn set_steam_control(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.global.steam_control = on;
+        let r = self.global.save();
+        self.report(r);
+        self.status = Some(self.tr("Steam restarts…", "Steam yeniden başlıyor…").into());
+        self.steam_do(
+            move || arkor_launch::steam_control::apply(on),
+            move |this| {
+                Some(if on {
+                    this.tr(
+                        "On. It works as soon as Steam has started.",
+                        "Açık. Steam açılınca çalışmaya başlar.",
+                    )
+                } else {
+                    this.tr(
+                        "Off. The port goes when Steam restarts.",
+                        "Kapalı. Kapı, Steam yeniden başlayınca kapanır.",
+                    )
+                })
+            },
+            cx,
+        );
     }
 
     /// Something is asked of Steam in the background; what went wrong is said.

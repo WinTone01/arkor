@@ -10,10 +10,11 @@ use arkor_core::library::{GameKind, LibraryGame};
 use arkor_launch::downloads::{self, State};
 use arkor_launch::progress;
 use arkor_launch::shops::{self, Shop};
-use arkor_launch::steam_downloads;
+use arkor_launch::{steam_api, steam_control, steam_downloads};
 use gpui::{Context, KeyBinding, Window, actions};
 
 use super::console_sound::Cue;
+use super::console_steam::SteamPage;
 use super::console_tools::{AfterDisk, NeedsPassword};
 pub(super) use super::gamepad::Nav;
 use super::{Library, Selection, cover_art, shops_page};
@@ -77,6 +78,8 @@ pub(super) enum Screen {
     GameCat(String, super::console_settings::GameCat),
     /// One category of Arkor's settings.
     SettingsCat(super::console_settings::AppCat),
+    /// What Steam has about a game.
+    Steam(u32, SteamPage),
 }
 
 impl Screen {
@@ -114,6 +117,10 @@ pub(super) enum Opt {
     DefaultProton,
     Motion,
     Sounds,
+    /// Steam's downloads are controlled through its developer port.
+    SteamControl,
+    /// Steam's library folder a game is installed in.
+    SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
     ConsoleVolume,
     ConsoleIntro,
@@ -149,7 +156,33 @@ pub(super) enum Act {
     SteamDownload(u32),
     /// What Steam began to install is called off; what it paused goes on.
     CallOff(u32),
-    SteamGoOn,
+    SteamGoOn(u32),
+    SteamPause(u32),
+    /// Its place in Steam's queue.
+    SteamPlace(u32, usize),
+    /// A game to another of Steam's folders: where to, done, stopped.
+    SteamMoveAsk(u32),
+    SteamMove(u32, i32),
+    SteamMoveMenu,
+    SteamMoveCancel,
+    /// What a launch asked is answered, or the launch is called off.
+    SteamAnswer(u32, String),
+    SteamCancelAction(u32),
+    /// The licence a launch, an installation waits for.
+    SteamLicence(u32),
+    Licence(bool),
+    ShowSteamWindow,
+    SteamDlc(u32, u32, bool),
+    WorkshopMenu(u32, String),
+    SteamWorkshop(u32, String, bool),
+    AskUnsubscribe(u32, String, String),
+    Unsubscribe(u32, String),
+    ShotMenu(usize),
+    ShotShow(PathBuf),
+    AskShotDelete(usize),
+    ShotDelete(usize),
+    /// Steam is controlled through its developer port from now on, or no longer.
+    SteamControl(bool),
     /// Before Steam's other downloads.
     SteamFirst(u32),
     /// What can be done with a download of the queue, and its place in it.
@@ -238,6 +271,8 @@ impl Power {
 pub(super) enum Art {
     Game(String),
     Shop(Shop, String),
+    /// A picture on the computer, and whether it is a wide one.
+    File(PathBuf, bool),
 }
 
 /// How an item is drawn.
@@ -455,6 +490,10 @@ pub(super) enum Overlay {
     Failed(String, String, Vec<String>),
     /// A choice: its title and (label, action, chosen).
     Pick(String, Vec<(String, Act, bool)>),
+    /// A long text (up and down move it) and what to answer.
+    Read(String, String, Vec<(String, Act)>),
+    /// A picture over the whole screen.
+    Picture(PathBuf),
 }
 
 /// What a folder is chosen for.
@@ -553,6 +592,15 @@ pub(super) struct Console {
     pub(super) said: Option<(gpui::SharedString, Instant)>,
     /// Where the bars of downloads are drawn (they glide).
     pub(super) bars: HashMap<String, f32>,
+    /// What Steam has about a game, as it was loaded.
+    pub(super) steam_page: Option<super::console_steam::Loaded>,
+    pub(super) steam_folders: Vec<arkor_launch::steam_api::Folder>,
+    /// The question of Steam's that was put last.
+    pub(super) asked: Option<String>,
+    /// The licence a launch waits for.
+    pub(super) licence: Option<(u32, Vec<arkor_launch::steam_api::Eula>)>,
+    /// How far a long text was moved.
+    pub(super) read_at: f32,
     /// Arkor's own update was looked for in this session.
     pub(super) looked: bool,
     /// When Steam was opened to log in.
@@ -707,6 +755,7 @@ impl Library {
                 }
             }
             Screen::SettingsCat(c) => self.app_cat_rows(c),
+            Screen::Steam(app, page) => self.steam_page_rows(app, page),
         }
     }
 
@@ -968,6 +1017,7 @@ impl Library {
             |key: &str| shops::parse_key(key).map(|(shop, id, _)| Art::Shop(shop, id.to_string()));
         let active = progress::list();
         let steam = steam_downloads::items();
+        rows.extend(self.steam_move_row());
         // What goes on now: Arkor's own, then Steam's.
         for e in &active {
             if self.steam_item(&e.key).is_some() {
@@ -1071,11 +1121,41 @@ impl Library {
             return;
         };
         let mut options = Vec::new();
-        if matches!(i.step, Step::Paused | Step::Off) {
-            options.push((self.tr("Go on", "Sürdür"), Act::SteamGoOn));
+        let control = steam_control::on();
+        // Paused by itself, it only goes on in Steam (or with Steam under control).
+        if matches!(i.step, Step::Paused | Step::Off)
+            && (control || steam_control::wanted() || !i.held)
+        {
+            options.push((self.tr("Go on", "Sürdür"), Act::SteamGoOn(appid)));
         }
-        // Not the one that comes first anyway.
-        if !i.running && items.len() > 1 && items[0].appid != appid {
+        if control {
+            if i.running || i.step == Step::Waiting {
+                options.push((self.tr("Pause", "Duraklat"), Act::SteamPause(appid)));
+            }
+            // Its place among those that are not paused by themselves.
+            let queue: Vec<u32> = items.iter().filter(|q| !q.held).map(|q| q.appid).collect();
+            if let Some(at) = queue.iter().position(|q| *q == appid) {
+                if at > 0 {
+                    options.push((
+                        self.tr("Download it first", "Önce bunu indir"),
+                        Act::SteamPlace(appid, 0),
+                    ));
+                }
+                if at > 1 {
+                    options.push((
+                        self.tr("Move up", "Yukarı taşı"),
+                        Act::SteamPlace(appid, at - 1),
+                    ));
+                }
+                if at + 1 < queue.len() {
+                    options.push((
+                        self.tr("Move down", "Aşağı taşı"),
+                        Act::SteamPlace(appid, at + 1),
+                    ));
+                }
+            }
+        } else if !i.running && !i.held && items.len() > 1 && items[0].appid != appid {
+            // Not the one that comes first anyway.
             options.push((
                 self.tr(
                     "Download it first (Steam restarts)",
@@ -1218,6 +1298,9 @@ impl Library {
             });
         }
         let mut rows = vec![Row::new(Kind::Pills, pills)];
+        if let GameKind::Steam { appid } = &g.kind {
+            rows.extend(appid.parse().ok().and_then(|a| self.steam_pills(a)));
+        }
         // The switches need the game's profile, which is the selected game's.
         if self.entry().is_some_and(|e| e.id == g.id) {
             if matches!(
@@ -1281,10 +1364,23 @@ impl Library {
             use steam_downloads::Step;
             let mut pills = Vec::new();
             if matches!(i.step, Step::Paused | Step::Off) {
+                let (act, text) = if i.held && !steam_control::wanted() {
+                    (
+                        Act::ShowSteam,
+                        self.tr("Paused in Steam: open it", "Steam'de duraklatıldı: aç"),
+                    )
+                } else {
+                    (
+                        Act::SteamGoOn(i.appid),
+                        self.tr("Go on installing", "Kurulumu sürdür"),
+                    )
+                };
+                pills.push(Item::main(act, "play", text));
+            } else if steam_control::on() {
                 pills.push(Item::main(
-                    Act::SteamGoOn,
-                    "play",
-                    self.tr("Go on installing", "Kurulumu sürdür"),
+                    Act::SteamPause(i.appid),
+                    "pause",
+                    self.tr("Pause", "Duraklat"),
                 ));
             }
             pills.push(Item::pill(
@@ -1355,7 +1451,11 @@ impl Library {
                     false,
                 ),
             ]);
-            return vec![Row::new(Kind::Pills, pills)];
+            let mut rows = vec![Row::new(Kind::Pills, pills)];
+            if shop == Shop::Steam {
+                rows.extend(id.parse().ok().and_then(|a| self.steam_pills(a)));
+            }
+            return rows;
         }
         let Some(g) = self
             .shops
@@ -1441,6 +1541,14 @@ impl Library {
             }
         }
         let steam = shop == Shop::Steam;
+        if steam && steam_control::on() && self.console.steam_folders.len() > 1 {
+            rows.push(line(
+                Act::Opt(Opt::SteamFolder),
+                "hard-drive",
+                self.tr("Install on", "Kurulacağı yer"),
+                self.opt_value(&Opt::SteamFolder),
+            ));
+        }
         if !g.linux && !steam {
             let mut proton = line(
                 Act::Opt(Opt::InstallProton),
@@ -1711,6 +1819,26 @@ impl Library {
                     Item::pill(Act::Close, "x", self.tr("Cancel", "Vazgeç"), false),
                     Item::main(act.clone(), "check", yes.clone()),
                 ],
+            )],
+            Overlay::Read(_, _, options) => vec![Row::new(
+                Kind::Pills,
+                options
+                    .iter()
+                    .enumerate()
+                    .map(|(n, (text, act))| match n {
+                        0 => Item::main(act.clone(), "check", text.clone()),
+                        _ => Item::pill(act.clone(), "x", text.clone(), false),
+                    })
+                    .collect(),
+            )],
+            Overlay::Picture(_) => vec![Row::new(
+                Kind::Pills,
+                vec![Item::pill(
+                    Act::Close,
+                    "x",
+                    self.tr("Close", "Kapat"),
+                    false,
+                )],
             )],
             Overlay::Pick(_, options) => {
                 // Things to do, or one of several to choose.
@@ -2067,6 +2195,13 @@ impl Library {
             Screen::ShopGame(shop, id) => {
                 self.console.focus.remove(&screen);
                 self.shop_open_game(*shop, id, cx);
+                if *shop == Shop::Steam {
+                    self.steam_look_folders(cx);
+                }
+            }
+            Screen::Steam(app, page) => {
+                self.console.focus.remove(&screen);
+                self.steam_page_load(*app, *page, cx);
             }
             _ => {}
         }
@@ -2091,6 +2226,20 @@ impl Library {
             self.console_overlay(Overlay::Folder(what, up.to_path_buf()));
             cx.notify();
             return;
+        }
+        // Leaving a licence is no answer but "no".
+        if let Some(Overlay::Read(_, _, options)) = &self.console.overlay
+            && let Some((_, Act::SteamCancelAction(id))) = options.last().cloned()
+        {
+            return self.steam_cancel_action(id, cx);
+        }
+        if matches!(&self.console.overlay, Some(Overlay::Read(..))) {
+            arkor_launch::steam_api::answer_licence(false);
+        }
+        if let Some(Overlay::Pick(_, options)) = &self.console.overlay
+            && let Some((_, Act::SteamCancelAction(id), _)) = options.last().cloned()
+        {
+            return self.steam_cancel_action(id, cx);
         }
         if self.console.overlay.take().is_some() {
             self.console.edit = None;
@@ -2276,6 +2425,12 @@ impl Library {
             && self.opt_turn(&o, dx)
         {
             self.cue(Cue::Turn);
+            cx.notify();
+            return;
+        }
+        // A long text moves.
+        if dy != 0 && matches!(over, Some(Overlay::Read(..))) {
+            self.console.read_at = (self.console.read_at + dy as f32).max(0.);
             cx.notify();
             return;
         }
@@ -2668,6 +2823,15 @@ impl Library {
             Act::DiskMenu(_) | Act::FolderAt(_) | Act::SteamDownload(_) => Cue::Open,
             Act::DoNotStart | Act::CallOff(_) => Cue::Back,
             Act::DownloadMenu(_) | Act::AskArkor => Cue::Open,
+            Act::SteamMoveAsk(_) | Act::SteamMoveMenu | Act::WorkshopMenu(..) => Cue::Open,
+            Act::ShotMenu(_) | Act::AskShotDelete(_) | Act::AskUnsubscribe(..) => Cue::Open,
+            Act::SteamDlc(_, _, on) => {
+                if *on {
+                    Cue::On
+                } else {
+                    Cue::Off
+                }
+            }
             Act::GameLanguage => Cue::Open,
             Act::ShopTab(_) | Act::Filter(_) | Act::ProtonVariant(_) => Cue::Tab,
             Act::Opt(o) => match self.opt_value(o) {
@@ -2766,16 +2930,58 @@ impl Library {
                     );
                 }
             }
-            Act::SteamGoOn => {
+            Act::SteamGoOn(appid) => {
                 self.console.overlay = None;
-                self.status = Some(
-                    self.tr(
-                        "Steam starts in the background and goes on.",
-                        "Steam arka planda açılıyor ve devam edecek.",
-                    )
-                    .into(),
-                );
-                self.steam_do(shops::steam_go_on, |_| None, cx);
+                if !steam_control::on() {
+                    self.status = Some(
+                        self.tr(
+                            "Steam starts in the background and goes on.",
+                            "Steam arka planda açılıyor ve devam edecek.",
+                        )
+                        .into(),
+                    );
+                }
+                self.steam_do(move || shops::steam_go_on(appid), |_| None, cx);
+            }
+            Act::SteamPause(appid) => {
+                self.console.overlay = None;
+                self.steam_do(move || steam_control::pause(appid), |_| None, cx);
+            }
+            Act::SteamPlace(appid, place) => {
+                self.console.overlay = None;
+                self.steam_do(move || steam_control::place(appid, place), |_| None, cx);
+            }
+            Act::SteamMoveAsk(app) => self.steam_move_ask(app, cx),
+            Act::SteamMove(app, folder) => self.steam_move(app, folder, cx),
+            Act::SteamMoveMenu => self.steam_move_menu(),
+            Act::SteamMoveCancel => {
+                self.console.overlay = None;
+                self.steam_do(steam_api::cancel_move, |_| None, cx);
+            }
+            Act::SteamAnswer(id, what) => self.steam_answer(id, what, cx),
+            Act::SteamCancelAction(id) => self.steam_cancel_action(id, cx),
+            Act::SteamLicence(id) => self.steam_accept(id, cx),
+            Act::Licence(yes) => {
+                self.steam_answered();
+                steam_api::answer_licence(yes);
+            }
+            Act::ShowSteamWindow => {
+                // Answered there.
+                steam_api::answer_licence(false);
+                self.console_show_steam(None, cx);
+            }
+            Act::SteamDlc(app, dlc, on) => self.steam_set_dlc(app, dlc, on, cx),
+            Act::WorkshopMenu(app, id) => self.workshop_menu(app, &id),
+            Act::SteamWorkshop(app, id, on) => self.steam_set_workshop(app, id, on, cx),
+            Act::AskUnsubscribe(app, id, title) => self.ask_unsubscribe(app, id, &title),
+            Act::Unsubscribe(app, id) => self.steam_unsubscribe(app, id, cx),
+            Act::ShotMenu(ix) => self.shot_menu(ix),
+            Act::ShotShow(path) => self.console_overlay(Overlay::Picture(path)),
+            Act::AskShotDelete(ix) => self.ask_shot_delete(ix),
+            Act::ShotDelete(ix) => self.shot_delete(ix, cx),
+            Act::SteamControl(on) => {
+                self.console.overlay = None;
+                self.set_steam_control(on, cx);
             }
             Act::SteamFirst(appid) => {
                 self.console.overlay = None;
@@ -3100,6 +3306,13 @@ impl Library {
     fn console_opt(&mut self, opt: Opt, cx: &mut Context<Self>) {
         use super::console_settings::GameOpt;
         match &opt {
+            // Asked first: what it opens is said.
+            Opt::SteamControl if !self.global.steam_control => {
+                let text = self.steam_control_text().to_string();
+                let yes = self.tr("Switch it on", "Aç").to_string();
+                self.console_overlay(Overlay::Ask(text, yes, Act::SteamControl(true)));
+            }
+            Opt::SteamControl => self.set_steam_control(false, cx),
             Opt::Quick(ix) => {
                 if let Some((_, _, toggle)) = super::features::QUICK.get(*ix) {
                     toggle(self);
@@ -3285,6 +3498,8 @@ impl Library {
                     size: Size::Cover,
                 })
             }
+            Art::File(path, true) => Some(wide(path.clone())),
+            Art::File(..) => None,
             Art::Shop(shop, id) => match self.shop_wide(*shop, id, cx) {
                 Some(p) => Some(wide(p)),
                 None => self.shop_cover(*shop, id, cx).map(blur),
