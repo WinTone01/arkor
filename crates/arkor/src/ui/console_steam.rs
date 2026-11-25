@@ -446,7 +446,23 @@ impl Library {
 
     /// Looks at Steam's library folders.
     pub(super) fn steam_look_folders(&mut self, cx: &mut Context<Self>) {
-        if cfg!(test) || !steam_control::on() {
+        if cfg!(test) {
+            return;
+        }
+        // Without its port: Steam's own list of them.
+        if !steam_control::on() {
+            self.console.steam_folders = arkor_launch::shops::steam_libraries()
+                .into_iter()
+                .map(|l| steam_api::Folder {
+                    index: l.index,
+                    path: l.path.display().to_string(),
+                    label: l.label,
+                    free: l.free.unwrap_or(0) as f64,
+                    default: l.default,
+                    mounted: l.mounted,
+                    apps: Vec::new(),
+                })
+                .collect();
             return;
         }
         let bg = cx.background_executor().clone();
@@ -470,7 +486,7 @@ impl Library {
         } else if std::path::Path::new(&f.path).starts_with(&home) {
             self.tr("System disk", "Sistem diski").to_string()
         } else {
-            f.path.trim_end_matches("/SteamLibrary").to_string()
+            short_place(&f.path)
         };
         match self.global.language {
             arkor_core::Language::Tr => format!("{free} boş · {name}"),
@@ -995,5 +1011,70 @@ impl Library {
             |_| None,
             cx,
         );
+    }
+}
+
+/// A library's place in a few words: the disk it is on, or the end of its path.
+fn short_place(path: &str) -> String {
+    let path = std::path::Path::new(path.trim_end_matches('/'));
+    let path = match path.file_name() {
+        Some(n) if n.to_string_lossy().eq_ignore_ascii_case("SteamLibrary") => {
+            path.parent().unwrap_or(path)
+        }
+        _ => path,
+    };
+    let parts: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(p) => Some(p.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    // /run/media/<user>/<disk>/… and /mnt/<disk>/…: from the disk on.
+    let from = match parts.first().map(String::as_str) {
+        Some("run") if parts.get(1).is_some_and(|p| p == "media") => 3,
+        Some("mnt" | "media") => 1,
+        _ => parts.len().saturating_sub(2),
+    };
+    let rest = &parts[from.min(parts.len())..];
+    let text = rest.join("/");
+    let text = if text.is_empty() {
+        path.display().to_string()
+    } else if from > 1
+        && !matches!(
+            parts.first().map(String::as_str),
+            Some("run" | "mnt" | "media")
+        )
+    {
+        format!("…/{text}")
+    } else {
+        text
+    };
+    if text.chars().count() > 40 {
+        let tail: String = text
+            .chars()
+            .rev()
+            .take(39)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("…{tail}")
+    } else {
+        text
+    }
+}
+
+#[cfg(test)]
+mod place_tests {
+    #[test]
+    fn places_are_short() {
+        assert_eq!(
+            super::short_place("/run/media/me/4cb56367-6980-474d-ab62-d87f99b34fe4/SteamLibrary"),
+            "4cb56367-6980-474d-ab62-d87f99b34fe4"
+        );
+        assert_eq!(super::short_place("/mnt/Games/SteamLibrary"), "Games");
+        assert_eq!(super::short_place("/data/a/b/c/SteamLibrary"), "…/b/c");
+        assert_eq!(super::short_place("/games/SteamLibrary"), "games");
     }
 }

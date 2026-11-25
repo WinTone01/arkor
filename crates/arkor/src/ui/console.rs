@@ -530,6 +530,8 @@ pub(super) enum FolderFor {
     Prefix,
     /// Where store games go by default.
     Games,
+    /// A new library of Steam's.
+    SteamLibrary,
 }
 
 /// The picture behind the screen.
@@ -538,6 +540,9 @@ pub(super) struct Behind {
     pub(super) path: PathBuf,
     pub(super) size: cover_art::Size,
 }
+
+/// The choice of a new library folder for Steam.
+pub(super) const NEW_FOLDER: &str = "new";
 
 /// A key no keyboard has, pressed to make the pointer go (see [`hide_pointer`]).
 pub(super) const POINTER_KEY: &str = "f35";
@@ -1603,7 +1608,7 @@ impl Library {
             }
         }
         let steam = shop == Shop::Steam;
-        if steam && steam_control::on() && self.console.steam_folders.len() > 1 {
+        if steam && !self.console.steam_folders.is_empty() {
             rows.push(line(
                 Act::Opt(Opt::SteamFolder),
                 "hard-drive",
@@ -3292,6 +3297,16 @@ impl Library {
                         .and_then(|g| g.prefix.clone())
                         .or_else(|| Some(self.global.prefixes_dir())),
                     FolderFor::Games => Some(self.global.games_dir()),
+                    // Other disks are mounted there.
+                    FolderFor::SteamLibrary => self
+                        .shops
+                        .game
+                        .as_ref()
+                        .and_then(|g| g.steam_new.clone())
+                        .or_else(|| {
+                            let user = std::env::var("USER").ok()?;
+                            Some(PathBuf::from("/run/media").join(user)).filter(|p| p.is_dir())
+                        }),
                 }
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
                 // The nearest folder that exists.
@@ -3332,6 +3347,12 @@ impl Library {
                             self.global.games_dir = Some(dir);
                             let r = self.global.save();
                             self.report(r);
+                        }
+                        FolderFor::SteamLibrary => {
+                            if let Some(g) = self.shops.game.as_mut() {
+                                g.steam_new = Some(dir);
+                                g.steam_folder = None;
+                            }
                         }
                     }
                 }
@@ -3375,6 +3396,10 @@ impl Library {
                 self.shop_install(cx);
             }
             Act::Opt(o) => self.console_opt(o, cx),
+            Act::Pick(Opt::SteamFolder, value) if value == NEW_FOLDER => {
+                self.console.overlay = None;
+                self.console_do(Act::Folder(FolderFor::SteamLibrary), window, cx);
+            }
             Act::Pick(o, value) => {
                 self.console.overlay = None;
                 self.opt_set(&o, &value);

@@ -151,8 +151,9 @@ pub(super) struct GameUi {
     /// How it will run (Windows builds): its Proton (`None` = the default) and prefix.
     pub(super) proton: Option<String>,
     pub(super) prefix: Option<PathBuf>,
-    /// Steam's library folder it goes to.
+    /// Steam's library folder it goes to, or a folder that becomes a new one.
     pub(super) steam_folder: Option<i32>,
+    pub(super) steam_new: Option<PathBuf>,
     pub(super) proton_open: bool,
     /// Also in the app menu, and on the desktop.
     pub(super) menu: bool,
@@ -916,6 +917,7 @@ impl Library {
             prefix: None,
             proton_open: false,
             steam_folder: None,
+            steam_new: None,
             menu: true,
             desktop: false,
             compat: None,
@@ -924,6 +926,9 @@ impl Library {
         });
         if !self.shops.is_installed(shop, id) {
             self.shop_ask_info(cx);
+            if shop == Shop::Steam {
+                self.steam_look_folders(cx);
+            }
         }
         self.shop_ask_compat(cx);
         cx.notify();
@@ -1067,6 +1072,7 @@ impl Library {
         order.menu = g.menu;
         order.desktop = g.desktop;
         order.steam_folder = g.steam_folder;
+        order.steam_new_folder = g.steam_new.clone();
         match shops::install(g.shop, &g.game.id, order) {
             Ok(()) => self.shops.game = None,
             Err(e) => g.error = Some(format!("{e:#}")),

@@ -1149,13 +1149,21 @@ impl Library {
                 .iter()
                 .map(|(c, en, tr)| (s(self.tr(en, tr)), format!("{c:06x}")))
                 .collect(),
-            Opt::SteamFolder => self
-                .console
-                .steam_folders
-                .iter()
-                .filter(|f| f.mounted)
-                .map(|f| (self.steam_folder_name(f), f.index.to_string()))
-                .collect(),
+            Opt::SteamFolder => {
+                let mut out: Vec<(String, String)> = self
+                    .console
+                    .steam_folders
+                    .iter()
+                    .filter(|f| f.mounted)
+                    .map(|f| (self.steam_folder_name(f), f.index.to_string()))
+                    .collect();
+                let new = match self.shops.game.as_ref().and_then(|g| g.steam_new.as_ref()) {
+                    Some(dir) => dir.display().to_string(),
+                    None => self.tr("Another folder…", "Başka bir klasör…").to_string(),
+                };
+                out.push((new, super::console::NEW_FOLDER.into()));
+                out
+            }
             Opt::ConsoleVolume => [0, 20, 40, 55, 70, 85, 100]
                 .into_iter()
                 .map(|v| {
@@ -1229,6 +1237,14 @@ impl Library {
                     .unwrap_or(super::style::pal::DEFAULT_ACCENT)
             ),
             Opt::SteamFolder => {
+                if self
+                    .shops
+                    .game
+                    .as_ref()
+                    .is_some_and(|g| g.steam_new.is_some())
+                {
+                    return super::console::NEW_FOLDER.into();
+                }
                 let chosen = self.shops.game.as_ref().and_then(|g| g.steam_folder);
                 let usual = self.console.steam_folders.iter().find(|f| f.default);
                 chosen
@@ -1297,6 +1313,9 @@ impl Library {
         if *o == Opt::SteamFolder {
             if let Some(g) = self.shops.game.as_mut() {
                 g.steam_folder = key.parse().ok();
+                if g.steam_folder.is_some() {
+                    g.steam_new = None;
+                }
             }
             return;
         }

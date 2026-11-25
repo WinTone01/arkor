@@ -1494,3 +1494,85 @@ fn trouble_is_found_fixed_and_undone() {
         );
     });
 }
+
+#[test]
+fn steam_games_go_where_they_are_told() {
+    use super::console::{Act, FolderFor, Opt, Overlay, Screen};
+    use arkor_launch::shops::{Owned, Shop};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console"));
+        lib.shops.set_owned(
+            Shop::Steam,
+            vec![Owned {
+                id: "620".into(),
+                title: "Portal 2".into(),
+                cover: None,
+                wide: None,
+                linux: false,
+                windows: true,
+                namespace: None,
+            }],
+        );
+        lib
+    });
+    cx.run_until_parked();
+    let folder = |index: i32, path: &str, default: bool| arkor_launch::steam_api::Folder {
+        index,
+        path: path.into(),
+        label: String::new(),
+        free: 1e9,
+        default,
+        mounted: true,
+        apps: Vec::new(),
+    };
+    view.update_in(cx, |l, w, cx| {
+        l.console_open(Screen::ShopGame(Shop::Steam, "620".into()), cx);
+        // Without Steam's port, too: one folder is enough to choose another.
+        l.console.steam_folders = vec![folder(0, "/home/x/.local/share/Steam", true)];
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert!(acts.contains(&Act::Opt(Opt::SteamFolder)), "{acts:?}");
+        let keys: Vec<String> = l
+            .opt_choices(&Opt::SteamFolder)
+            .unwrap()
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect();
+        assert_eq!(keys, ["0", super::console::NEW_FOLDER]);
+        l.console_do(
+            Act::Pick(Opt::SteamFolder, super::console::NEW_FOLDER.into()),
+            w,
+            cx,
+        );
+        assert!(matches!(
+            l.console.overlay,
+            Some(Overlay::Folder(FolderFor::SteamLibrary, _))
+        ));
+        let disk = home.path().join("disk");
+        std::fs::create_dir_all(&disk).unwrap();
+        l.console.overlay = Some(Overlay::Folder(FolderFor::SteamLibrary, disk.clone()));
+        l.console_do(Act::FolderPick, w, cx);
+        let g = l.shops.game.as_ref().unwrap();
+        assert_eq!((g.steam_new.clone(), g.steam_folder), (Some(disk), None));
+        assert_eq!(l.opt_key(&Opt::SteamFolder), super::console::NEW_FOLDER);
+        // A library from the list again.
+        l.opt_set(&Opt::SteamFolder, "0");
+        let g = l.shops.game.as_ref().unwrap();
+        assert_eq!((g.steam_new.clone(), g.steam_folder), (None, Some(0)));
+    });
+}

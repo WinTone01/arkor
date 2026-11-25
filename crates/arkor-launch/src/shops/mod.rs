@@ -396,6 +396,8 @@ pub struct Order {
     pub desktop: bool,
     /// Steam's library folder it goes to (`None`: Steam's default one).
     pub steam_folder: Option<i32>,
+    /// A folder that becomes a new library of Steam's for it.
+    pub steam_new_folder: Option<PathBuf>,
     /// The folder did not exist before, so an abandoned download may be deleted.
     fresh: bool,
     size: Option<u64>,
@@ -656,7 +658,7 @@ pub fn steam_go_on(appid: u32) -> anyhow::Result<()> {
     steam::go_on(appid)
 }
 
-pub use steam::{GAME_RUNS, HELD};
+pub use steam::{GAME_RUNS, HELD, SteamLibrary, steam_libraries};
 
 /// Whether a game folder may be deleted as a whole: a real folder, and nothing that could
 /// hold more than one game (home, a drive, the games folder itself).

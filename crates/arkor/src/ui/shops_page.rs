@@ -1728,10 +1728,65 @@ impl Library {
                 ),
         );
         if steam {
-            choices = choices.child(div().text_sm().text_color(pal::muted()).child(t(
-                "Steam downloads it into its library and keeps it up to date; its progress shows here.",
-                "Steam onu kendi kütüphanesine indirir ve güncel tutar; ilerlemesi burada görünür.",
-            )));
+            let usual = self
+                .console
+                .steam_folders
+                .iter()
+                .find(|f| f.default)
+                .map(|f| f.index);
+            let mut chips = div().flex().flex_wrap().gap_1p5();
+            for f in self.console.steam_folders.iter().filter(|f| f.mounted) {
+                let index = f.index;
+                let on = g.steam_new.is_none() && g.steam_folder.or(usual) == Some(index);
+                chips = chips.child(
+                    widgets::chip(
+                        ("steam-folder", index as usize),
+                        self.steam_folder_name(f),
+                        on,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(g) = this.shops.game.as_mut() {
+                            g.steam_folder = Some(index);
+                            g.steam_new = None;
+                        }
+                        cx.notify();
+                    })),
+                );
+            }
+            let other = match &g.steam_new {
+                Some(dir) => dir.display().to_string(),
+                None => t("Another folder…", "Başka bir klasör…").to_string(),
+            };
+            chips = chips.child(
+                widgets::chip("steam-folder-new", other, g.steam_new.is_some()).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        let title = this.tr(
+                            "Where Steam puts it (a new library)",
+                            "Steam'in kuracağı yer (yeni kütüphane)",
+                        );
+                        this.prompt_path(true, title, cx, |this, path, cx| {
+                            if let Some(g) = this.shops.game.as_mut() {
+                                g.steam_new = Some(path);
+                                g.steam_folder = None;
+                            }
+                            cx.notify();
+                        });
+                    }),
+                ),
+            );
+            choices = choices
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(heading(t("Where it goes", "Kurulacağı yer")))
+                        .child(chips),
+                )
+                .child(div().text_sm().text_color(pal::muted()).child(t(
+                    "Steam downloads it into this library and keeps it up to date; its progress shows here. Another folder becomes a new library of Steam's.",
+                    "Steam onu bu kütüphaneye indirir ve güncel tutar; ilerlemesi burada görünür. Başka bir klasör, Steam'in yeni kütüphanesi olur.",
+                )));
         }
         choices = choices.when(!steam, |c| {
             c.child(

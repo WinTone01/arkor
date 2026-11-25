@@ -63,11 +63,119 @@ fn start_silent() -> anyhow::Result<()> {
     steam_link::start_silent()
 }
 
+/// One of Steam's library folders.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SteamLibrary {
+    /// Steam's number for it.
+    pub index: i32,
+    pub path: std::path::PathBuf,
+    pub label: String,
+    pub free: Option<u64>,
+    pub mounted: bool,
+    /// Where Steam puts games unless told otherwise.
+    pub default: bool,
+}
+
+/// Steam's library folders, as its own list has them. Reads files only.
+pub fn steam_libraries() -> Vec<SteamLibrary> {
+    let Some(root) = lib::root() else {
+        return Vec::new();
+    };
+    libraries_in(&root)
+}
+
+fn libraries_in(root: &std::path::Path) -> Vec<SteamLibrary> {
+    let Ok(text) = std::fs::read_to_string(root.join("steamapps/libraryfolders.vdf")) else {
+        return vec![SteamLibrary {
+            index: 0,
+            path: root.to_path_buf(),
+            label: String::new(),
+            free: super::free_space(root),
+            mounted: true,
+            default: true,
+        }];
+    };
+    let keys = vdf_edit::keys(&text, &["libraryfolders"]).unwrap_or_default();
+    keys.iter()
+        .filter_map(|k| {
+            let index: i32 = k.parse().ok()?;
+            let get = |f: &str| {
+                vdf_edit::get(&text, &["libraryfolders", k, f])
+                    .ok()
+                    .flatten()
+            };
+            let path = std::path::PathBuf::from(get("path")?);
+            let mounted = path.join("steamapps").is_dir();
+            Some(SteamLibrary {
+                index,
+                label: get("label").unwrap_or_default(),
+                free: mounted.then(|| super::free_space(&path)).flatten(),
+                mounted,
+                default: path == root,
+                path,
+            })
+        })
+        .collect()
+}
+
+/// The folder a new library goes into: the one chosen, or a `SteamLibrary` in it.
+fn library_folder(chosen: &std::path::Path) -> std::path::PathBuf {
+    let named = chosen
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("SteamLibrary"));
+    if named || chosen.join("steamapps").is_dir() {
+        chosen.to_path_buf()
+    } else {
+        chosen.join("SteamLibrary")
+    }
+}
+
+/// Makes `chosen` a library of Steam's (Steam must be closed); its number.
+fn add_library(root: &std::path::Path, chosen: &std::path::Path) -> anyhow::Result<i32> {
+    let folder = library_folder(chosen);
+    let known = libraries_in(root);
+    if let Some(l) = known.iter().find(|l| l.path == folder) {
+        return Ok(l.index);
+    }
+    std::fs::create_dir_all(folder.join("steamapps"))
+        .with_context(|| format!("creating {}", folder.display()))?;
+    let note = folder.join("libraryfolder.vdf");
+    if !note.exists() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+            ^ u64::from(std::process::id()) << 32;
+        std::fs::write(
+            &note,
+            format!(
+                "\"libraryfolder\"\n{{\n\t\"contentid\"\t\t\"{id}\"\n\t\"label\"\t\t\"\"\n}}\n"
+            ),
+        )?;
+    }
+    let list = root.join("steamapps/libraryfolders.vdf");
+    let text =
+        std::fs::read_to_string(&list).unwrap_or_else(|_| "\"libraryfolders\"\n{\n}\n".into());
+    let index = known.iter().map(|l| l.index).max().map_or(0, |n| n + 1);
+    let key = index.to_string();
+    let path = folder.to_string_lossy();
+    let text = vdf_edit::set(&text, &["libraryfolders", &key, "path"], &path)?;
+    let text = vdf_edit::set(&text, &["libraryfolders", &key, "label"], "")?;
+    let fresh = list.with_extension("vdf.new");
+    std::fs::write(&fresh, text)?;
+    std::fs::rename(&fresh, &list)?;
+    Ok(index)
+}
+
 pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
     let appid: u32 = id.parse().context("not a Steam app")?;
     if lib::progress(appid).is_none() && steam_control::on() {
+        let folder = match &order.steam_new_folder {
+            Some(chosen) => Some(steam_api::add_folder(&library_folder(chosen))?),
+            None => order.steam_folder,
+        };
         // In the folder that was chosen, without closing Steam.
-        steam_api::install(appid, order.steam_folder, progress::stop_requested)?;
+        steam_api::install(appid, folder, progress::stop_requested)?;
     } else if lib::progress(appid).is_none() {
         // Steam is not closed under a running game: the download waits for it to end
         // (Steam's own install window would come up over the game otherwise).
@@ -82,13 +190,22 @@ pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
             // without its window, it downloads the game without asking anything.
             steam_link::shutdown()?;
             let root = lib::root().context("Steam is not installed")?;
+            let index = match &order.steam_new_folder {
+                Some(chosen) => Some(add_library(&root, chosen)?),
+                None => order.steam_folder,
+            };
+            // The library it goes to: Steam downloads into the one its manifest is in.
+            let library = index
+                .and_then(|i| libraries_in(&root).into_iter().find(|l| l.index == i))
+                .filter(|l| l.mounted)
+                .map_or(root.clone(), |l| l.path);
             let infos = arkor_stores::steam_library::parse_appinfo(
                 &std::fs::read(root.join("appcache/appinfo.vdf"))?,
                 &[appid].into(),
             )?;
             let info = infos.get(&appid).cloned().unwrap_or_default();
             let owner = lib::account().map(|(id, _)| id).unwrap_or_default();
-            lib::write_install_manifest(&root, appid, &info, &owner)?;
+            lib::write_install_manifest(&library, appid, &info, &owner)?;
             start_silent()?;
         }
     } else if !lib::progress(appid).is_some_and(|p| p.installed()) {
@@ -480,5 +597,45 @@ mod tests {
         let m = manifest(&apps, 25, "Other", 4);
         manifest(&apps, 26, "Other", 4);
         assert!(remove_files(&m).is_err() && apps.join("common/Other/file").exists());
+    }
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+
+    #[test]
+    fn new_library_folders_are_listed_where_steam_looks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Steam");
+        std::fs::create_dir_all(root.join("steamapps")).unwrap();
+        let list = root.join("steamapps/libraryfolders.vdf");
+        std::fs::write(
+            &list,
+            format!(
+                "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t\t\"apps\"\n\t\t{{\n\t\t\t\"730\"\t\t\"1\"\n\t\t}}\n\t}}\n}}\n",
+                root.display()
+            ),
+        )
+        .unwrap();
+        let disk = tmp.path().join("disk");
+        std::fs::create_dir_all(&disk).unwrap();
+        assert_eq!(add_library(&root, &disk).unwrap(), 1);
+        // The same again is the same library.
+        assert_eq!(add_library(&root, &disk.join("SteamLibrary")).unwrap(), 1);
+        let libs = libraries_in(&root);
+        assert_eq!(libs.len(), 2);
+        assert!(libs[0].default && !libs[1].default);
+        assert_eq!(libs[1].path, disk.join("SteamLibrary"));
+        assert!(libs[1].mounted && libs[1].free.is_some());
+        assert!(disk.join("SteamLibrary/libraryfolder.vdf").is_file());
+        let text = std::fs::read_to_string(&list).unwrap();
+        // What was there stays.
+        assert!(text.contains("\"730\""), "{text}");
+        let doc = arkor_stores::vdf::parse(&text).unwrap();
+        assert!(doc.obj("libraryfolders").is_some());
+        // Gone from the computer: listed, not mounted.
+        std::fs::remove_dir_all(&disk).unwrap();
+        assert!(!libraries_in(&root)[1].mounted);
     }
 }

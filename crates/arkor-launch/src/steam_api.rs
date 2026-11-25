@@ -236,6 +236,31 @@ pub fn folders() -> anyhow::Result<Vec<Folder>> {
     )
 }
 
+/// Makes a folder one of Steam's libraries (it is created); its number.
+pub fn add_folder(path: &std::path::Path) -> anyhow::Result<i32> {
+    std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))?;
+    let path = path.to_string_lossy().into_owned();
+    let known = folders()?;
+    if let Some(f) = known.iter().find(|f| f.path == path) {
+        return Ok(f.index);
+    }
+    run(&format!(
+        "Promise.resolve(SteamClient.InstallFolder.AddInstallFolder({})).then(() => 1)",
+        quoted(&path)
+    ))?;
+    let began = Instant::now();
+    loop {
+        if let Some(f) = folders()?.into_iter().find(|f| f.path == path) {
+            return Ok(f.index);
+        }
+        anyhow::ensure!(
+            began.elapsed() < Duration::from_secs(10),
+            "Steam did not take {path} as a library folder"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
 /// Moves an installed game to another folder (Steam does it; see `moving`).
 pub fn move_to(appid: u32, folder: i32) -> anyhow::Result<()> {
     // Refused at once or begun: the refusal comes as a number.

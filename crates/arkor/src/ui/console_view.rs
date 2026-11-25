@@ -1653,6 +1653,10 @@ impl Library {
                 super::console::FolderFor::Prefix => {
                     self.tr("Choose a Wine prefix", "Wine prefix seç")
                 }
+                super::console::FolderFor::SteamLibrary => self.tr(
+                    "Where Steam puts it (a new library)",
+                    "Steam'in kuracağı yer (yeni kütüphane)",
+                ),
                 _ => self.tr("Choose a folder", "Klasör seç"),
             }
             .to_string(),
