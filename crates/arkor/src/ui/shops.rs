@@ -442,6 +442,18 @@ impl Library {
                 "Kod kabul edilmedi: sayfayı yeniden aç",
             )
             .into()
+        } else if error.contains(shops::GAME_RUNS) {
+            self.tr(
+                "A Steam game is running: close it first",
+                "Bir Steam oyunu açık: önce onu kapat",
+            )
+            .into()
+        } else if error.contains("uses the same folder") {
+            self.tr(
+                "Another game shares its folder: remove it in Steam",
+                "Klasörünü başka bir oyunla paylaşıyor: Steam'den kaldır",
+            )
+            .into()
         } else if login_ended(error) {
             self.tr(
                 "Login ended: log in again",
@@ -1066,8 +1078,36 @@ impl Library {
                 this.shops.read_installed(key.0);
                 match result {
                     Ok(()) => this.forget_shop_game(&key),
-                    Err(e) => this.status = Some(format!("{e:#}").into()),
+                    Err(e) => {
+                        this.status = Some(this.shop_error(&format!("{e:#}")).into());
+                        this.sound(super::sounds::Sound::Error);
+                    }
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Something is asked of Steam in the background; what went wrong is said.
+    pub(super) fn steam_do(
+        &mut self,
+        what: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(test) {
+            return;
+        }
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg.spawn(async move { what() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.shops.read_installed(Shop::Steam);
+                if let Err(e) = result {
+                    this.status = Some(this.shop_error(&format!("{e:#}")).into());
+                    this.sound(super::sounds::Sound::Error);
+                }
+                this.watch_progress(cx);
                 cx.notify();
             });
         })

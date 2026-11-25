@@ -409,6 +409,24 @@ pub fn history() -> Vec<Finished> {
     HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Another program's download ended well.
+pub(crate) fn note_done(key: &str, label: &str, report: &str) {
+    let mut history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
+    history.retain(|f| f.key != key);
+    history.insert(
+        0,
+        Finished {
+            key: key.to_string(),
+            label: label.to_string(),
+            ok: true,
+            report: report.to_string(),
+            at: arkor_core::stats::now(),
+        },
+    );
+    drop(history);
+    progress::touch();
+}
+
 /// Forgets the finished list.
 pub fn clear_history() {
     HISTORY.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -444,6 +462,7 @@ pub fn start() {
         {
             with(|q| *q = saved.item);
         }
+        crate::steam_downloads::start();
         // Store games take hours: the small downloads must not wait behind them.
         for games in [false, true] {
             let _ = std::thread::Builder::new()

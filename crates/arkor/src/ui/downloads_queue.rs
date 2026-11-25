@@ -144,6 +144,9 @@ impl Library {
                 .tr("Checking for updates", "Güncellemeler denetleniyor")
                 .to_string(),
             Phase::Finishing => self.tr("Installing", "Kuruluyor").to_string(),
+            Phase::Downloading if e.external => self
+                .tr("Steam is downloading", "Steam indiriyor")
+                .to_string(),
             Phase::Downloading => self.tr("Downloading", "İndiriliyor").to_string(),
         };
         let size = match (downloading, e.total) {

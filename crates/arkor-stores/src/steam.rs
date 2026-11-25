@@ -83,6 +83,15 @@ fn parse_manifest(library: &Path, path: &Path) -> anyhow::Result<Option<Game>> {
     if is_tool(appid, name) {
         return Ok(None);
     }
+    // Only wanted, downloading or called off: not there yet ("Fully Installed" is 4, and
+    // stays set during updates).
+    let state: u32 = app
+        .str("stateflags")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+    if state & 4 == 0 {
+        return Ok(None);
+    }
     Ok(Some(Game {
         id: GameId::new(Store::Steam, appid),
         name: name.to_string(),

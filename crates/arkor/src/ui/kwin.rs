@@ -58,23 +58,36 @@ fn gdbus(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Steam's windows are put away from now on. Blocking (a few D-Bus calls).
-pub(super) fn guard() {
+/// Brings Steam's windows to the front, once.
+const SHOW: &str = r#"
+var list = workspace.windowList ? workspace.windowList() : workspace.clientList();
+for (var i = 0; i < list.length; i++) {
+    var k = String(list[i].resourceClass).toLowerCase();
+    if (k === "steam" || k === "steamwebhelper") {
+        list[i].minimized = false;
+        if (workspace.activeWindow !== undefined) { workspace.activeWindow = list[i]; }
+        else { workspace.activeClient = list[i]; }
+    }
+}
+"#;
+
+/// Loads and runs a script under a name (instead of what had that name).
+fn run_script(name: &str, code: &str) {
     let Some(dir) = dirs::runtime_dir().or_else(dirs::cache_dir) else {
         return;
     };
-    let path = dir.join("arkor-kwin-steam.js");
-    if std::fs::write(&path, SCRIPT).is_err() {
+    let path = dir.join(format!("{name}.js"));
+    if std::fs::write(&path, code).is_err() {
         return;
     }
-    unguard();
+    unload(name);
     let Some(reply) = gdbus(&[
         "--object-path",
         "/Scripting",
         "--method",
         "org.kde.kwin.Scripting.loadScript",
         &path.to_string_lossy(),
-        NAME,
+        name,
     ]) else {
         return;
     };
@@ -97,13 +110,32 @@ pub(super) fn guard() {
     }
 }
 
-/// Steam's windows are left alone again. Blocking.
-pub(super) fn unguard() {
+fn unload(name: &str) {
     let _ = gdbus(&[
         "--object-path",
         "/Scripting",
         "--method",
         "org.kde.kwin.Scripting.unloadScript",
-        NAME,
+        name,
     ]);
+}
+
+/// Steam's windows are put away from now on. Blocking (a few D-Bus calls).
+pub(super) fn guard() {
+    run_script(NAME, SCRIPT);
+}
+
+/// Steam's windows are left alone again. Blocking.
+pub(super) fn unguard() {
+    unload(NAME);
+}
+
+/// Steam's windows come to the front. Blocking.
+pub(super) fn show_steam() {
+    if !available() {
+        return;
+    }
+    unguard();
+    run_script("arkor-steam-show", SHOW);
+    unload("arkor-steam-show");
 }

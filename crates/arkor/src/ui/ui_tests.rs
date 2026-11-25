@@ -875,3 +875,92 @@ fn console_intro_is_skipped_by_the_first_button_only() {
         assert_eq!(l.console_volume(), 0.);
     });
 }
+
+#[test]
+fn console_steps_aside_while_steam_updates_a_game() {
+    use super::console::{Act, Launch, Overlay, Screen};
+    use super::gamepad::Nav;
+    use arkor_launch::steam_downloads::Item;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#home"));
+        lib
+    });
+    cx.run_until_parked();
+    let item = Item {
+        appid: 730,
+        name: "Shooter".into(),
+        done: 200,
+        total: 300,
+        speed: 0.,
+        running: false,
+        update: true,
+    };
+    let launch = || Launch {
+        id: "shooter".into(),
+        at: std::time::Instant::now(),
+        playing: false,
+        dismissed: false,
+        steam: Some("730".into()),
+        came: false,
+        updating: false,
+    };
+    view.update(cx, |l, cx| {
+        l.console.launching = Some(launch());
+        l.steam_launch_step(false, None, cx);
+        let s = l.console.launching.as_ref().unwrap();
+        assert!(s.waits_for_steam() && !s.dismissed, "still starting");
+        l.steam_launch_step(false, Some(item.clone()), cx);
+        let s = l.console.launching.as_ref().unwrap();
+        assert!(s.updating && s.dismissed, "the start screen is left");
+        assert!(
+            matches!(l.console.overlay, Some(Overlay::Pick(..))),
+            "and says why"
+        );
+        // Said once, not with every look.
+        l.console.overlay = None;
+        l.steam_launch_step(false, Some(item.clone()), cx);
+        assert!(l.console.overlay.is_none());
+        // The update is done and the game there: its screen is back.
+        l.steam_launch_step(true, None, cx);
+        let s = l.console.launching.as_ref().unwrap();
+        assert!(s.came && !s.dismissed && !s.updating && !s.waits_for_steam());
+        // Known beforehand: no start screen at all, and it can be called off.
+        l.console.launching = None;
+        l.console_update_first("local:shooter".into(), item.clone(), cx);
+        assert!(l.console.launching.is_none() && l.console.after_update.is_some());
+    });
+    cx.run_until_parked();
+    let press = |nav: Nav, cx: &mut gpui_test::VisualTestContext| {
+        view.update_in(cx, |l, w, cx| l.nav(nav, w, cx));
+        cx.run_until_parked();
+    };
+    let options = view.read_with(cx, |l, _| match &l.console.overlay {
+        Some(Overlay::Pick(_, o)) => o.iter().map(|(_, a, _)| a.clone()).collect::<Vec<_>>(),
+        _ => Vec::new(),
+    });
+    assert_eq!(options, [Act::Close, Act::SeeDownloads, Act::DoNotStart]);
+    press(Nav::Down, cx);
+    press(Nav::Accept, cx);
+    assert_eq!(
+        view.read_with(cx, |l, _| l.console.screen()),
+        Screen::Downloads
+    );
+    assert!(
+        view.read_with(cx, |l, _| l.console.after_update.is_some()),
+        "still wanted"
+    );
+    view.update_in(cx, |l, w, cx| l.console_do(Act::DoNotStart, w, cx));
+    assert!(view.read_with(cx, |l, _| l.console.after_update.is_none()));
+}

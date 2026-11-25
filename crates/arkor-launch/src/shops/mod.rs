@@ -614,10 +614,35 @@ pub(crate) fn cancelled(key: &str) {
                 let _ = std::fs::remove_file(dir.join(format!("tmp/{id}.resume")));
             }
             Shop::Gog => gog::forget(&dir, id),
-            Shop::Amazon | Shop::Steam => {}
+            Shop::Amazon => {}
+            Shop::Steam => {
+                if let Ok(appid) = id.parse()
+                    && let Err(e) = steam::call_off(appid)
+                {
+                    eprintln!("arkor: the installation is still in Steam: {e:#}");
+                }
+            }
         }
     }
 }
+
+/// Calls off what Steam began to install. Blocking.
+pub fn steam_call_off(appid: u32) -> anyhow::Result<()> {
+    let key = key(Shop::Steam, &appid.to_string());
+    // A job of Arkor's calls it off itself when it ends.
+    if crate::downloads::items().iter().any(|i| i.key == key) {
+        crate::downloads::cancel(&key);
+        return Ok(());
+    }
+    steam::call_off(appid)
+}
+
+/// Makes Steam go on with what it paused (it starts anew for that). Blocking.
+pub fn steam_go_on() -> anyhow::Result<()> {
+    steam::go_on()
+}
+
+pub use steam::GAME_RUNS;
 
 /// Whether a game folder may be deleted as a whole: a real folder, and nothing that could
 /// hold more than one game (home, a drive, the games folder itself).

@@ -529,8 +529,17 @@ pub fn launch(appid: &str, id: &GameId) -> anyhow::Result<i32> {
     }
     open_url(&format!("steam://rungameid/{appid}"))?;
     // Steam may need to start, sign in or update the game first.
-    let start = Instant::now();
+    let mut start = Instant::now();
+    let began = Instant::now();
     while game_pids(appid).is_empty() {
+        // While Steam updates the game it is not late.
+        if began.elapsed() < Duration::from_secs(12 * 3600)
+            && appid
+                .parse()
+                .is_ok_and(|id| crate::steam_downloads::pending(id).is_some())
+        {
+            start = Instant::now();
+        }
         if start.elapsed() > Duration::from_secs(15 * 60) {
             eprintln!("arkor: Steam did not start the game (is it installed and up to date?)");
             return Ok(0);

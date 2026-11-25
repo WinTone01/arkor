@@ -33,6 +33,62 @@ pub struct Entry {
     started: Option<Instant>,
     /// Asked to stop (pause or cancel); the transfer ends at its next check.
     stop: bool,
+    /// Another program's download (Steam's), only shown here.
+    pub external: bool,
+}
+
+/// A download of another program.
+#[derive(Debug, Clone, PartialEq)]
+pub struct External {
+    pub key: String,
+    pub label: String,
+    pub done: u64,
+    pub total: Option<u64>,
+    pub speed: f64,
+}
+
+/// What other programs download now; a job of Arkor's own under the same key goes first.
+pub(crate) fn set_external(now: Vec<External>) {
+    let same = {
+        let v = ENTRIES.lock().unwrap_or_else(|e| e.into_inner());
+        let shown: Vec<External> = v
+            .iter()
+            .filter(|e| e.external)
+            .map(|e| External {
+                key: e.key.clone(),
+                label: e.label.clone(),
+                done: e.done,
+                total: e.total,
+                speed: e.speed,
+            })
+            .collect();
+        shown == now
+    };
+    if same {
+        return;
+    }
+    with(|v| {
+        v.retain(|e| !e.external || now.iter().any(|n| n.key == e.key));
+        for n in now {
+            match v.iter_mut().find(|e| e.key == n.key) {
+                Some(e) if e.external => {
+                    (e.label, e.done, e.total, e.speed) = (n.label, n.done, n.total, n.speed);
+                }
+                Some(_) => {}
+                None => v.push(Entry {
+                    key: n.key,
+                    label: n.label,
+                    phase: Phase::Downloading,
+                    done: n.done,
+                    total: n.total,
+                    speed: n.speed,
+                    started: Some(Instant::now()),
+                    stop: false,
+                    external: true,
+                }),
+            }
+        }
+    });
 }
 
 impl Entry {
@@ -146,6 +202,7 @@ pub fn job(key: &str, label: &str) -> Job {
             speed: 0.,
             started: None,
             stop: false,
+            external: false,
         });
     });
     let previous = CURRENT.with(|c| c.borrow_mut().replace(key.to_string()));
@@ -203,6 +260,7 @@ impl Transfer {
                         speed: 0.,
                         started: Some(started),
                         stop: false,
+                        external: false,
                     })
                 });
                 Transfer {
@@ -297,5 +355,25 @@ mod tests {
         assert!(running("download:proton.tar.gz"));
         drop(t);
         assert!(!running("download:proton.tar.gz"));
+    }
+
+    #[test]
+    fn other_programs_downloads_come_and_go() {
+        let e = |key: &str, done| External {
+            key: key.into(),
+            label: "Steam game".into(),
+            done,
+            total: Some(100),
+            speed: 5.,
+        };
+        let find = |key: &str| list().into_iter().find(|x| x.key == key);
+        let _own = job("ext-own", "Own");
+        set_external(vec![e("ext-a", 10), e("ext-own", 10)]);
+        assert!(find("ext-a").unwrap().external);
+        assert!(!find("ext-own").unwrap().external, "Arkor's own goes first");
+        set_external(vec![e("ext-a", 60)]);
+        assert_eq!(find("ext-a").unwrap().fraction(), Some(0.6));
+        set_external(Vec::new());
+        assert!(find("ext-a").is_none() && find("ext-own").is_some());
     }
 }

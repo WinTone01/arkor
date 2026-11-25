@@ -10,6 +10,7 @@ use arkor_core::library::{GameKind, LibraryGame};
 use arkor_launch::downloads::{self, State};
 use arkor_launch::progress;
 use arkor_launch::shops::{self, Shop};
+use arkor_launch::steam_downloads;
 use gpui::{Context, KeyBinding, Window, actions};
 
 use super::console_sound::Cue;
@@ -141,6 +142,15 @@ pub(super) enum Act {
     LoginBrowser,
     LoginInstall,
     LoginClose,
+    SeeDownloads,
+    /// Steam updates the game; it is not started afterwards.
+    DoNotStart,
+    /// A download Steam has not begun or paused.
+    SteamDownload(u32),
+    /// What Steam began to install is called off; what it paused goes on.
+    CallOff(u32),
+    SteamGoOn,
+    ShowSteam,
     Shift,
     Symbols,
     Queue(String),
@@ -455,6 +465,14 @@ pub(super) struct Behind {
     pub(super) size: cover_art::Size,
 }
 
+/// Starts Steam without its window, so it goes on with its downloads (not in tests).
+fn let_steam_update() -> anyhow::Result<bool> {
+    if cfg!(test) {
+        return Ok(true);
+    }
+    steam_downloads::let_steam_update()
+}
+
 /// A game started from console mode.
 #[derive(Debug, Clone)]
 pub(super) struct Launch {
@@ -465,6 +483,24 @@ pub(super) struct Launch {
     pub(super) playing: bool,
     /// Back in Arkor while it runs, and the "playing" screen was put away.
     pub(super) dismissed: bool,
+    /// Steam starts it: its app id. Steam's own windows may come before the game's.
+    pub(super) steam: Option<String>,
+    /// Steam has started the game itself.
+    pub(super) came: bool,
+    /// Steam updates it first.
+    pub(super) updating: bool,
+}
+
+impl Launch {
+    /// Steam was asked, the game is not there yet.
+    pub(super) fn waits_for_steam(&self) -> bool {
+        self.steam.is_some() && !self.came
+    }
+
+    /// So long that Steam may be asking something.
+    pub(super) fn steam_may_ask(&self) -> bool {
+        self.waits_for_steam() && !self.updating && self.at.elapsed() > Duration::from_secs(20)
+    }
 }
 
 #[derive(Default)]
@@ -505,6 +541,10 @@ pub(super) struct Console {
     pub(super) edit: Option<(super::console_settings::GameOpt, String)>,
     /// When Steam was opened to log in.
     pub(super) steam_wanted: Option<Instant>,
+    /// Steam's windows were asked for.
+    pub(super) steam_shown: Option<Instant>,
+    /// A game that starts when Steam has updated it: which, its app id, since when.
+    pub(super) after_update: Option<(String, u32, Instant)>,
     /// The Steam window guard runs.
     guarding: bool,
     /// Capitals, and the symbols page, on the keyboard.
@@ -575,7 +615,10 @@ impl Library {
         let id = g.game_id().to_string();
         let running = self.running.contains_key(&id);
         let shop = self.entry_shop(g);
-        let job = shop.as_ref().and_then(|(s, i)| self.shop_job(*s, i));
+        let job = match &g.kind {
+            arkor_core::library::GameKind::Steam { appid } => self.shop_job(Shop::Steam, appid),
+            _ => shop.as_ref().and_then(|(s, i)| self.shop_job(*s, i)),
+        };
         let (played, _) = self.playtime(&g.game_id());
         Item {
             act: Act::Screen(Screen::Game(g.id.clone())),
@@ -851,6 +894,13 @@ impl Library {
                     None => String::new(),
                 }),
             );
+            if e.external {
+                item.act = Act::SteamDownload(
+                    shops::parse_key(&e.key)
+                        .and_then(|(_, id, _)| id.parse().ok())
+                        .unwrap_or(0),
+                );
+            }
             item.sub = match e.total {
                 Some(t) => format!(
                     "{} / {} · {}/s",
@@ -860,6 +910,11 @@ impl Library {
                 ),
                 None => self.tr("Preparing", "Hazırlanıyor").into(),
             };
+            if e.external {
+                // The speed is known after a moment.
+                let sub = item.sub.trim_end_matches(" · 0 KB/s").to_string();
+                item.sub = format!("Steam · {sub}");
+            }
             item.progress = Some(e.fraction().unwrap_or(0.));
             if let Look::Line { art: a, .. } = &mut item.look {
                 *a = art(&e.key);
@@ -889,6 +944,7 @@ impl Library {
             }
             rows.push(Row::new(Kind::Line, vec![item]));
         }
+        rows.extend(self.steam_waiting_rows());
         if let Some(first) = rows.first_mut() {
             first.title = Some(self.tr("Downloads", "İndirilenler").into());
         }
@@ -917,6 +973,134 @@ impl Library {
         }
         rows.extend(self.console_tool_rows());
         rows
+    }
+
+    /// What Steam has to download but does not at the moment.
+    fn steam_waiting_rows(&self) -> Vec<Row> {
+        let on = steam_downloads::steam_on();
+        steam_downloads::items()
+            .into_iter()
+            .filter(|i| !i.running)
+            .filter(|i| !progress::running(&shops::key(Shop::Steam, &i.appid.to_string())))
+            .map(|i| {
+                let what = if i.update {
+                    self.tr("Update", "Güncelleme")
+                } else {
+                    self.tr("Installation", "Kurulum")
+                };
+                let value = match on {
+                    true => self.tr("Waiting in Steam", "Steam'de bekliyor"),
+                    false => self.tr("Continue", "Devam et"),
+                };
+                let mut item = Item::line(
+                    Act::SteamDownload(i.appid),
+                    if on { "clock" } else { "play" },
+                    i.name.clone(),
+                    Value::Text(value.into()),
+                );
+                item.sub = match i.total {
+                    0 => format!("Steam · {what}"),
+                    t => format!(
+                        "Steam · {what} · {} / {}",
+                        progress::human_bytes(i.done),
+                        progress::human_bytes(t)
+                    ),
+                };
+                item.progress = (i.total > 0).then(|| i.done as f32 / i.total as f32);
+                if let Look::Line { art, .. } = &mut item.look {
+                    *art = Some(Art::Shop(Shop::Steam, i.appid.to_string()));
+                }
+                Row::new(Kind::Line, vec![item])
+            })
+            .collect()
+    }
+
+    /// One of Steam's downloads was chosen.
+    fn console_steam_download(&mut self, appid: u32) {
+        let Some(i) = steam_downloads::items()
+            .into_iter()
+            .find(|i| i.appid == appid)
+        else {
+            return;
+        };
+        // An installation with Steam closed: go on with it or call it off.
+        if !i.update && !steam_downloads::steam_on() {
+            let options = vec![
+                (
+                    self.tr("Go on", "Sürdür").to_string(),
+                    Act::SteamGoOn,
+                    false,
+                ),
+                (
+                    self.tr("Call the installation off", "Kurulumu iptal et")
+                        .to_string(),
+                    Act::CallOff(appid),
+                    false,
+                ),
+                (self.tr("Close", "Kapat").to_string(), Act::Close, false),
+            ];
+            let title = match self.global.language {
+                arkor_core::Language::Tr => format!("{}: kurulum yarım kaldı.", i.name),
+                arkor_core::Language::En => format!("{}: not fully installed.", i.name),
+            };
+            return self.console_overlay(Overlay::Pick(title, options));
+        }
+        match let_steam_update() {
+            Ok(true) => {
+                self.status = Some(
+                    self.tr(
+                        "Steam starts in the background and goes on.",
+                        "Steam arka planda açılıyor ve devam edecek.",
+                    )
+                    .into(),
+                );
+            }
+            Ok(false) => {
+                let title = match (i.running, self.global.language) {
+                    (true, arkor_core::Language::Tr) => {
+                        format!(
+                            "{}: Steam indiriyor. Duraklatmak Steam'den yapılır.",
+                            i.name
+                        )
+                    }
+                    (true, _) => {
+                        format!(
+                            "{}: Steam is downloading it. Only Steam can pause it.",
+                            i.name
+                        )
+                    }
+                    (false, arkor_core::Language::Tr) => {
+                        format!("{}: Steam'de sırada ya da duraklatılmış.", i.name)
+                    }
+                    (false, _) => format!("{}: waiting or paused in Steam.", i.name),
+                };
+                let mut options = Vec::new();
+                if !i.running {
+                    options.push((
+                        self.tr("Go on", "Sürdür").to_string(),
+                        Act::SteamGoOn,
+                        false,
+                    ));
+                }
+                if !i.update {
+                    options.push((
+                        self.tr("Call the installation off", "Kurulumu iptal et")
+                            .to_string(),
+                        Act::CallOff(appid),
+                        false,
+                    ));
+                }
+                options.push((
+                    self.tr("Open Steam's downloads", "Steam'in indirmelerini aç")
+                        .to_string(),
+                    Act::ShowSteam,
+                    false,
+                ));
+                options.push((self.tr("Close", "Kapat").to_string(), Act::Close, false));
+                self.console_overlay(Overlay::Pick(title, options));
+            }
+            Err(e) => self.status = Some(format!("{e:#}").into()),
+        }
     }
 
     fn game_rows(&self, id: &str) -> Vec<Row> {
@@ -1008,6 +1192,49 @@ impl Library {
     }
 
     fn shop_game_rows(&self, shop: Shop, id: &str) -> Vec<Row> {
+        // Steam installs it by itself, or has stopped in the middle of it.
+        let own = |key: &str| {
+            downloads::pending(key) || progress::list().iter().any(|e| e.key == key && !e.external)
+        };
+        if shop == Shop::Steam
+            && !own(&shops::key(shop, id))
+            && let Some(i) = steam_downloads::items()
+                .into_iter()
+                .find(|i| !i.update && i.appid.to_string() == id)
+        {
+            let mut pills = Vec::new();
+            if !i.running {
+                pills.push(Item::main(
+                    Act::SteamGoOn,
+                    "play",
+                    self.tr("Go on installing", "Kurulumu sürdür"),
+                ));
+            }
+            pills.push(Item::pill(
+                Act::CallOff(i.appid),
+                "x",
+                self.tr("Call the installation off", "Kurulumu iptal et"),
+                false,
+            ));
+            let mut item = Item::line(
+                Act::SteamDownload(i.appid),
+                "download",
+                if i.running {
+                    self.tr("Steam is downloading it", "Steam indiriyor")
+                } else {
+                    self.tr("Not fully installed", "Kurulum yarım kaldı")
+                },
+                Value::Text(match i.total {
+                    0 => String::new(),
+                    t => self.percent(i.done as f32 / t as f32),
+                }),
+            );
+            item.progress = (i.total > 0).then(|| i.done as f32 / i.total as f32);
+            return vec![
+                Row::new(Kind::Pills, pills),
+                Row::new(Kind::Line, vec![item]),
+            ];
+        }
         if let Some((key, fraction)) = self.shop_job(shop, id) {
             let mut item = Item::line(
                 Act::Download(key.clone()),
@@ -1436,16 +1663,21 @@ impl Library {
                     Item::main(act.clone(), "check", yes.clone()),
                 ],
             )],
-            Overlay::Pick(_, options) => options
-                .iter()
-                .map(|(label, act, on)| {
-                    line(
-                        act.clone(),
-                        if *on { "circle-check" } else { "circle" },
-                        label,
-                    )
-                })
-                .collect(),
+            Overlay::Pick(_, options) => {
+                // Things to do, or one of several to choose.
+                let choice = options.iter().any(|(_, _, on)| *on);
+                options
+                    .iter()
+                    .map(|(label, act, on)| {
+                        let icon = match (choice, on) {
+                            (false, _) => "chevron-right",
+                            (true, true) => "circle-check",
+                            (true, false) => "circle",
+                        };
+                        line(act.clone(), icon, label)
+                    })
+                    .collect()
+            }
             Overlay::Keyboard => {
                 let keys = match self.global.language {
                     arkor_core::Language::Tr => KEYS,
@@ -1617,7 +1849,21 @@ impl Library {
             let mut on = false;
             loop {
                 let go = this.update(cx, |this, _| {
-                    let playing = !this.running.is_empty() || this.console.launching.is_some();
+                    // A game Steam has not started yet is no reason to let its windows out
+                    // (they would push Arkor aside).
+                    let waits = this
+                        .console
+                        .launching
+                        .as_ref()
+                        .is_some_and(|l| l.waits_for_steam());
+                    let playing = match waits {
+                        true => this.running.len() > 1,
+                        false => !this.running.is_empty() || this.console.launching.is_some(),
+                    };
+                    let shown = this
+                        .console
+                        .steam_shown
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(180));
                     let login = this.shops.login.is_some();
                     // Steam is being logged in to: its window is wanted.
                     let wanted = this
@@ -1625,7 +1871,7 @@ impl Library {
                         .steam_wanted
                         .is_some_and(|t| t.elapsed() < Duration::from_secs(300))
                         && !this.shops.logged_in(Shop::Steam);
-                    (this.console.on, !playing && !login && !wanted)
+                    (this.console.on, !playing && !login && !wanted && !shown)
                 });
                 let (console, guard) = go.unwrap_or((false, false));
                 let guard = console && guard;
@@ -1888,6 +2134,7 @@ impl Library {
         {
             match nav {
                 Nav::Back | Nav::Accept => self.console_back(cx),
+                Nav::Search if l.steam_may_ask() => self.console_show_steam(None, cx),
                 Nav::Extra if l.playing => {
                     if let Some(g) = self.library.get(&l.id) {
                         let gid = g.game_id().to_string();
@@ -2094,6 +2341,24 @@ impl Library {
             );
             return self.console_mount_drive(drive, AfterDisk::Play(id.to_string()), cx);
         }
+        let steam = match self.library.get(&self.games[ix].id.id).map(|g| &g.kind) {
+            Some(arkor_core::library::GameKind::Steam { appid }) => Some(appid.clone()),
+            _ => None,
+        };
+        // Steam would update it first, behind a window of its own: said here instead.
+        if let Some(appid) = steam.as_ref().and_then(|a| a.parse::<u32>().ok())
+            && self
+                .console
+                .after_update
+                .as_ref()
+                .is_none_or(|(i, ..)| i != id)
+            && !cfg!(test)
+            && let Some(item) = steam_downloads::pending(appid)
+        {
+            return self.console_update_first(id.to_string(), item, cx);
+        }
+        self.console.after_update.take_if(|(i, ..)| i == id);
+        self.console.steam_shown = None;
         self.cue(Cue::Launch);
         self.select(Selection::Game(ix), cx);
         self.console.launching = Some(Launch {
@@ -2101,9 +2366,143 @@ impl Library {
             at: Instant::now(),
             playing: false,
             dismissed: false,
+            steam,
+            came: false,
+            updating: false,
         });
         self.play(cx);
         self.launch_over_soon(cx);
+    }
+
+    /// A game Steam has to update first: Steam does it in the background, the game starts
+    /// when it is done.
+    pub(super) fn console_update_first(
+        &mut self,
+        id: String,
+        item: steam_downloads::Item,
+        cx: &mut Context<Self>,
+    ) {
+        self.console.after_update = Some((id, item.appid, Instant::now()));
+        self.console_say_update(&item.name, item.left(), true);
+        // Steam updates by itself when it starts.
+        // (A Steam that was closed needs a moment to begin.)
+        let patience = match let_steam_update() {
+            Ok(true) => 40,
+            Ok(false) => 8,
+            Err(e) => {
+                self.status = Some(format!("{e:#}").into());
+                0
+            }
+        };
+        self.watch_progress(cx);
+        cx.notify();
+        let timer = cx.background_executor().clone();
+        let appid = item.appid;
+        cx.spawn(async move |this, cx| {
+            loop {
+                timer.timer(Duration::from_millis(1500)).await;
+                let state = timer
+                    .spawn(async move { steam_downloads::pending(appid) })
+                    .await;
+                let go_on = this.update(cx, |this, cx| {
+                    let Some((id, waiting, since)) = this.console.after_update.clone() else {
+                        return false;
+                    };
+                    if waiting != appid || !this.console.on {
+                        return false;
+                    }
+                    if state.is_some() {
+                        // Steam does not go on by itself (paused, or told to update only when
+                        // the game starts): starting the game makes it.
+                        let idle = since.elapsed() > Duration::from_secs(patience)
+                            && steam_downloads::items()
+                                .iter()
+                                .any(|i| i.appid == appid && !i.running);
+                        if !idle {
+                            return true;
+                        }
+                    }
+                    // Over another game nothing starts by itself.
+                    if this.running.is_empty() {
+                        this.console.overlay = None;
+                        this.console_play(&id, cx);
+                    } else {
+                        this.console.after_update = None;
+                        this.status =
+                            Some(this.tr("The update is ready.", "Güncelleme hazır.").into());
+                    }
+                    cx.notify();
+                    false
+                });
+                if !matches!(go_on, Ok(true)) {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Says that Steam updates a game. `ours`: Arkor starts it afterwards (else Steam does).
+    fn console_say_update(&mut self, name: &str, left: u64, ours: bool) {
+        let size = match left {
+            0 => String::new(),
+            n => format!(" ({})", progress::human_bytes(n)),
+        };
+        let title = match self.global.language {
+            arkor_core::Language::Tr => {
+                format!("{name} güncelleniyor{size}. Bitince oyun kendiliğinden başlar.")
+            }
+            arkor_core::Language::En => {
+                format!("{name} is being updated{size}. The game starts when it is done.")
+            }
+        };
+        let mut options = vec![
+            (
+                self.tr("Go on in Arkor", "Arkor'da devam et").to_string(),
+                Act::Close,
+                false,
+            ),
+            (
+                self.tr("Show the downloads", "İndirilenler'i göster")
+                    .to_string(),
+                Act::SeeDownloads,
+                false,
+            ),
+        ];
+        if ours {
+            options.push((
+                self.tr(
+                    "Only update, do not start it",
+                    "Yalnızca güncelle, başlatma",
+                )
+                .to_string(),
+                Act::DoNotStart,
+                false,
+            ));
+        }
+        self.cue(Cue::Open);
+        self.console_overlay(Overlay::Pick(title, options));
+    }
+
+    /// Brings Steam's windows to the front, for what only they can answer.
+    pub(super) fn console_show_steam(
+        &mut self,
+        page: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
+        self.console.steam_shown = Some(Instant::now());
+        self.console.overlay = None;
+        let bg = cx.background_executor().clone();
+        bg.spawn(async move {
+            if !cfg!(test) {
+                super::kwin::show_steam();
+                if let Some(page) = page {
+                    let _ = arkor_launch::steam_link::open_url(page);
+                }
+            }
+        })
+        .detach();
+        cx.notify();
     }
 
     /// How loud console mode's sounds are, 0…1.
@@ -2155,7 +2554,8 @@ impl Library {
             Act::Close | Act::LoginClose | Act::FolderUp | Act::ClearSearch => Cue::Back,
             Act::Search | Act::AskQuit | Act::AskPower(_) | Act::Folder(_) => Cue::Open,
             Act::AskUninstall(..) | Act::AskRemoveTool(_) | Act::ToolMenu(_) => Cue::Open,
-            Act::DiskMenu(_) | Act::FolderAt(_) => Cue::Open,
+            Act::DiskMenu(_) | Act::FolderAt(_) | Act::SteamDownload(_) => Cue::Open,
+            Act::DoNotStart | Act::CallOff(_) => Cue::Back,
             Act::GameLanguage => Cue::Open,
             Act::ShopTab(_) | Act::Filter(_) | Act::ProtonVariant(_) => Cue::Tab,
             Act::Opt(o) => match self.opt_value(o) {
@@ -2226,6 +2626,39 @@ impl Library {
                     None => {}
                 }
             }
+            Act::SeeDownloads => {
+                self.console.overlay = None;
+                self.console_open(Screen::Downloads, cx);
+            }
+            Act::DoNotStart => {
+                self.console.overlay = None;
+                self.console.after_update = None;
+            }
+            Act::SteamDownload(appid) => self.console_steam_download(appid),
+            Act::CallOff(appid) => {
+                self.console.overlay = None;
+                self.status = Some(self.tr("Calling it off…", "İptal ediliyor…").into());
+                self.steam_do(
+                    move || {
+                        shops::steam_call_off(appid)?;
+                        steam_downloads::look_again();
+                        Ok(())
+                    },
+                    cx,
+                );
+            }
+            Act::SteamGoOn => {
+                self.console.overlay = None;
+                self.status = Some(
+                    self.tr(
+                        "Steam starts in the background and goes on.",
+                        "Steam arka planda açılıyor ve devam edecek.",
+                    )
+                    .into(),
+                );
+                self.steam_do(shops::steam_go_on, cx);
+            }
+            Act::ShowSteam => self.console_show_steam(Some("steam://nav/downloads"), cx),
             Act::LoginBrowser => self.shop_login_browser(cx),
             Act::LoginInstall => {
                 self.close_shop_windows(cx);
@@ -2552,9 +2985,34 @@ impl Library {
     /// game ends, or does not start, console mode is back.
     fn launch_over_soon(&mut self, cx: &mut Context<Self>) {
         let timer = cx.background_executor().clone();
+        let steam = self
+            .console
+            .launching
+            .as_ref()
+            .and_then(|l| l.steam.clone());
         cx.spawn(async move |this, cx| {
             loop {
                 timer.timer(Duration::from_millis(400)).await;
+                let waits = this
+                    .update(cx, |this, _| {
+                        let l = this.console.launching.as_ref();
+                        l.is_some_and(|l| l.waits_for_steam() && l.steam == steam)
+                    })
+                    .unwrap_or(false);
+                // Where Steam is with it.
+                if waits && let Some(appid) = steam.clone() {
+                    let (came, update) = timer
+                        .spawn(async move {
+                            let came = !arkor_launch::steam_link::game_pids(&appid).is_empty();
+                            let update = match appid.parse() {
+                                Ok(id) if !came => steam_downloads::pending(id),
+                                _ => None,
+                            };
+                            (came, update)
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| this.steam_launch_step(came, update, cx));
+                }
                 let go_on = this.update(cx, |this, cx| {
                     let Some(l) = &this.console.launching else {
                         return false;
@@ -2577,6 +3035,38 @@ impl Library {
             }
         })
         .detach();
+    }
+
+    /// Steam started the game, or turned out to update it first.
+    pub(super) fn steam_launch_step(
+        &mut self,
+        came: bool,
+        update: Option<steam_downloads::Item>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(l) = self.console.launching.as_mut() else {
+            return;
+        };
+        if came {
+            l.came = true;
+            // The screen it left comes back.
+            if std::mem::take(&mut l.updating) {
+                l.dismissed = false;
+                l.at = Instant::now();
+                self.console.overlay = None;
+            }
+            cx.notify();
+        } else if let Some(item) = update
+            && !l.updating
+        {
+            l.updating = true;
+            l.dismissed = true;
+            self.console_say_update(&item.name, item.left(), false);
+            self.watch_progress(cx);
+            cx.notify();
+        } else if l.steam_may_ask() {
+            cx.notify();
+        }
     }
 
     /// A game ended badly: the console says so over everything, with the end of its log.

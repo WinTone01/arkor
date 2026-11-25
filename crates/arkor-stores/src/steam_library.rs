@@ -236,9 +236,22 @@ pub struct Progress {
     pub state: u32,
     pub done: u64,
     pub total: u64,
+    /// What is put together of the files so far, and all of it.
+    pub staged: u64,
+    pub to_stage: u64,
 }
 
 impl Progress {
+    /// Installed, but Steam wants to update it before it is played.
+    pub fn needs_update(&self) -> bool {
+        self.state & 4 != 0 && self.state & 2 != 0
+    }
+
+    /// Something is left to do: an installation or an update.
+    pub fn unfinished(&self) -> bool {
+        self.state & 2 != 0
+    }
+
     /// Fully installed and up to date.
     pub fn installed(&self) -> bool {
         self.state & 4 != 0 && self.state & 2 == 0 && (self.total == 0 || self.done >= self.total)
@@ -276,16 +289,66 @@ pub fn folder_shared(manifest: &Path, installdir: &str) -> bool {
         })
 }
 
-pub fn progress(appid: u32) -> Option<Progress> {
-    let text = std::fs::read_to_string(manifest(appid)?).ok()?;
+/// One app's `appmanifest_<id>.acf`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Manifest {
+    pub appid: u32,
+    pub name: String,
+    pub path: PathBuf,
+    /// The name of its folder in the library's `common` folder.
+    pub folder: String,
+    pub progress: Progress,
+    /// Proton, a runtime: part of Steam, not a game.
+    pub runtime: bool,
+}
+
+pub fn read_manifest(path: PathBuf) -> Option<Manifest> {
+    let text = std::fs::read_to_string(&path).ok()?;
     let doc = vdf::parse(&text).ok()?;
     let app = doc.obj("appstate")?;
     let num = |k: &str| app.str(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-    Some(Progress {
-        state: num("stateflags") as u32,
-        done: num("bytesdownloaded"),
-        total: num("bytestodownload"),
+    let appid = num("appid") as u32;
+    let name = app.str("name").unwrap_or_default().to_string();
+    Some(Manifest {
+        appid,
+        runtime: is_runtime(appid, &name),
+        name,
+        path,
+        folder: app.str("installdir").unwrap_or_default().to_string(),
+        progress: Progress {
+            state: num("stateflags") as u32,
+            done: num("bytesdownloaded"),
+            total: num("bytestodownload"),
+            staged: num("bytesstaged"),
+            to_stage: num("bytestostage"),
+        },
     })
+}
+
+/// Every app in Steam's library folders.
+pub fn manifests() -> Vec<Manifest> {
+    let folders = root()
+        .and_then(|r| library_folders(&r).ok())
+        .unwrap_or_default();
+    let mut out: Vec<Manifest> = Vec::new();
+    for folder in folders {
+        let files = std::fs::read_dir(folder.join("steamapps"));
+        for e in files.into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("appmanifest_")
+                && name.ends_with(".acf")
+                && let Some(m) = read_manifest(e.path())
+                && !out.iter().any(|o| o.appid == m.appid)
+            {
+                out.push(m);
+            }
+        }
+    }
+    out
+}
+
+pub fn progress(appid: u32) -> Option<Progress> {
+    read_manifest(manifest(appid)?).map(|m| m.progress)
 }
 
 /// A manifest that tells Steam, when it starts, to install the app into `library`

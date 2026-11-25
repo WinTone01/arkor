@@ -1794,6 +1794,8 @@ impl Library {
                                 })
                                 .child(
                                     div()
+                                        .flex_1()
+                                        .min_w_0()
                                         .text_size(px(30. * u))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(title),
@@ -1920,7 +1922,9 @@ impl Library {
         // Arkor was left: the game's window came.
         if !l.playing
             && !window.is_window_active()
-            && l.at.elapsed() > Duration::from_millis(600)
+                        && l.at.elapsed() > Duration::from_millis(600)
+            // Steam's own windows are not the game.
+            && !l.waits_for_steam()
             && let Some(l) = self.console.launching.as_mut()
         {
             l.playing = true;
@@ -1975,8 +1979,42 @@ impl Library {
                     .text_size(px(24. * u))
                     .text_color(gpui::white().opacity(0.7))
                     .child(super::loader::spinner(40. * u, f.still))
-                    .child(self.t().launching),
+                    .child(match l.steam {
+                        Some(_) => self.tr("Steam starts the game…", "Steam oyunu başlatıyor…"),
+                        None => self.t().launching,
+                    }),
             );
+            // Nothing for a while: Steam may want an answer (a licence, a sync conflict).
+            if l.steam_may_ask() {
+                let pad = self.console.pad;
+                screen = screen.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(16. * u))
+                        .text_size(px(21. * u))
+                        .text_color(gpui::white().opacity(0.6))
+                        .child(self.tr(
+                            "This takes long. Steam may be asking something.",
+                            "Uzun sürdü. Steam bir şey soruyor olabilir.",
+                        ))
+                        .child(
+                            div()
+                                .id("show-steam")
+                                .flex()
+                                .items_center()
+                                .gap(px(10. * u))
+                                .cursor_pointer()
+                                .text_color(gpui::white().opacity(0.85))
+                                .child(self.console_glyph(if pad { "Y" } else { "Ctrl F" }, f))
+                                .child(self.tr("Show Steam's window", "Steam penceresini göster"))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.console_show_steam(None, cx)),
+                                ),
+                        ),
+                );
+            }
             return Some(screen);
         }
         let mins = l.at.elapsed().as_secs() / 60;

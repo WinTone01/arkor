@@ -87,6 +87,13 @@ pub(super) fn install(id: &str, order: &Order) -> anyhow::Result<()> {
             lib::write_install_manifest(&root, appid, &info, &owner)?;
             start_silent()?;
         }
+    } else if !lib::progress(appid).is_some_and(|p| p.installed())
+        && !crate::steam_downloads::items()
+            .iter()
+            .any(|i| i.appid == appid && i.running)
+    {
+        // Begun before, and paused or called off in Steam.
+        go_on()?;
     }
     watch(appid, &order.title)
 }
@@ -120,6 +127,8 @@ fn watch(appid: u32, label: &str) -> anyhow::Result<()> {
                     return Ok(());
                 }
             }
+            // Removed in Steam meanwhile.
+            None if seen_work => anyhow::bail!(tools::STOPPED),
             None if began.elapsed() > Duration::from_secs(10 * 60) => {
                 anyhow::bail!("Steam did not start the download (log in to Steam and try again)")
             }
@@ -134,43 +143,181 @@ pub(super) fn repair(game: &Installed) -> anyhow::Result<()> {
 }
 
 pub(super) fn uninstall(game: &Installed) -> anyhow::Result<()> {
-    let appid: u32 = game.id.parse().context("not a Steam app")?;
-    // Without Steam's window: closed, the game's files and manifest removed, started again
-    // without its window. With a game running, Steam's own way is used.
-    if !steam_link::any_game_running()
-        && let Some(manifest) = lib::manifest(appid)
-        && game.path.join("..").exists()
-    {
-        let common = manifest
-            .parent()
-            .map(|s| s.join("common"))
-            .context("no library folder")?;
-        // Only a folder in the library's `common` folder is removed.
-        let real = std::fs::canonicalize(&game.path)?;
+    take_away(game.id.parse().context("not a Steam app")?)
+}
+
+/// What Arkor says when Steam cannot be closed for a moment.
+pub const GAME_RUNS: &str = "a Steam game is running";
+
+/// Removes a game, installed or only begun, without Steam's windows: with Steam closed its
+/// files, what was downloaded of it and its manifest go, then Steam starts again without its
+/// window. Its saves (Proton's folder for it) stay.
+pub(super) fn take_away(appid: u32) -> anyhow::Result<()> {
+    // One at a time: Steam is closed and started for each.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
+    let path = lib::manifest(appid).context("the game is not installed")?;
+    let on = steam_link::steam_running();
+    steam_link::shutdown()?;
+    // Read once Steam has written it for the last time.
+    let result = match lib::read_manifest(path.clone()) {
+        Some(m) => remove_files(&m),
+        // Steam removed it itself on its way out.
+        None if !path.exists() => Ok(()),
+        None => Err(anyhow::anyhow!("{} is not readable", path.display())),
+    };
+    if on {
+        start_silent()?;
+    }
+    result
+}
+
+/// Removes what belongs to `m` from its library. Steam must be closed.
+fn remove_files(m: &lib::Manifest) -> anyhow::Result<()> {
+    let steamapps = m.path.parent().context("no library folder")?;
+    let name = std::path::Path::new(&m.folder);
+    // Only a folder right in the library's `common` folder is removed.
+    let plain = matches!(
+        name.components().collect::<Vec<_>>()[..],
+        [std::path::Component::Normal(_)]
+    );
+    let folder = steamapps.join("common").join(name);
+    if plain && folder.is_dir() {
+        let real = std::fs::canonicalize(&folder)?;
         anyhow::ensure!(
-            real.parent() == std::fs::canonicalize(&common).ok().as_deref(),
+            real.parent()
+                == std::fs::canonicalize(steamapps.join("common"))
+                    .ok()
+                    .as_deref(),
             "{} is not in Steam's library",
-            game.path.display()
+            folder.display()
         );
         // Some games share their folder with another one (mods, sequels in one install).
-        let dir = real.file_name().unwrap_or_default().to_string_lossy();
         anyhow::ensure!(
-            !lib::folder_shared(&manifest, &dir),
+            !lib::folder_shared(&m.path, &m.folder),
             "another Steam game uses the same folder: remove it in Steam"
         );
-        steam_link::shutdown()?;
         std::fs::remove_dir_all(&real)?;
-        std::fs::remove_file(&manifest)?;
-        return start_silent();
     }
-    steam_link::open_url(&format!("steam://uninstall/{appid}"))?;
-    let began = Instant::now();
-    while lib::manifest(appid).is_some() {
-        anyhow::ensure!(
-            began.elapsed() < Duration::from_secs(5 * 60),
-            "confirm it in Steam's window"
-        );
-        std::thread::sleep(Duration::from_millis(700));
+    // What was downloaded and not put together yet.
+    let downloading = steamapps.join("downloading");
+    let begun = downloading.join(m.appid.to_string());
+    if begun.is_dir() && !begun.is_symlink() {
+        std::fs::remove_dir_all(&begun)?;
     }
+    let state = format!("state_{}_", m.appid);
+    for e in std::fs::read_dir(&downloading)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if e.file_name().to_string_lossy().starts_with(&state) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    std::fs::remove_file(&m.path)?;
     Ok(())
+}
+
+/// An installation was called off: what there is of it goes (an installed game stays).
+pub(super) fn call_off(appid: u32) -> anyhow::Result<()> {
+    match lib::progress(appid) {
+        Some(p) if p.state & 4 == 0 => take_away(appid),
+        _ => Ok(()),
+    }
+}
+
+/// Steam goes on with what it paused when it starts anew.
+pub(super) fn go_on() -> anyhow::Result<()> {
+    anyhow::ensure!(!steam_link::any_game_running(), GAME_RUNS);
+    steam_link::shutdown()?;
+    start_silent()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn library() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("steamapps");
+        for d in [
+            "common/Game",
+            "common/Other",
+            "downloading/10",
+            "downloading/11",
+        ] {
+            std::fs::create_dir_all(apps.join(d)).unwrap();
+            std::fs::write(apps.join(d).join("file"), "x").unwrap();
+        }
+        for f in ["state_10_1.patch", "state_11_1.patch"] {
+            std::fs::write(apps.join("downloading").join(f), "x").unwrap();
+        }
+        (tmp, apps)
+    }
+
+    fn manifest(apps: &std::path::Path, id: u32, folder: &str, state: u32) -> lib::Manifest {
+        let path = apps.join(format!("appmanifest_{id}.acf"));
+        std::fs::write(
+            &path,
+            format!(
+                "\"AppState\"\n{{\n\t\"appid\"\t\t\"{id}\"\n\t\"name\"\t\t\"G\"\n\t\"StateFlags\"\t\t\"{state}\"\n\t\"installdir\"\t\t\"{folder}\"\n}}\n"
+            ),
+        )
+        .unwrap();
+        lib::read_manifest(path).unwrap()
+    }
+
+    #[test]
+    fn a_game_goes_with_everything_of_it_and_nothing_else() {
+        let (_tmp, apps) = library();
+        let m = manifest(&apps, 10, "Game", 4);
+        remove_files(&m).unwrap();
+        for gone in [
+            "common/Game",
+            "downloading/10",
+            "downloading/state_10_1.patch",
+            "appmanifest_10.acf",
+        ] {
+            assert!(!apps.join(gone).exists(), "{gone}");
+        }
+        for stays in [
+            "common/Other/file",
+            "downloading/11/file",
+            "downloading/state_11_1.patch",
+        ] {
+            assert!(apps.join(stays).exists(), "{stays}");
+        }
+    }
+
+    #[test]
+    fn a_game_that_was_only_begun_has_no_folder() {
+        let (_tmp, apps) = library();
+        let m = manifest(&apps, 11, "NotThere", 1026);
+        remove_files(&m).unwrap();
+        assert!(!apps.join("appmanifest_11.acf").exists());
+        assert!(!apps.join("downloading/11").exists());
+        assert!(apps.join("common/Game/file").exists());
+    }
+
+    #[test]
+    fn a_strange_folder_name_removes_nothing_outside() {
+        let (tmp, apps) = library();
+        let outside = tmp.path().join("precious");
+        std::fs::create_dir_all(&outside).unwrap();
+        for (id, folder) in [(20, ""), (21, ".."), (22, "../../precious"), (23, "/")] {
+            let m = manifest(&apps, id, folder, 1026);
+            remove_files(&m).unwrap();
+            assert!(outside.exists() && apps.join("common/Game/file").exists());
+        }
+        // A link out of the library is not followed.
+        std::os::unix::fs::symlink(&outside, apps.join("common/Link")).unwrap();
+        let m = manifest(&apps, 24, "Link", 4);
+        assert!(remove_files(&m).is_err() && outside.exists());
+        // Nor is a folder two games share removed.
+        let m = manifest(&apps, 25, "Other", 4);
+        manifest(&apps, 26, "Other", 4);
+        assert!(remove_files(&m).is_err() && apps.join("common/Other/file").exists());
+    }
 }
