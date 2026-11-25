@@ -11,3 +11,9 @@ Terminal=false
 Categories=Game;
 Keywords=games;launcher;proton;wine;steam;epic;gog;mangohud;
 StartupWMClass=arkor
+Actions=console;
+
+[Desktop Action console]
+Name=Console mode
+Name[tr]=Konsol modu
+Exec=arkor --console

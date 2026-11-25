@@ -84,6 +84,19 @@ impl Library {
         new: NewGame,
         cx: &mut Context<Self>,
     ) -> Option<GameId> {
+        let id = self.add_entry(new, cx)?;
+        self.add = AddState {
+            detected: self.add.detected.take(),
+            ..AddState::default()
+        };
+        self.select_game(&id, cx);
+        // A cover from SteamGridDB when it knows the game by exactly this name.
+        self.auto_cover(&id.id, cx);
+        Some(id)
+    }
+
+    /// Adds `new` to the library with the defaults for new games, and saves.
+    pub(super) fn add_entry(&mut self, new: NewGame, cx: &mut Context<Self>) -> Option<GameId> {
         let id = self.library.add(new);
         let result = self.library.save();
         if let Err(e) = result {
@@ -91,10 +104,6 @@ impl Library {
             cx.notify();
             return None;
         }
-        self.add = AddState {
-            detected: self.add.detected.take(),
-            ..AddState::default()
-        };
         let id = GameId::new(Store::Local, id);
         // New games start with the defaults from Settings → Game defaults.
         if self.global.defaults != Default::default() {
@@ -105,9 +114,6 @@ impl Library {
             }
         }
         self.reload_games();
-        self.select_game(&id, cx);
-        // A cover from SteamGridDB when it knows the game by exactly this name.
-        self.auto_cover(&id.id, cx);
         Some(id)
     }
 
@@ -379,7 +385,7 @@ impl Library {
         let mut found =
             widgets::section(self.tr("Found on this computer", "Bu bilgisayarda bulunanlar"));
         if state.detecting {
-            found = found.child(widgets::label(self.tr("Looking…", "Aranıyor…")));
+            found = found.child(self.loading(self.tr("Looking…", "Aranıyor…")));
         }
         let mut any = false;
         let mut found_count = 0usize;

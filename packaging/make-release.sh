@@ -2,6 +2,7 @@
 # Builds Arkor and packs a release archive for GitHub Releases:
 #   dist/arkor-<version>-x86_64-linux.tar.gz
 #     arkor-<version>/bin/arkor
+#     arkor-<version>/bin/arkor-login   (store logins in a window of their own)
 #     arkor-<version>/share/applications/arkor.desktop
 #     arkor-<version>/share/icons/hicolor/.../arkor.(svg|png)
 #     arkor-<version>/share/licenses/arkor/LICENSE
@@ -10,12 +11,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 name="arkor-$version"
-cargo build --release --locked -p arkor
+cargo build --release --locked -p arkor -p arkor-login
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 root="$stage/$name"
 install -Dm755 target/release/arkor "$root/bin/arkor"
-strip "$root/bin/arkor" 2>/dev/null || true
+install -Dm755 target/release/arkor-login "$root/bin/arkor-login"
+strip "$root/bin/arkor" "$root/bin/arkor-login" 2>/dev/null || true
 install -Dm644 packaging/arkor.desktop "$root/share/applications/arkor.desktop"
 install -Dm644 crates/arkor/assets/logo/arkor.svg "$root/share/icons/hicolor/scalable/apps/arkor.svg"
 for size in 16 24 32 48 64 128 256 512; do

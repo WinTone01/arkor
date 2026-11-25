@@ -17,6 +17,17 @@ impl AssetSource for ArkorAssets {
                 "../../assets/logo/arkor-mark.svg"
             ))));
         }
+        // The stores' marks (Simple Icons, CC0), to tell the stores apart.
+        let store: Option<&'static [u8]> = match path {
+            "arkor/store-epic.svg" => Some(include_bytes!("../../assets/stores/epicgames.svg")),
+            "arkor/store-gog.svg" => Some(include_bytes!("../../assets/stores/gogdotcom.svg")),
+            "arkor/store-amazon.svg" => Some(include_bytes!("../../assets/stores/amazongames.svg")),
+            "arkor/store-steam.svg" => Some(include_bytes!("../../assets/stores/steam.svg")),
+            _ => None,
+        };
+        if let Some(bytes) = store {
+            return Ok(Some(Cow::Borrowed(bytes)));
+        }
         if let Some(name) = path.strip_prefix("arkor/") {
             return gpui::assets::AllAssets.load(&format!("icons/{name}"));
         }

@@ -4,8 +4,9 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use super::console::ToggleConsole;
 use super::style::{self, pal};
-use super::{Library, Selection, big_screen};
+use super::{Library, Selection};
 
 actions!(
     shell,
@@ -67,11 +68,7 @@ pub(super) const SHORTCUTS: [(&str, &str, &str); 9] = [
         "Show or hide hidden games",
         "Gizli oyunları göster ya da gizle",
     ),
-    (
-        "F11",
-        "Big-screen mode (gamepad)",
-        "Büyük ekran modu (oyun kolu)",
-    ),
+    ("F11", "Console mode (gamepad)", "Konsol modu (oyun kolu)"),
 ];
 
 /// Sidebar entries. Overlay and Settings share the global settings page (different tabs).
@@ -79,6 +76,7 @@ pub(super) const SHORTCUTS: [(&str, &str, &str); 9] = [
 pub(super) enum Nav {
     Library,
     Add,
+    Shops,
     Protons,
     Overlay,
     Bench,
@@ -95,6 +93,7 @@ impl Library {
                 Nav::Library,
                 None | Some(Selection::Grid) | Some(Selection::Game(_)) | Some(Selection::Add),
             ) => true,
+            (Nav::Shops, Some(Selection::Shops)) => true,
             (Nav::Protons, Some(Selection::Protons)) => true,
             (Nav::Bench, Some(Selection::Bench)) => true,
             (Nav::Downloads, Some(Selection::Downloads)) => true,
@@ -109,6 +108,7 @@ impl Library {
         let selection = match nav {
             Nav::Library => Selection::Grid,
             Nav::Add => Selection::Add,
+            Nav::Shops => Selection::Shops,
             Nav::Protons => Selection::Protons,
             Nav::Bench => Selection::Bench,
             Nav::Downloads => Selection::Downloads,
@@ -117,12 +117,16 @@ impl Library {
         };
         self.global_hud_tab = nav == Nav::Overlay;
         self.select(selection, cx);
+        if nav == Nav::Shops {
+            self.shops_opened(cx);
+        }
     }
 
     fn nav_title(&self, nav: Nav) -> &'static str {
         match nav {
             Nav::Library => self.tr("Library", "Kütüphane"),
             Nav::Add => self.tr("Add game", "Oyun ekle"),
+            Nav::Shops => self.tr("Stores", "Mağazalar"),
             Nav::Protons => self.tr("Proton & Wine", "Proton ve Wine"),
             Nav::Overlay => self.tr("MangoHud overlay", "MangoHud overlay"),
             Nav::Bench => self.tr("Benchmarks", "Benchmark'lar"),
@@ -230,6 +234,7 @@ impl Library {
             )
             .child(separator())
             .child(self.nav_item(Nav::Library, "library-big", count, cx))
+            .child(self.nav_item(Nav::Shops, "store", None, cx))
             .child(Self::section_label(self.tr("Tools", "Araçlar")))
             .child(self.nav_item(Nav::Protons, "wine", None, cx))
             .child(self.nav_item(Nav::Overlay, "gauge", None, cx))
@@ -421,6 +426,7 @@ impl Library {
                 self.nav_title(Nav::Library),
                 Some(self.nav_title(Nav::Add).into()),
             ),
+            Some(Selection::Shops) => (self.nav_title(Nav::Shops), None),
             Some(Selection::Protons) => (self.nav_title(Nav::Protons), None),
             Some(Selection::Bench) => (self.nav_title(Nav::Bench), None),
             Some(Selection::Downloads) => (self.nav_title(Nav::Downloads), None),
@@ -463,6 +469,7 @@ impl Library {
             .justify_between()
             .gap_4()
             .child(path)
+            .child(div().flex_1())
             .children(self.status.clone().map(|s| {
                 div()
                     .flex()
@@ -480,6 +487,20 @@ impl Library {
                     .child(style::icon("info", 13., pal::accent_light()))
                     .child(div().truncate().child(s))
             }))
+            .child({
+                let text: SharedString = self.tr("Console mode (F11)", "Konsol modu (F11)").into();
+                div()
+                    .id("to-console")
+                    .flex_none()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(9.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(pal::raised()))
+                    .child(style::icon("gamepad-2", 18., pal::muted()))
+                    .tooltip(move |_, cx| super::widgets::tip(text.clone(), cx))
+                    .on_click(cx.listener(|this, _, w, cx| this.toggle_console(w, cx)))
+            })
     }
 }
 
@@ -536,6 +557,7 @@ impl Library {
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.viewport_w = f32::from(window.viewport_size().width);
+        self.window_active = window.is_window_active();
         self.apply_theme(window, cx);
         self.watch_progress(cx);
         self.keep_moving(window, cx);
@@ -565,40 +587,34 @@ impl Render for Library {
         // The start-up animation lies over the page, which is drawn underneath all along.
         let page_in = self.step_intro(window);
         let intro = self.render_intro(window, cx);
-        use big_screen::*;
-        if self.big_screen {
-            let big = self.render_big(window, cx);
-            return base
+        if self.console.on {
+            use super::console::*;
+            let console = self.render_console(window, cx);
+            // The keys, as if they were buttons.
+            macro_rules! keys {
+                ($base:expr, $($action:ident => $nav:ident),*) => {
+                    $base$(.on_action(cx.listener(|this, _: &$action, w, cx| {
+                        this.console.pad = false;
+                        this.nav(Nav::$nav, w, cx)
+                    })))*
+                };
+            }
+            let base = base
                 .track_focus(&focus)
-                .key_context("BigScreen")
-                .on_action(
-                    cx.listener(|this, _: &ToggleBigScreen, w, cx| this.toggle_big_screen(w, cx)),
-                )
-                .on_action(
-                    cx.listener(|this, _: &NavUp, w, cx| this.nav(big_screen::Nav::Up, w, cx)),
-                )
-                .on_action(
-                    cx.listener(|this, _: &NavDown, w, cx| this.nav(big_screen::Nav::Down, w, cx)),
-                )
-                .on_action(
-                    cx.listener(|this, _: &NavLeft, w, cx| this.nav(big_screen::Nav::Left, w, cx)),
-                )
-                .on_action(
-                    cx.listener(|this, _: &NavRight, w, cx| {
-                        this.nav(big_screen::Nav::Right, w, cx)
-                    }),
-                )
-                .on_action(cx.listener(|this, _: &NavAccept, w, cx| {
-                    this.nav(big_screen::Nav::Accept, w, cx)
-                }))
-                .on_action(
-                    cx.listener(|this, _: &NavBack, w, cx| this.nav(big_screen::Nav::Back, w, cx)),
-                )
-                .on_action(cx.listener(|this, _: &NavDetails, w, cx| {
-                    this.nav(big_screen::Nav::Details, w, cx)
-                }))
-                .child(div().absolute().inset_0().child(big))
-                .children(intro);
+                .key_context(CONTEXT)
+                .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
+                .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
+                    let k = &e.keystroke;
+                    if !k.modifiers.control && !k.modifiers.alt && !k.modifiers.platform {
+                        this.console_type(&k.key, k.key_char.as_deref(), cx);
+                    }
+                }));
+            let base = keys!(base,
+                NavUp => Up, NavDown => Down, NavLeft => Left, NavRight => Right,
+                NavAccept => Accept, NavBack => Back, NavExtra => Extra, NavSearch => Search,
+                NavPrevTab => PrevTab, NavNextTab => NextTab, NavPageUp => PageUp,
+                NavPageDown => PageDown, NavMenu => Menu);
+            return base.child(console).children(intro);
         }
         let detail = self.render_detail(window, cx);
         let sidebar = self.render_sidebar(cx);
@@ -615,6 +631,9 @@ impl Render for Library {
                 cx.listener(|this, _: &GoSettings, _, cx| this.go(super::shell::Nav::Settings, cx)),
             )
             .on_action(cx.listener(|this, _: &GoBack, _, cx| {
+                if this.close_shop_windows(cx) {
+                    return;
+                }
                 if matches!(this.selection, Some(Selection::Game(_) | Selection::Add)) {
                     this.go(super::shell::Nav::Library, cx);
                 }
@@ -626,9 +645,7 @@ impl Render for Library {
                     this.toggle_play(cx);
                 }
             }))
-            .on_action(
-                cx.listener(|this, _: &ToggleBigScreen, w, cx| this.toggle_big_screen(w, cx)),
-            )
+            .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
             .child(
                 div()
                     .absolute()
@@ -670,6 +687,7 @@ impl Render for Library {
                     ),
             )
             .children(self.render_sgdb_picker(cx))
+            .children(self.render_shop_windows(cx))
             .children(intro)
     }
 }

@@ -388,7 +388,7 @@ impl Library {
                     .child(format!("⚠ {e}")),
             );
         } else if p.loading {
-            out = out.child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
+            out = out.child(self.loading(self.tr("Looking…", "Bakılıyor…")));
         } else if p.game.is_some() && p.images.is_empty() {
             out = out.child(widgets::label(if animated {
                 self.tr(

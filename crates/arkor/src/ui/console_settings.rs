@@ -1,0 +1,1273 @@
+//! Settings in console mode, in categories as on the desktop: a screen lists the categories,
+//! a category its settings. A switch flips with A; a choice turns with left and right, or
+//! opens as a list with A; a text opens the keyboard.
+
+use arkor_core::library::GameKind;
+use arkor_core::mangohud::{HudSettings, Metric, Orientation, Position, Preset};
+use arkor_core::profile::{Theme, UpdateInterval};
+use arkor_core::tweaks::{Category, TWEAKS};
+use arkor_core::{HudMode, LsfgMode};
+use arkor_launch::shops::Shop;
+
+use super::Library;
+use super::console::{Act, Item, Kind, Opt, Row, Screen, Value};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum GameOpt {
+    Hud,
+    HudPreset,
+    HudPosition,
+    HudOrientation,
+    HudFont,
+    HudAlpha,
+    FpsLimit,
+    Metric(Metric),
+    Gamescope,
+    GsOutput,
+    GsGame,
+    GsRefresh,
+    GsFilter,
+    GsFullscreen,
+    GsHdr,
+    Lsfg,
+    LsfgMultiplier,
+    LsfgFlow,
+    LsfgPerformance,
+    Mako,
+    Afmf,
+    NoSleep,
+    VkBasalt,
+    Cas,
+    VkSumi,
+    Proton,
+    ProtonLog,
+    LinuxRuntime,
+    Winecfg,
+    Winetricks,
+    Tweak(&'static str),
+    LaunchOptions,
+    PreLaunch,
+    PostLaunch,
+    Hidden,
+    Category,
+}
+
+impl GameOpt {
+    /// Edited as text on the keyboard.
+    pub(super) fn is_text(self) -> bool {
+        matches!(
+            self,
+            GameOpt::LaunchOptions | GameOpt::PreLaunch | GameOpt::PostLaunch
+        )
+    }
+}
+
+/// A setting on its line: what it is, its icon and its name.
+type Setting = (GameOpt, &'static str, String);
+
+/// The categories of a game's settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum GameCat {
+    Overlay,
+    Performance,
+    Picture,
+    Upscaling,
+    Compatibility,
+    Starting,
+    Game,
+}
+
+impl GameCat {
+    pub(super) const ALL: [GameCat; 7] = [
+        GameCat::Overlay,
+        GameCat::Performance,
+        GameCat::Picture,
+        GameCat::Upscaling,
+        GameCat::Compatibility,
+        GameCat::Starting,
+        GameCat::Game,
+    ];
+}
+
+/// The categories of Arkor's own settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AppCat {
+    General,
+    Looks,
+    Games,
+    Stores,
+    Proton,
+    System,
+}
+
+impl AppCat {
+    pub(super) const ALL: [AppCat; 6] = [
+        AppCat::General,
+        AppCat::Looks,
+        AppCat::Games,
+        AppCat::Proton,
+        AppCat::Stores,
+        AppCat::System,
+    ];
+}
+
+/// The measures offered in console mode (the desktop's editor has them all).
+const METRICS: [Metric; 13] = [
+    Metric::Fps,
+    Metric::FrameTiming,
+    Metric::GpuStats,
+    Metric::GpuTemp,
+    Metric::GpuPower,
+    Metric::Vram,
+    Metric::CpuStats,
+    Metric::CpuTemp,
+    Metric::Ram,
+    Metric::Resolution,
+    Metric::ShowFpsLimit,
+    Metric::Fsr,
+    Metric::Hdr,
+];
+
+const RUNTIMES: [&str; 5] = [
+    "umu-steamrt4",
+    "umu-sniper",
+    "umu-soldier",
+    "umu-scout",
+    "disable-runtime",
+];
+
+const RESOLUTIONS: [&str; 6] = [
+    "1280x720",
+    "1600x900",
+    "1920x1080",
+    "2560x1440",
+    "3440x1440",
+    "3840x2160",
+];
+const REFRESH: [u32; 7] = [60, 75, 90, 120, 144, 165, 240];
+const FPS: [u32; 8] = [30, 40, 45, 60, 90, 120, 144, 165];
+
+fn size_text(w: Option<u32>, h: Option<u32>) -> Option<String> {
+    Some(format!("{}x{}", w?, h?))
+}
+
+fn parse_size(text: &str) -> (Option<u32>, Option<u32>) {
+    match text.split_once('x') {
+        Some((w, h)) => (w.parse().ok(), h.parse().ok()),
+        None => (None, None),
+    }
+}
+
+impl Library {
+    fn position_name(&self, p: Position) -> &'static str {
+        match p {
+            Position::TopLeft => self.tr("Top left", "Sol üst"),
+            Position::TopCenter => self.tr("Top", "Üst orta"),
+            Position::TopRight => self.tr("Top right", "Sağ üst"),
+            Position::MiddleLeft => self.tr("Left", "Sol orta"),
+            Position::MiddleRight => self.tr("Right", "Sağ orta"),
+            Position::BottomLeft => self.tr("Bottom left", "Sol alt"),
+            Position::BottomCenter => self.tr("Bottom", "Alt orta"),
+            Position::BottomRight => self.tr("Bottom right", "Sağ alt"),
+        }
+    }
+
+    fn preset_name(&self, p: Preset) -> &'static str {
+        match p {
+            Preset::FpsOnly => self.tr("FPS only", "Yalnızca FPS"),
+            Preset::Basic => self.tr("Basic", "Temel"),
+            Preset::BasicHorizontal => self.tr("Basic, in a line", "Temel, yatay"),
+            Preset::Full => self.tr("Everything", "Her şey"),
+        }
+    }
+
+    /// The layout the game shows: its own, or the shared one.
+    fn hud(&self) -> &HudSettings {
+        match self.profile.mangohud.mode {
+            HudMode::Custom => self
+                .profile
+                .mangohud
+                .settings
+                .as_ref()
+                .unwrap_or(&self.global.mangohud.settings),
+            _ => &self.global.mangohud.settings,
+        }
+    }
+
+    /// Changes the layout the game shows; the shared one is saved with the settings.
+    fn edit_shown_hud(&mut self, f: impl FnOnce(&mut HudSettings)) {
+        if self.profile.mangohud.mode == HudMode::Custom {
+            let global = self.global.mangohud.settings.clone();
+            f(self.profile.mangohud.settings.get_or_insert(global));
+        } else {
+            f(&mut self.global.mangohud.settings);
+            let r = self.global.save();
+            self.report(r);
+        }
+    }
+
+    /// The choices of `o` as (label, key); `None` for a switch or a text.
+    pub(super) fn game_opt_choices(&self, o: GameOpt) -> Option<Vec<(String, String)>> {
+        let s = |v: &str| v.to_string();
+        let native = self.tr("Native", "Ekranın kendisi");
+        Some(match o {
+            GameOpt::Hud => vec![
+                (s(self.tr("Off", "Kapalı")), s("off")),
+                (s(self.tr("Shared layout", "Ortak düzen")), s("global")),
+                (s(self.tr("Its own layout", "Kendi düzeni")), s("custom")),
+            ],
+            GameOpt::HudPreset => Preset::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| (s(self.preset_name(p)), i.to_string()))
+                .collect(),
+            GameOpt::HudPosition => [
+                Position::TopLeft,
+                Position::TopCenter,
+                Position::TopRight,
+                Position::MiddleLeft,
+                Position::MiddleRight,
+                Position::BottomLeft,
+                Position::BottomCenter,
+                Position::BottomRight,
+            ]
+            .into_iter()
+            .map(|p| (s(self.position_name(p)), s(p.key())))
+            .collect(),
+            GameOpt::FpsLimit => std::iter::once((s(self.tr("No limit", "Sınırsız")), s("0")))
+                .chain(FPS.iter().map(|n| (n.to_string(), n.to_string())))
+                .collect(),
+            GameOpt::GsOutput => std::iter::once((s(native), String::new()))
+                .chain(RESOLUTIONS.iter().map(|r| (s(r), s(r))))
+                .collect(),
+            GameOpt::GsGame => std::iter::once((
+                s(self.tr("Same as the output", "Çıkışla aynı")),
+                String::new(),
+            ))
+            .chain(RESOLUTIONS.iter().map(|r| (s(r), s(r))))
+            .collect(),
+            GameOpt::GsRefresh => std::iter::once((s(native), String::new()))
+                .chain(REFRESH.iter().map(|n| (format!("{n} Hz"), n.to_string())))
+                .collect(),
+            GameOpt::GsFilter => std::iter::once((s(self.tr("None", "Yok")), String::new()))
+                .chain(
+                    arkor_core::profile::GAMESCOPE_FILTERS
+                        .iter()
+                        .map(|f| (f.to_uppercase(), s(f))),
+                )
+                .collect(),
+            GameOpt::HudOrientation => vec![
+                (s(self.tr("Down", "Dikey")), s("v")),
+                (s(self.tr("Across", "Yatay")), s("h")),
+            ],
+            GameOpt::HudFont => (16..=36)
+                .step_by(2)
+                .map(|n| (n.to_string(), n.to_string()))
+                .collect(),
+            GameOpt::HudAlpha => (0..=100)
+                .step_by(10)
+                .map(|n| (format!("%{n}"), n.to_string()))
+                .collect(),
+            GameOpt::Cas => (0..=100)
+                .step_by(10)
+                .map(|n| (format!("%{n}"), n.to_string()))
+                .collect(),
+            GameOpt::LinuxRuntime => std::iter::once((
+                s(self.tr("Steam Runtime 4 (default)", "Steam Runtime 4 (varsayılan)")),
+                String::new(),
+            ))
+            .chain(RUNTIMES.iter().skip(1).map(|r| {
+                let label = match *r {
+                    "disable-runtime" => self.tr("None (run directly)", "Yok (doğrudan çalıştır)"),
+                    "umu-sniper" => "Steam Runtime 3 (sniper)",
+                    "umu-soldier" => "Steam Runtime 2 (soldier)",
+                    _ => "Steam Runtime 1 (scout)",
+                };
+                (s(label), s(r))
+            }))
+            .collect(),
+            GameOpt::Category => {
+                let mut out = vec![(s(self.tr("None", "Yok")), String::new())];
+                out.extend(self.categories().into_iter().map(|c| (c.clone(), c)));
+                out
+            }
+            GameOpt::LsfgMultiplier => (2..=4).map(|n| (format!("{n}×"), n.to_string())).collect(),
+            GameOpt::LsfgFlow => [25u32, 40, 50, 60, 75, 85, 100]
+                .iter()
+                .map(|n| (format!("%{n}"), n.to_string()))
+                .collect(),
+            GameOpt::Proton => {
+                let mut out = vec![(s(self.tr("Automatic", "Otomatik")), String::new())];
+                for l in arkor_launch::components::Latest::ALL {
+                    out.push((s(l.dir_name()), s(l.dir_name())));
+                }
+                for (name, _) in &self.tools.protons {
+                    if !out.iter().any(|(_, k)| k == name) {
+                        out.push((name.clone(), name.clone()));
+                    }
+                }
+                out
+            }
+            _ => return None,
+        })
+    }
+
+    /// The current key of a choice.
+    fn game_opt_key(&self, o: GameOpt) -> String {
+        let p = &self.profile;
+        let g = &p.gamescope;
+        match o {
+            GameOpt::Hud => match p.mangohud.mode {
+                HudMode::Off => "off",
+                HudMode::Global => "global",
+                HudMode::Custom => "custom",
+            }
+            .into(),
+            GameOpt::HudPreset => Preset::ALL
+                .iter()
+                .position(|pr| pr.metrics() == self.hud().metrics)
+                .map(|i| i.to_string())
+                .unwrap_or_default(),
+            GameOpt::HudPosition => self.hud().position.key().into(),
+            GameOpt::FpsLimit => self.hud().fps_limit.to_string(),
+            GameOpt::GsOutput => size_text(g.width, g.height).unwrap_or_default(),
+            GameOpt::GsGame => size_text(g.game_width, g.game_height).unwrap_or_default(),
+            GameOpt::GsRefresh => g.refresh.map(|r| r.to_string()).unwrap_or_default(),
+            GameOpt::GsFilter => g.filter.clone().unwrap_or_default(),
+            GameOpt::HudOrientation => match self.hud().orientation {
+                Orientation::Vertical => "v".into(),
+                Orientation::Horizontal => "h".into(),
+            },
+            GameOpt::HudFont => self.hud().font_size.to_string(),
+            GameOpt::HudAlpha => (self.hud().background_alpha / 10 * 10).to_string(),
+            GameOpt::Cas => (p.vkbasalt.cas_sharpness / 10 * 10).to_string(),
+            GameOpt::LinuxRuntime => p.linux_runtime.clone().unwrap_or_default(),
+            GameOpt::Category => self
+                .entry()
+                .and_then(|e| e.category.clone())
+                .unwrap_or_default(),
+            GameOpt::LsfgMultiplier => p.lsfg.multiplier.to_string(),
+            GameOpt::LsfgFlow => p.lsfg.flow_scale.to_string(),
+            GameOpt::Proton => p.proton.clone().unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    pub(super) fn game_opt_value(&self, o: GameOpt) -> Value {
+        let p = &self.profile;
+        match o {
+            GameOpt::Gamescope => Value::Switch(p.gamescope.enabled),
+            GameOpt::GsFullscreen => Value::Switch(p.gamescope.fullscreen),
+            GameOpt::GsHdr => Value::Switch(p.gamescope.hdr),
+            GameOpt::Lsfg => Value::Switch(p.lsfg.mode == LsfgMode::On),
+            GameOpt::LsfgPerformance => Value::Switch(p.lsfg.performance_mode),
+            GameOpt::NoSleep => Value::Switch(p.no_sleep),
+            GameOpt::VkBasalt => Value::Switch(p.vkbasalt.enabled),
+            GameOpt::ProtonLog => Value::Switch(p.proton_log),
+            GameOpt::Tweak(id) => Value::Switch(p.tweaks.contains(id)),
+            GameOpt::Metric(m) => Value::Switch(self.hud().metrics.contains(&m)),
+            GameOpt::Mako => Value::Switch(p.layers.mako.enabled),
+            GameOpt::Afmf => Value::Switch(p.layers.afmf.enabled),
+            GameOpt::VkSumi => Value::Switch(p.layers.vksumi),
+            GameOpt::Hidden => Value::Switch(self.entry().is_some_and(|e| e.hidden)),
+            GameOpt::Winecfg | GameOpt::Winetricks => Value::None,
+            GameOpt::LaunchOptions | GameOpt::PreLaunch | GameOpt::PostLaunch => {
+                let text = self.game_opt_text(o);
+                Value::Text(if text.trim().is_empty() {
+                    "—".into()
+                } else {
+                    text
+                })
+            }
+            _ => {
+                let key = self.game_opt_key(o);
+                let label = self
+                    .game_opt_choices(o)
+                    .and_then(|c| c.into_iter().find(|(_, k)| *k == key).map(|(l, _)| l))
+                    .unwrap_or_else(|| match o {
+                        // Metrics picked by hand on the desktop.
+                        GameOpt::HudPreset => self.tr("Custom", "Kendine özgü").into(),
+                        _ if key.is_empty() => "—".into(),
+                        _ => key.clone(),
+                    });
+                Value::Choice(label)
+            }
+        }
+    }
+
+    /// Flips a switch.
+    pub(super) fn game_opt_toggle(&mut self, o: GameOpt) {
+        let p = &mut self.profile;
+        match o {
+            GameOpt::Gamescope => p.gamescope.enabled = !p.gamescope.enabled,
+            GameOpt::GsFullscreen => p.gamescope.fullscreen = !p.gamescope.fullscreen,
+            GameOpt::GsHdr => p.gamescope.hdr = !p.gamescope.hdr,
+            GameOpt::Lsfg => {
+                p.lsfg.mode = if p.lsfg.mode == LsfgMode::On {
+                    LsfgMode::Off
+                } else {
+                    LsfgMode::On
+                };
+                if p.lsfg.multiplier < 2 {
+                    p.lsfg.multiplier = 2;
+                }
+            }
+            GameOpt::LsfgPerformance => p.lsfg.performance_mode = !p.lsfg.performance_mode,
+            GameOpt::NoSleep => p.no_sleep = !p.no_sleep,
+            GameOpt::VkBasalt => p.vkbasalt.enabled = !p.vkbasalt.enabled,
+            GameOpt::ProtonLog => p.proton_log = !p.proton_log,
+            GameOpt::Tweak(id) => {
+                if !p.tweaks.remove(id) {
+                    p.tweaks.insert(id.to_string());
+                }
+            }
+            GameOpt::Mako => p.layers.mako.enabled = !p.layers.mako.enabled,
+            GameOpt::Afmf => p.layers.afmf.enabled = !p.layers.afmf.enabled,
+            GameOpt::VkSumi => p.layers.vksumi = !p.layers.vksumi,
+            GameOpt::Metric(m) => {
+                self.edit_shown_hud(|h| {
+                    if !h.metrics.remove(&m) {
+                        h.metrics.insert(m);
+                    }
+                });
+            }
+            GameOpt::Hidden => {
+                if let Some(e) = self.entry_mut() {
+                    e.hidden = !e.hidden;
+                }
+                self.save_library();
+                self.apply_filter();
+                return;
+            }
+            _ => return,
+        }
+        self.save();
+    }
+
+    /// Sets a choice by its key.
+    pub(super) fn game_opt_set(&mut self, o: GameOpt, key: &str) {
+        let num = key.parse::<u32>().ok();
+        match o {
+            GameOpt::Hud => {
+                let mode = match key {
+                    "off" => HudMode::Off,
+                    "custom" => HudMode::Custom,
+                    _ => HudMode::Global,
+                };
+                if mode == HudMode::Custom && self.profile.mangohud.settings.is_none() {
+                    self.profile.mangohud.settings = Some(self.global.mangohud.settings.clone());
+                }
+                // The shared layout shows nothing while MangoHud is off for all games.
+                if mode == HudMode::Global {
+                    self.global.mangohud.enabled = true;
+                    let r = self.global.save();
+                    self.report(r);
+                }
+                self.profile.mangohud.mode = mode;
+            }
+            GameOpt::HudPreset => {
+                if let Some(p) = num.and_then(|i| Preset::ALL.get(i as usize).copied()) {
+                    self.edit_shown_hud(|h| h.apply_preset(p));
+                }
+            }
+            GameOpt::HudPosition => {
+                let pos = [
+                    Position::TopLeft,
+                    Position::TopCenter,
+                    Position::TopRight,
+                    Position::MiddleLeft,
+                    Position::MiddleRight,
+                    Position::BottomLeft,
+                    Position::BottomCenter,
+                    Position::BottomRight,
+                ]
+                .into_iter()
+                .find(|p| p.key() == key);
+                if let Some(pos) = pos {
+                    self.edit_shown_hud(|h| h.position = pos);
+                }
+            }
+            GameOpt::FpsLimit => {
+                let n = num.unwrap_or(0);
+                self.edit_shown_hud(|h| h.fps_limit = n);
+            }
+            GameOpt::GsOutput => {
+                let (w, h) = parse_size(key);
+                let g = &mut self.profile.gamescope;
+                (g.width, g.height) = (w, h);
+            }
+            GameOpt::GsGame => {
+                let (w, h) = parse_size(key);
+                let g = &mut self.profile.gamescope;
+                (g.game_width, g.game_height) = (w, h);
+            }
+            GameOpt::GsRefresh => self.profile.gamescope.refresh = num,
+            GameOpt::GsFilter => {
+                self.profile.gamescope.filter = Some(key.to_string()).filter(|k| !k.is_empty())
+            }
+            GameOpt::HudOrientation => {
+                let o = if key == "h" {
+                    Orientation::Horizontal
+                } else {
+                    Orientation::Vertical
+                };
+                self.edit_shown_hud(|h| h.orientation = o);
+            }
+            GameOpt::HudFont => {
+                if let Some(n) = num {
+                    self.edit_shown_hud(|h| h.font_size = n);
+                }
+            }
+            GameOpt::HudAlpha => {
+                if let Some(n) = num {
+                    self.edit_shown_hud(|h| h.background_alpha = n);
+                }
+            }
+            GameOpt::Cas => {
+                if let Some(n) = num {
+                    self.profile.vkbasalt.cas_sharpness = n;
+                    let effects = &mut self.profile.vkbasalt.effects;
+                    if !effects.iter().any(|e| e == "cas") {
+                        effects.push("cas".into());
+                    }
+                }
+            }
+            GameOpt::LinuxRuntime => {
+                self.profile.linux_runtime = Some(key.to_string()).filter(|k| !k.is_empty())
+            }
+            GameOpt::Category => {
+                if let Some(e) = self.entry_mut() {
+                    e.category = Some(key.to_string()).filter(|k| !k.is_empty());
+                }
+                self.save_library();
+                self.apply_filter();
+                return;
+            }
+            GameOpt::LsfgMultiplier => {
+                if let Some(n) = num {
+                    self.profile.lsfg.multiplier = n;
+                }
+            }
+            GameOpt::LsfgFlow => {
+                if let Some(n) = num {
+                    self.profile.lsfg.flow_scale = n;
+                }
+            }
+            GameOpt::Proton => {
+                self.profile.proton = Some(key.to_string()).filter(|k| !k.is_empty())
+            }
+            _ => return,
+        }
+        self.save();
+    }
+
+    /// The text a text setting holds.
+    pub(super) fn game_opt_text(&self, o: GameOpt) -> String {
+        let p = &self.profile;
+        match o {
+            GameOpt::LaunchOptions => p.launch_options.clone(),
+            GameOpt::PreLaunch => p.pre_launch.clone(),
+            GameOpt::PostLaunch => p.post_launch.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Keeps what was typed for a text setting.
+    pub(super) fn game_opt_write(&mut self, o: GameOpt, text: &str) {
+        let text = text.trim().to_string();
+        let p = &mut self.profile;
+        match o {
+            GameOpt::LaunchOptions => p.launch_options = text,
+            GameOpt::PreLaunch => p.pre_launch = text,
+            GameOpt::PostLaunch => p.post_launch = text,
+            _ => return,
+        }
+        self.save();
+    }
+
+    fn game_cat_title(&self, c: GameCat) -> (&'static str, &'static str) {
+        match c {
+            GameCat::Overlay => ("gauge", self.tr("Overlay (MangoHud)", "Overlay (MangoHud)")),
+            GameCat::Performance => ("zap", self.tr("Performance", "Performans")),
+            GameCat::Picture => ("wand-sparkles", self.tr("Picture", "Görüntü")),
+            GameCat::Upscaling => ("scaling", self.tr("Upscaling", "Ölçekleme")),
+            GameCat::Compatibility => ("wine", self.tr("Compatibility", "Uyumluluk")),
+            GameCat::Starting => ("terminal", self.tr("Starting", "Başlatma")),
+            GameCat::Game => ("gamepad-2", self.tr("Game", "Oyun")),
+        }
+    }
+
+    /// The categories that have something for this game.
+    fn game_cats(&self) -> Vec<GameCat> {
+        GameCat::ALL
+            .into_iter()
+            .filter(|c| !self.game_cat_rows(*c).is_empty())
+            .collect()
+    }
+
+    /// A game's settings: its categories, with what is switched on in each.
+    pub(super) fn game_setting_rows(&self, id: &str) -> Vec<Row> {
+        if self.entry().is_none_or(|e| e.id != id) {
+            return Vec::new();
+        }
+        self.game_cats()
+            .into_iter()
+            .map(|c| {
+                let (icon, title) = self.game_cat_title(c);
+                let on = self
+                    .game_cat_rows(c)
+                    .iter()
+                    // The measures shown on the overlay are not switched-on features.
+                    .filter(|r| !matches!(r.items[0].act, Act::Opt(Opt::Game(GameOpt::Metric(_)))))
+                    .filter(|r| {
+                        matches!(
+                            r.items[0].look,
+                            super::console::Look::Line {
+                                value: Value::Switch(true),
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                let summary = match on {
+                    0 => String::new(),
+                    n => format!("{n} {}", self.tr("on", "açık")),
+                };
+                Row::new(
+                    Kind::Line,
+                    vec![Item::line(
+                        Act::Screen(Screen::GameCat(id.to_string(), c)),
+                        icon,
+                        title,
+                        Value::Text(summary),
+                    )],
+                )
+            })
+            .collect()
+    }
+
+    /// The settings of one category.
+    pub(super) fn game_cat_rows(&self, c: GameCat) -> Vec<Row> {
+        let Some(g) = self.entry() else {
+            return Vec::new();
+        };
+        let steam = matches!(g.kind, GameKind::Steam { .. });
+        let linux = g.kind == GameKind::Linux;
+        let prefix = g.needs_prefix() && !steam;
+        let p = &self.profile;
+        let t = |en, tr| self.tr(en, tr);
+        let tr = self.global.language == arkor_core::Language::Tr;
+        let gpus = self.tools.gpus;
+        let tweaks = |cats: &[Category]| -> Vec<(GameOpt, &'static str, String)> {
+            TWEAKS
+                .iter()
+                .filter(|tw| cats.contains(&tw.category))
+                .filter(|tw| match arkor_core::tweaks::gpu_need(tw.id) {
+                    Some(arkor_core::tweaks::GpuNeed::Amd) => gpus.amd,
+                    Some(arkor_core::tweaks::GpuNeed::Nvidia) => gpus.nvidia,
+                    None => true,
+                })
+                .map(|tw| {
+                    let label = if tr { tw.label_tr } else { tw.label_en };
+                    let text = match tw.needs {
+                        Some(n) => format!("{label} ({n})"),
+                        None => label.to_string(),
+                    };
+                    (GameOpt::Tweak(tw.id), "toggle-right", text)
+                })
+                .collect()
+        };
+        let o = |opt: GameOpt, icon: &'static str, label: &str| (opt, icon, label.to_string());
+        // (setting, icon, label) with the title of the group it begins.
+        let mut groups: Vec<(Option<String>, Vec<Setting>)> = Vec::new();
+        match c {
+            GameCat::Overlay => {
+                let mut v = vec![o(GameOpt::Hud, "gauge", "MangoHud")];
+                if p.mangohud.mode != HudMode::Off {
+                    v.extend([
+                        o(GameOpt::HudPreset, "layout-list", t("Layout", "Düzen")),
+                        o(GameOpt::HudPosition, "move", t("Position", "Konum")),
+                        o(GameOpt::HudOrientation, "columns-2", t("Direction", "Yön")),
+                        o(GameOpt::HudFont, "type", t("Text size", "Yazı boyutu")),
+                        o(GameOpt::HudAlpha, "square", t("Background", "Arka plan")),
+                        o(GameOpt::FpsLimit, "timer", t("FPS limit", "FPS sınırı")),
+                    ]);
+                }
+                groups.push((None, v));
+                if p.mangohud.mode != HudMode::Off {
+                    let names = [
+                        "FPS",
+                        t("Frame time graph", "Kare süresi grafiği"),
+                        t("GPU load", "GPU kullanımı"),
+                        t("GPU temperature", "GPU sıcaklığı"),
+                        t("GPU power", "GPU gücü"),
+                        "VRAM",
+                        t("CPU load", "CPU kullanımı"),
+                        t("CPU temperature", "CPU sıcaklığı"),
+                        "RAM",
+                        t("Resolution", "Çözünürlük"),
+                        t("FPS limit", "FPS sınırı"),
+                        "FSR",
+                        "HDR",
+                    ];
+                    groups.push((
+                        Some(t("Shown", "Gösterilenler").to_string()),
+                        METRICS
+                            .iter()
+                            .zip(names)
+                            .map(|(m, n)| o(GameOpt::Metric(*m), "activity", n))
+                            .collect(),
+                    ));
+                }
+            }
+            GameCat::Performance => {
+                let mut v = vec![o(GameOpt::Gamescope, "monitor", "Gamescope")];
+                if p.gamescope.enabled {
+                    v.extend([
+                        o(
+                            GameOpt::GsOutput,
+                            "monitor",
+                            t("Output size", "Çıkış çözünürlüğü"),
+                        ),
+                        o(
+                            GameOpt::GsGame,
+                            "scaling",
+                            t("Game renders at", "Oyunun çözünürlüğü"),
+                        ),
+                        o(
+                            GameOpt::GsRefresh,
+                            "activity",
+                            t("Refresh rate", "Yenileme hızı"),
+                        ),
+                        o(
+                            GameOpt::GsFilter,
+                            "sparkles",
+                            t("Upscaling filter", "Ölçekleme filtresi"),
+                        ),
+                        o(
+                            GameOpt::GsFullscreen,
+                            "maximize",
+                            t("Fullscreen", "Tam ekran"),
+                        ),
+                        o(GameOpt::GsHdr, "sun", "HDR"),
+                    ]);
+                }
+                groups.push((Some("Gamescope".into()), v));
+                let mut fg = vec![o(GameOpt::Lsfg, "layers", "lsfg-vk")];
+                if p.lsfg.mode == LsfgMode::On {
+                    fg.extend([
+                        o(GameOpt::LsfgMultiplier, "layers", t("Multiplier", "Çarpan")),
+                        o(GameOpt::LsfgFlow, "gauge", t("Flow scale", "Akış ölçeği")),
+                        o(
+                            GameOpt::LsfgPerformance,
+                            "zap",
+                            t("Performance mode", "Performans modu"),
+                        ),
+                    ]);
+                }
+                fg.push(o(GameOpt::Mako, "layers", "MAKO"));
+                if gpus.amd {
+                    fg.push(o(GameOpt::Afmf, "layers", "AFMF"));
+                }
+                groups.push((Some(t("Frame generation", "Kare üretimi").to_string()), fg));
+                let mut other = vec![o(
+                    GameOpt::NoSleep,
+                    "coffee",
+                    t("Keep the computer awake", "Uykuyu engelle"),
+                )];
+                other.extend(tweaks(&[Category::Latency, Category::Gpu]));
+                groups.push((Some(t("Other", "Diğer").to_string()), other));
+            }
+            GameCat::Picture => {
+                let mut v = vec![o(GameOpt::VkBasalt, "wand-sparkles", "vkBasalt")];
+                if p.vkbasalt.enabled {
+                    v.push(o(
+                        GameOpt::Cas,
+                        "sparkles",
+                        t("Sharpening (CAS)", "Keskinleştirme (CAS)"),
+                    ));
+                }
+                v.push(o(
+                    GameOpt::VkSumi,
+                    "palette",
+                    t("Colour grading (vkSumi)", "Renk düzenleme (vkSumi)"),
+                ));
+                v.extend(tweaks(&[Category::Display]));
+                groups.push((None, v));
+            }
+            GameCat::Upscaling => {
+                let v = tweaks(&[Category::Upscaling]);
+                if !v.is_empty() {
+                    groups.push((None, v));
+                }
+            }
+            GameCat::Compatibility => {
+                let mut v = Vec::new();
+                if prefix {
+                    v.extend([
+                        o(GameOpt::Proton, "wine", "Proton"),
+                        o(
+                            GameOpt::ProtonLog,
+                            "logs",
+                            t("Proton log", "Proton günlüğü"),
+                        ),
+                    ]);
+                }
+                if linux {
+                    v.push(o(
+                        GameOpt::LinuxRuntime,
+                        "package",
+                        t("Runtime", "Çalışma ortamı"),
+                    ));
+                }
+                v.extend(tweaks(&[
+                    Category::Compatibility,
+                    Category::Input,
+                    Category::Other,
+                ]));
+                groups.push((None, v));
+                if prefix {
+                    groups.push((
+                        Some(t("Prefix tools", "Prefix araçları").to_string()),
+                        vec![
+                            o(GameOpt::Winecfg, "settings", "winecfg"),
+                            o(GameOpt::Winetricks, "wrench", "winetricks"),
+                        ],
+                    ));
+                }
+            }
+            GameCat::Starting => groups.push((
+                None,
+                vec![
+                    o(
+                        GameOpt::LaunchOptions,
+                        "terminal",
+                        t("Launch options", "Başlatma seçenekleri"),
+                    ),
+                    o(
+                        GameOpt::PreLaunch,
+                        "arrow-right-to-line",
+                        t("Command before", "Önce çalışacak komut"),
+                    ),
+                    o(
+                        GameOpt::PostLaunch,
+                        "arrow-right-from-line",
+                        t("Command after", "Sonra çalışacak komut"),
+                    ),
+                ],
+            )),
+            GameCat::Game => groups.push((
+                None,
+                vec![
+                    o(GameOpt::Category, "folder", t("Category", "Kategori")),
+                    o(
+                        GameOpt::Hidden,
+                        "eye-off",
+                        t("Hidden in the library", "Kütüphanede gizli"),
+                    ),
+                ],
+            )),
+        }
+        let mut rows = Vec::new();
+        for (title, items) in groups {
+            for (n, (opt, icon, label)) in items.into_iter().enumerate() {
+                let mut row = Row::new(
+                    Kind::Line,
+                    vec![Item::line(
+                        Act::Opt(Opt::Game(opt)),
+                        icon,
+                        label,
+                        self.game_opt_value(opt),
+                    )],
+                );
+                if n == 0 {
+                    row.title = title.clone();
+                }
+                rows.push(row);
+            }
+        }
+        if c == GameCat::Game {
+            rows.push(Row::new(
+                Kind::Line,
+                vec![Item::line(
+                    Act::DesktopPage(g.game_id().to_string()),
+                    "monitor",
+                    t(
+                        "Everything else on the desktop",
+                        "Geri kalan her şey masaüstünde",
+                    ),
+                    Value::None,
+                )],
+            ));
+        }
+        rows
+    }
+
+    pub(super) fn game_cat_name(&self, c: GameCat) -> &'static str {
+        self.game_cat_title(c).1
+    }
+
+    // ---- Arkor's own settings ----
+
+    fn app_cat_title(&self, c: AppCat) -> (&'static str, &'static str) {
+        match c {
+            AppCat::General => ("settings", self.tr("General", "Genel")),
+            AppCat::Looks => ("palette", self.tr("Looks", "Görünüm")),
+            AppCat::Games => ("gamepad-2", self.tr("Games", "Oyunlar")),
+            AppCat::Stores => ("store", self.tr("Stores", "Mağazalar")),
+            AppCat::Proton => ("wine", self.tr("Proton & Wine", "Proton ve Wine")),
+            AppCat::System => ("cpu", self.tr("System", "Sistem")),
+        }
+    }
+
+    /// Arkor's settings: its categories.
+    pub(super) fn setting_rows(&self) -> Vec<Row> {
+        let mut rows: Vec<Row> = AppCat::ALL
+            .into_iter()
+            .map(|c| {
+                let (icon, title) = self.app_cat_title(c);
+                Row::new(
+                    Kind::Line,
+                    vec![Item::line(
+                        Act::Screen(Screen::SettingsCat(c)),
+                        icon,
+                        title,
+                        Value::None,
+                    )],
+                )
+            })
+            .collect();
+        rows.push(Row::new(
+            Kind::Line,
+            vec![Item::line(
+                Act::Desktop,
+                "monitor",
+                self.tr("Leave console mode", "Konsol modundan çık"),
+                Value::None,
+            )],
+        ));
+        rows
+    }
+
+    /// The settings of one of Arkor's categories.
+    pub(super) fn app_cat_rows(&self, c: AppCat) -> Vec<Row> {
+        let g = &self.global;
+        let t = |en, tr| self.tr(en, tr);
+        let line = |opt: Opt, icon, label: &str| {
+            let value = self.opt_value(&opt);
+            Row::new(
+                Kind::Line,
+                vec![Item::line(Act::Opt(opt), icon, label, value)],
+            )
+        };
+        match c {
+            AppCat::General => vec![
+                line(Opt::Language, "languages", t("Language", "Dil")),
+                line(
+                    Opt::Autostart,
+                    "power",
+                    t("Start with the computer", "Bilgisayar açılınca başlat"),
+                ),
+                line(
+                    Opt::StartHere,
+                    "tv",
+                    t("Start in console mode", "Konsol modunda başlat"),
+                ),
+                line(
+                    Opt::Tray,
+                    "panel-bottom",
+                    t("Keep running in the tray", "Kapatınca tepside çalışsın"),
+                ),
+                line(
+                    Opt::Updates,
+                    "refresh-cw",
+                    t("Look for updates", "Güncellemeleri denetle"),
+                ),
+            ],
+            AppCat::Looks => vec![
+                line(Opt::Theme, "moon", t("Theme", "Tema")),
+                line(Opt::Accent, "palette", t("Accent colour", "Vurgu rengi")),
+                line(Opt::Motion, "zap", t("Reduce motion", "Hareketi azalt")),
+                line(Opt::Sounds, "bell", t("Sounds", "Sesler")),
+            ],
+            AppCat::Games => vec![
+                line(
+                    Opt::GlobalHud,
+                    "gauge",
+                    t("MangoHud in every game", "Her oyunda MangoHud"),
+                ),
+                line(
+                    Opt::FullScreen,
+                    "maximize",
+                    t(
+                        "Keep games full screen (gamescope)",
+                        "Oyunları tam ekranda tut (gamescope)",
+                    ),
+                ),
+                line(
+                    Opt::DefaultProton,
+                    "wine",
+                    t("Proton for new games", "Yeni oyunlar için Proton"),
+                ),
+                Row::new(
+                    Kind::Line,
+                    vec![Item::line(
+                        Act::Folder(super::console::FolderFor::Games),
+                        "folder",
+                        t("Games folder", "Oyun klasörü"),
+                        Value::Text(g.games_dir().display().to_string()),
+                    )],
+                ),
+            ],
+            AppCat::Proton => self.console_proton_rows(),
+            AppCat::System => self.console_system_rows(),
+            AppCat::Stores => Shop::ALL
+                .into_iter()
+                .map(|shop| {
+                    let logged = self.shops.logged_in(shop);
+                    let value = match self.shops.account(shop) {
+                        Some(name) if shop == Shop::Steam => name.to_string(),
+                        Some(name) => format!("{name} · {}", t("log out", "çıkış yap")),
+                        None if logged => t("Log out", "Çıkış yap").to_string(),
+                        None => t("Log in", "Giriş yap").to_string(),
+                    };
+                    let act = if shop == Shop::Steam {
+                        Act::Nothing
+                    } else if logged {
+                        Act::Logout(shop)
+                    } else {
+                        Act::Login(shop)
+                    };
+                    Row::new(
+                        Kind::Line,
+                        vec![Item::line(
+                            act,
+                            super::shops_page::shop_icon(shop),
+                            shop.name(),
+                            Value::Text(value),
+                        )],
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    // ---- Any setting, by what it is ----
+
+    /// The choices of a setting as (label, key); `None` for switches and texts.
+    pub(super) fn opt_choices(&self, o: &Opt) -> Option<Vec<(String, String)>> {
+        let s = |v: &str| v.to_string();
+        Some(match o {
+            Opt::Game(g) => return self.game_opt_choices(*g),
+            Opt::Language => super::i18n::LANGUAGES
+                .into_iter()
+                .map(|(_, n)| (s(n), s(n)))
+                .collect(),
+            Opt::Theme => vec![
+                (s(self.tr("Dark", "Koyu")), s("dark")),
+                (s(self.tr("Light", "Açık")), s("light")),
+                (
+                    s(self.tr("Like the desktop", "Masaüstüyle aynı")),
+                    s("system"),
+                ),
+            ],
+            Opt::Accent => super::style::pal::ACCENTS
+                .iter()
+                .map(|(c, en, tr)| (s(self.tr(en, tr)), format!("{c:06x}")))
+                .collect(),
+            Opt::Updates => vec![
+                (s(self.tr("Every day", "Her gün")), s("daily")),
+                (s(self.tr("Every week", "Her hafta")), s("weekly")),
+                (
+                    s(self.tr("Before each game", "Her oyundan önce")),
+                    s("game"),
+                ),
+                (s(self.tr("Never", "Hiçbir zaman")), s("never")),
+            ],
+            Opt::InstallProton => {
+                let auto = match &self.global.defaults.proton {
+                    Some(d) => format!("{} ({d})", self.tr("Default", "Varsayılan")),
+                    None => s(self.tr("Automatic", "Otomatik")),
+                };
+                let mut out = vec![(auto, String::new())];
+                for l in arkor_launch::components::Latest::ALL {
+                    out.push((s(l.dir_name()), s(l.dir_name())));
+                }
+                for (name, _) in &self.tools.protons {
+                    if !out.iter().any(|(_, k)| k == name) {
+                        out.push((name.clone(), name.clone()));
+                    }
+                }
+                out
+            }
+            Opt::DefaultProton => {
+                let mut out = vec![(s(self.tr("Automatic", "Otomatik")), String::new())];
+                for l in arkor_launch::components::Latest::ALL {
+                    out.push((s(l.dir_name()), s(l.dir_name())));
+                }
+                for (name, _) in &self.tools.protons {
+                    if !out.iter().any(|(_, k)| k == name) {
+                        out.push((name.clone(), name.clone()));
+                    }
+                }
+                out
+            }
+            _ => return None,
+        })
+    }
+
+    pub(super) fn opt_key(&self, o: &Opt) -> String {
+        let g = &self.global;
+        match o {
+            Opt::Game(x) => self.game_opt_key(*x),
+            Opt::Language => super::i18n::LANGUAGES
+                .into_iter()
+                .find(|(l, _)| *l == g.language)
+                .map(|(_, n)| n.to_string())
+                .unwrap_or_default(),
+            Opt::Theme => match g.appearance.theme {
+                Theme::Dark => "dark",
+                Theme::Light => "light",
+                Theme::System => "system",
+            }
+            .into(),
+            Opt::Accent => format!(
+                "{:06x}",
+                g.appearance
+                    .accent
+                    .unwrap_or(super::style::pal::DEFAULT_ACCENT)
+            ),
+            Opt::Updates => match g.update_interval() {
+                UpdateInterval::Daily => "daily",
+                UpdateInterval::Weekly => "weekly",
+                UpdateInterval::OnGameStart => "game",
+                UpdateInterval::Never => "never",
+            }
+            .into(),
+            Opt::DefaultProton => g.defaults.proton.clone().unwrap_or_default(),
+            Opt::InstallProton => self
+                .shops
+                .game
+                .as_ref()
+                .and_then(|g| g.proton.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    /// How a setting is shown at the end of its line.
+    pub(super) fn opt_value(&self, o: &Opt) -> Value {
+        let g = &self.global;
+        match o {
+            Opt::Game(x) => self.game_opt_value(*x),
+            Opt::StartHere => Value::Switch(g.start_in_console),
+            Opt::Autostart => Value::Switch(g.autostart),
+            Opt::Tray => Value::Switch(g.tray),
+            Opt::Motion => Value::Switch(g.appearance.reduce_motion),
+            Opt::Sounds => Value::Switch(g.appearance.sounds),
+            Opt::GlobalHud => Value::Switch(g.mangohud.enabled),
+            Opt::FullScreen => Value::Switch(!g.console_windowed),
+            Opt::InstallMenu => Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.menu)),
+            Opt::InstallDesktop => {
+                Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.desktop))
+            }
+            _ => {
+                let key = self.opt_key(o);
+                let label = self
+                    .opt_choices(o)
+                    .and_then(|c| c.into_iter().find(|(_, k)| *k == key).map(|(l, _)| l))
+                    .unwrap_or(key);
+                Value::Choice(label)
+            }
+        }
+    }
+
+    /// Sets a choice of any setting.
+    pub(super) fn opt_set(&mut self, o: &Opt, key: &str) {
+        if *o == Opt::InstallProton {
+            if let Some(g) = self.shops.game.as_mut() {
+                g.proton = Some(key.to_string()).filter(|k| !k.is_empty());
+            }
+            return;
+        }
+        let g = &mut self.global;
+        match o {
+            Opt::Game(x) => return self.game_opt_set(*x, key),
+            Opt::Language => {
+                if let Some((l, _)) = super::i18n::LANGUAGES.into_iter().find(|(_, n)| *n == key) {
+                    g.language = l;
+                    self.fields.clear();
+                }
+            }
+            Opt::Theme => {
+                g.appearance.theme = match key {
+                    "light" => Theme::Light,
+                    "system" => Theme::System,
+                    _ => Theme::Dark,
+                }
+            }
+            Opt::Accent => g.appearance.accent = u32::from_str_radix(key, 16).ok(),
+            Opt::Updates => {
+                g.no_auto_updates = false;
+                g.update_interval = match key {
+                    "weekly" => UpdateInterval::Weekly,
+                    "game" => UpdateInterval::OnGameStart,
+                    "never" => UpdateInterval::Never,
+                    _ => UpdateInterval::Daily,
+                }
+            }
+            Opt::DefaultProton => {
+                g.defaults.proton = Some(key.to_string()).filter(|k| !k.is_empty())
+            }
+            _ => return,
+        }
+        let r = self.global.save();
+        self.report(r);
+    }
+
+    /// Flips a switch of Arkor's settings.
+    pub(super) fn opt_toggle(&mut self, o: &Opt) {
+        if let Some(g) = self.shops.game.as_mut() {
+            match o {
+                Opt::InstallMenu => return g.menu = !g.menu,
+                Opt::InstallDesktop => return g.desktop = !g.desktop,
+                _ => {}
+            }
+        }
+        let g = &mut self.global;
+        match o {
+            Opt::Game(x) => return self.game_opt_toggle(*x),
+            Opt::StartHere => g.start_in_console = !g.start_in_console,
+            Opt::Autostart => {
+                g.autostart = !g.autostart;
+                let on = g.autostart;
+                if let Err(e) = super::tray::set_autostart(on) {
+                    self.status = Some(format!("{e:#}").into());
+                }
+            }
+            Opt::Tray => g.tray = !g.tray,
+            Opt::Motion => g.appearance.reduce_motion = !g.appearance.reduce_motion,
+            Opt::Sounds => g.appearance.sounds = !g.appearance.sounds,
+            Opt::GlobalHud => g.mangohud.enabled = !g.mangohud.enabled,
+            Opt::FullScreen => g.console_windowed = !g.console_windowed,
+            _ => return,
+        }
+        let r = self.global.save();
+        self.report(r);
+    }
+
+    /// Turns a choice one step; `false` when it is no choice.
+    pub(super) fn opt_turn(&mut self, o: &Opt, delta: i32) -> bool {
+        let Some(choices) = self.opt_choices(o) else {
+            return false;
+        };
+        let key = self.opt_key(o);
+        let at = choices.iter().position(|(_, k)| *k == key).unwrap_or(0) as i32;
+        let next = (at + delta).clamp(0, choices.len() as i32 - 1) as usize;
+        if next as i32 != at {
+            let key = choices[next].1.clone();
+            self.opt_set(o, &key);
+        }
+        true
+    }
+}

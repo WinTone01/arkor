@@ -1,6 +1,6 @@
 //! GOG. Games are DRM-free, so once installed Arkor launches them directly (no client).
 //!
-//! Installed games are read from Heroic's `gog_store/installed.json`. What to run comes
+//! Installed games are read from Arkor's and Heroic's `installed.json` (same format). What to run comes
 //! from GOG's own `goggame-<id>.info` in the install dir, so it does not depend on Heroic.
 
 use std::path::{Path, PathBuf};
@@ -39,9 +39,14 @@ fn installed_files() -> Vec<PathBuf> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
-    HEROIC_CONFIGS
-        .iter()
-        .map(|c| home.join(c).join("gog_store/installed.json"))
+    arkor_core::paths::stores_dir()
+        .map(|d| d.join("gog/installed.json"))
+        .into_iter()
+        .chain(
+            HEROIC_CONFIGS
+                .iter()
+                .map(|c| home.join(c).join("gog_store/installed.json")),
+        )
         .filter(|p| p.is_file())
         .collect()
 }

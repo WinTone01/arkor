@@ -9,6 +9,14 @@ pub fn config_dir() -> anyhow::Result<PathBuf> {
         .join("arkor"))
 }
 
+/// `~/.local/share/arkor/stores`: store logins, what is installed and the helper programs.
+/// Not in the config folder, so backups never carry logins.
+pub fn stores_dir() -> anyhow::Result<PathBuf> {
+    Ok(dirs::data_dir()
+        .context("no XDG data dir")?
+        .join("arkor/stores"))
+}
+
 /// `~/.config/arkor/profiles`
 pub fn profiles_dir() -> anyhow::Result<PathBuf> {
     Ok(config_dir()?.join("profiles"))

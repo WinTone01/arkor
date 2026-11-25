@@ -93,18 +93,18 @@ On other distributions, install Rust from [rustup.rs](https://rustup.rs) or your
 
 ```bash
 git clone https://github.com/WinTone01/arkor.git && cd arkor
-cargo build --release -p arkor
+cargo build --release -p arkor -p arkor-login
 ./target/release/arkor
 ```
 
-The window needs Vulkan and `libxkbcommon`, `libxcb`, `wayland`, `fontconfig`. At run time
-Arkor uses `curl`, `tar` and `python` (for umu-run).
+The window needs Vulkan and `libxkbcommon`, `libxcb`, `wayland`, `fontconfig`; the store login window
+needs `webkit2gtk-4.1` (without it, logins open in your browser). At run time Arkor uses `curl`,
+`tar` and `python` (for umu-run).
 
 </details>
 
 **Optional tools** — Arkor works with what you have, and **Downloads → System tools** installs
-what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, `legendary`
-(or Heroic) for Epic games, `vkbasalt`.
+what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, `vkbasalt`.
 
 <a id="uninstall"></a>
 
@@ -150,8 +150,7 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       Finds games already installed in <b>Steam</b>, <b>Heroic</b> (Epic, GOG, sideloaded),
       <b>Lutris</b> and <b>Faugus</b>, imports games from any Wine prefix, or adds a game by
       hand. Covers from the store or picked from <b>SteamGridDB</b> (animated ones too, and
-      set by themselves for new games), categories, search, hidden games, play time and a
-      gamepad-friendly <b>big-screen mode</b>.
+      set by themselves for new games), categories, search, hidden games and play time.
     </td>
     <td width="50%" valign="top">
       <img src="docs/icons/proton.svg" width="40"><br>
@@ -160,6 +159,24 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       Proton-CachyOS, GE-Proton, DW-Proton and Wineland come as <b>Latest</b> builds that keep
       themselves up to date, next to any fixed version you download. <b>EasyAntiCheat</b> and
       <b>BattlEye</b> are installed by Arkor itself.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/icons/store.svg" width="40"><br>
+      <b>Steam, Epic, GOG and Amazon</b><br>
+      Log in in Arkor's own login window (nothing to copy), see every game you own and
+      <b>install</b> it: pause and resume, updates, file checks and removal, single DLC,
+      GOG's Linux versions and languages. Before installing, Arkor says how a game runs on
+      Linux (<b>anti-cheat</b>, <b>ProtonDB</b>, Steam Deck). Logins stay on your computer.
+    </td>
+    <td valign="top">
+      <img src="docs/icons/console.svg" width="40"><br>
+      <b>Console mode</b><br>
+      From boot to game with only a <b>gamepad</b>: your games, the stores and their logins,
+      downloads, Proton builds, disks, settings and the power menu, full screen, with an
+      on-screen keyboard wherever something is typed. Press the pad's middle button or
+      <kbd>F11</kbd>, or let Arkor start in it when the computer does.
     </td>
   </tr>
   <tr>
@@ -227,7 +244,7 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
 | | |
 | --- | --- |
 | **1. Open Arkor** | The first start installs what games need; the sidebar shows the progress. |
-| **2. Add your games** | **Library → Add game**: pick a game Arkor found on your computer, or add an `.exe` (or a Linux game) by hand. |
+| **2. Add your games** | **Library → Add game**: pick a game Arkor found on your computer, or add an `.exe` (or a Linux game) by hand. **Stores** installs your Steam, Epic, GOG and Amazon games. |
 | **3. Play** | A game's page has its settings: *Overview* holds the most used switches, and every feature says in one line what it does. |
 | **4. Set your defaults** | **Settings → Game defaults** sets the Proton for all games and what new games start with. |
 
@@ -243,7 +260,7 @@ Everything in the window is also scriptable:
 
 | Command | What it does |
 | --- | --- |
-| `arkor` | Opens the window (`--tray` starts in the system tray) |
+| `arkor` | Opens the window (`--tray` starts in the system tray, `--console` in console mode) |
 | `arkor open <page or game>` | Opens a page, e.g. `arkor open local:starfall-odyssey#overlay` |
 | `arkor list` · `arkor detect` | Prints the library · games found in other launchers |
 | `arkor add <exe> [--name N] [--linux]` | Adds a game by hand |
@@ -258,7 +275,7 @@ Run `arkor help` for the full list.
 
 **Keyboard:** <kbd>Ctrl</kbd>+<kbd>F</kbd> search · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> play ·
 <kbd>Ctrl</kbd>+<kbd>Tab</kbd> next section · <kbd>Esc</kbd> back ·
-<kbd>F11</kbd> big-screen mode (gamepad).
+<kbd>F11</kbd> console mode (gamepad).
 
 <a id="files"></a>
 
@@ -268,7 +285,8 @@ Run `arkor help` for the full list.
 | --- | --- |
 | Settings, library, game profiles | `~/.config/arkor/` |
 | Launch logs, download queue | `~/.local/state/arkor/` |
-| umu-run, anti-cheat runtimes, downloaded tools | `~/.local/share/arkor/` |
+| umu-run, anti-cheat runtimes, downloaded tools, store logins | `~/.local/share/arkor/` |
+| Games installed from stores | `~/Games/Arkor/Games/` (changeable in Settings) |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam and Faugus) |
 | Wine prefixes of new games | `~/Games/Arkor/Prefixes/` (changeable in Settings) |
 
@@ -279,7 +297,10 @@ Run `arkor help` for the full list.
 Arkor stands on the shoulders of great Linux gaming projects:
 [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) and
 [Faugus Launcher](https://github.com/Faugus/faugus-launcher) (whose umu build and anti-cheat
-packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher),
+packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher)
+(whose way of working with the stores Arkor follows) and the store helpers
+[legendary](https://github.com/legendary-gl/legendary), [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
+and [nile](https://github.com/imLinguin/nile),
 [GOverlay](https://github.com/benjamimgois/goverlay), [MangoHud](https://github.com/flightlessmango/MangoHud),
 [GE-Proton](https://github.com/GloriousEggroll/proton-ge-custom),
 [Proton-CachyOS](https://github.com/CachyOS/proton-cachyos),

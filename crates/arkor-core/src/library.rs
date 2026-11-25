@@ -22,6 +22,8 @@ pub enum GameKind {
     Steam { appid: String },
     /// An Epic game installed with legendary/Heroic, started through legendary.
     Epic { app_name: String },
+    /// An Amazon Games game, started through nile.
+    Amazon { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,10 +32,10 @@ pub struct LibraryGame {
     pub id: String,
     pub name: String,
     pub kind: GameKind,
-    /// Executable for Windows/Linux games; install folder for Steam/Epic (may be empty).
+    /// Executable for Windows/Linux games; install folder for store games (may be empty).
     #[serde(default)]
     pub exe: PathBuf,
-    /// Wine prefix (Windows/Epic). `None` = a per-game prefix in the default prefixes folder.
+    /// Wine prefix (Windows, Epic and Amazon). `None` = a per-game prefix in the default prefixes folder.
     #[serde(default)]
     pub prefix: Option<PathBuf>,
     /// Arguments passed to the game.
@@ -65,7 +67,7 @@ impl LibraryGame {
     pub fn to_game(&self) -> Game {
         let install_dir = match &self.kind {
             GameKind::Windows | GameKind::Linux => self.exe.parent().map(Path::to_path_buf),
-            GameKind::Steam { .. } | GameKind::Epic { .. } => {
+            GameKind::Steam { .. } | GameKind::Epic { .. } | GameKind::Amazon { .. } => {
                 (!self.exe.as_os_str().is_empty()).then(|| self.exe.clone())
             }
         };
@@ -78,7 +80,10 @@ impl LibraryGame {
     }
 
     pub fn needs_prefix(&self) -> bool {
-        matches!(self.kind, GameKind::Windows | GameKind::Epic { .. })
+        matches!(
+            self.kind,
+            GameKind::Windows | GameKind::Epic { .. } | GameKind::Amazon { .. }
+        )
     }
 
     /// The prefix this game runs in: its own setting or the per-game default.

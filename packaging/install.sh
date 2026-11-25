@@ -13,7 +13,7 @@ say() { printf '\033[1;35m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 if [ "${1:-}" = "--uninstall" ]; then
-  rm -f "$bin" "$prefix/share/applications/arkor.desktop"
+  rm -f "$bin" "$bin-login" "$prefix/share/applications/arkor.desktop"
   find "$prefix/share/icons/hicolor" -name 'arkor.png' -o -name 'arkor.svg' 2>/dev/null | xargs -r rm -f
   rm -rf "$prefix/share/licenses/arkor"
   say "Arkor removed (your games, prefixes and settings in ~/.config/arkor are kept)."
@@ -44,10 +44,14 @@ root=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -n1)
 
 say "Installing into $prefix…"
 install -Dm755 "$root/bin/arkor" "$bin.new" && mv -f "$bin.new" "$bin"
+# Store logins in a window of their own (needs WebKitGTK; without it, the browser is used).
+if [ -x "$root/bin/arkor-login" ]; then
+  install -Dm755 "$root/bin/arkor-login" "$bin-login.new" && mv -f "$bin-login.new" "$bin-login"
+fi
 mkdir -p "$prefix/share"
 cp -r "$root/share/." "$prefix/share/"
 # The menu entry starts this copy, even when ~/.local/bin is not on PATH.
-sed -i "s|^Exec=.*|Exec=$bin|" "$prefix/share/applications/arkor.desktop"
+sed -i "s|^Exec=arkor|Exec=$bin|" "$prefix/share/applications/arkor.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$prefix/share/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qtf "$prefix/share/icons/hicolor" 2>/dev/null || true
 

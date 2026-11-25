@@ -1,2 +1,6 @@
 target/
 dist/
+
+# Local work, never part of the source
+brag-output*/
+graphify-out/

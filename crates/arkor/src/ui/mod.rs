@@ -6,7 +6,10 @@ mod app_icon;
 mod app_update;
 mod backdrop;
 mod bench_page;
-mod big_screen;
+mod console;
+mod console_settings;
+mod console_tools;
+mod console_view;
 mod cover_art;
 mod defaults_page;
 mod downloads_page;
@@ -15,15 +18,20 @@ mod enhance;
 mod features;
 mod fields;
 mod game_page;
+mod gamepad;
 mod global_page;
 mod grid;
 mod hud_editor;
 mod i18n;
 mod icons;
 mod intro;
+mod kwin;
+mod loader;
 mod protons;
 mod sgdb_picker;
 mod shell;
+mod shops;
+mod shops_page;
 mod sounds;
 mod splash;
 mod steam_card;
@@ -68,6 +76,7 @@ enum Selection {
     System,
     Add,
     Protons,
+    Shops,
     Game(usize),
 }
 
@@ -112,6 +121,8 @@ pub struct Library {
     bench: bench_page::BenchState,
     /// Games started from this window: game id -> process group id.
     running: HashMap<String, u32>,
+    /// Games being stopped from here (their end is no failure).
+    stopping: std::collections::HashSet<String>,
     /// Window width at the last render (the library grid fits its columns to it).
     viewport_w: f32,
     /// The start-up animation, while it plays (see `intro`).
@@ -129,9 +140,8 @@ pub struct Library {
     search_text: String,
     focus: Option<gpui::FocusHandle>,
     backup_prefixes: bool,
-    big_screen: bool,
-    big_focus: usize,
-    big_cols: usize,
+    /// Console mode (see `console`).
+    console: console::Console,
     restore_pending: Option<std::path::PathBuf>,
     /// umu-launcher, anti-cheat and a first Proton, installed in the background at start.
     required: protons::RequiredState,
@@ -139,6 +149,10 @@ pub struct Library {
     downloads: downloads_page::DownloadsState,
     /// Steam's settings for the selected Steam game.
     steam: steam_card::SteamState,
+    /// Store accounts and their games.
+    shops: shops::ShopsState,
+    /// The window was in use when it was last drawn.
+    window_active: bool,
     /// The SteamGridDB cover picker on the game page, when open.
     sgdb: Option<sgdb_picker::Picker>,
     sgdb_on_open: bool,
@@ -188,6 +202,7 @@ impl Library {
             system: Default::default(),
             bench: Default::default(),
             running: HashMap::new(),
+            stopping: Default::default(),
             viewport_w: 1320.,
             intro: None,
             ticking: false,
@@ -205,6 +220,8 @@ impl Library {
             settings_tab: Default::default(),
             downloads: Default::default(),
             steam: Default::default(),
+            shops: shops::ShopsState::load(),
+            window_active: true,
             sgdb: None,
             sgdb_on_open: false,
             app_update: Default::default(),
@@ -212,9 +229,7 @@ impl Library {
             refocus: false,
             accent_picker: None,
             backup_prefixes: false,
-            big_screen: false,
-            big_focus: 0,
-            big_cols: 1,
+            console: Default::default(),
             restore_pending: None,
             required: Default::default(),
         };
@@ -229,7 +244,9 @@ impl Library {
         let look = &self.global.appearance;
         let moving = window.is_window_active()
             && !look.reduce_motion
-            && (look.backdrop.animated() || cover_art::any_playing());
+            && (self.console.moving()
+                || cover_art::any_playing()
+                || (look.backdrop.animated() && !self.console.on));
         let now = std::time::Instant::now();
         if moving && let Some(last) = self.motion.1 {
             // After a pause it goes on where it was.
@@ -240,14 +257,16 @@ impl Library {
             return;
         }
         self.ticking = true;
-        Self::tick(cx.entity().downgrade(), now, window);
+        // The console's focus and lists follow the hand: those are drawn with every refresh.
+        let every = if self.console.moving() { 0 } else { 13 };
+        Self::tick(cx.entity().downgrade(), now, every, window);
     }
 
     /// Waits for the screen refresh at which the next of those redraws is due.
-    fn tick(this: gpui::WeakEntity<Self>, drawn: std::time::Instant, window: &Window) {
+    fn tick(this: gpui::WeakEntity<Self>, drawn: std::time::Instant, every: u64, window: &Window) {
         window.on_next_frame(move |window, cx| {
-            if drawn.elapsed() < std::time::Duration::from_millis(13) {
-                return Self::tick(this, drawn, window);
+            if drawn.elapsed() < std::time::Duration::from_millis(every) {
+                return Self::tick(this, drawn, every, window);
             }
             let _ = this.update(cx, |this, cx| {
                 this.ticking = false;
@@ -428,6 +447,15 @@ impl Library {
             }
             Some("protons") => Selection::Protons,
             Some("system") => Selection::System,
+            Some("stores") => {
+                use arkor_launch::shops::Shop;
+                match tab.and_then(|t| t.split_once('/')) {
+                    // `stores#gog/1207658924` opens a game, `stores#login/gog` the login.
+                    Some((shop, id)) => self.shops.on_open = Some((shop.into(), id.into())),
+                    None => self.shops.tab = tab.and_then(Shop::from_key),
+                }
+                Selection::Shops
+            }
             Some("library") => Selection::Grid,
             Some("benchmarks") => Selection::Bench,
             Some("downloads") => {
@@ -436,8 +464,8 @@ impl Library {
                 }
                 Selection::Downloads
             }
-            Some("big") => {
-                self.big_screen = true;
+            Some("console" | "big") => {
+                self.console_start(tab);
                 Selection::Grid
             }
             Some(id) => match self.games.iter().position(|g| g.id.to_string() == id) {
@@ -598,6 +626,7 @@ impl Library {
             GameKind::Linux => self.tr("Linux game", "Linux oyunu"),
             GameKind::Steam { .. } => "Steam",
             GameKind::Epic { .. } => "Epic Games",
+            GameKind::Amazon { .. } => "Amazon Games",
         }
     }
 
@@ -611,6 +640,8 @@ impl Library {
             Some(Selection::Bench) => self.render_bench(cx),
             Some(Selection::Downloads) => self.render_downloads(cx),
             Some(Selection::System) => self.render_system(cx),
+            // Its list of games scrolls by itself.
+            Some(Selection::Shops) => return self.render_shops(window, cx),
             Some(Selection::Game(ix)) => {
                 let _ = ix;
                 self.render_game(window, cx)
@@ -638,6 +669,16 @@ impl Library {
                     .when(!wide, |d| d.max_w(px(1280.)).mx_auto()),
             )
             .into_any_element()
+    }
+
+    /// The loading animation with what is happening.
+    pub(crate) fn loading(&self, text: &'static str) -> Div {
+        loader::block(text, None, self.global.appearance.reduce_motion)
+    }
+
+    /// A small loading animation in a line.
+    pub(crate) fn loading_inline(&self, text: &'static str) -> Div {
+        loader::inline(text, self.global.appearance.reduce_motion)
     }
 
     pub(crate) fn header(title: impl Into<SharedString>, subtitle: impl Into<SharedString>) -> Div {
@@ -678,7 +719,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             sync_kit_theme(&global.appearance, cx);
             text_input::bind_keys(cx);
             cx.bind_keys([gpui::KeyBinding::new("ctrl-h", ToggleHidden, None)]);
-            big_screen::bind_keys(cx);
+            console::bind_keys(cx);
             shell::bind_keys(cx);
             let main: std::rc::Rc<std::cell::RefCell<Option<MainWindow>>> = Default::default();
 
@@ -723,7 +764,12 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             }
 
             if !(start_in_tray && has_tray) {
-                *main.borrow_mut() = open_main(open.clone(), cx);
+                // Asked for, or chosen in the settings.
+                let open = match open.clone() {
+                    None if global.start_in_console => Some("console".into()),
+                    open => open,
+                };
+                *main.borrow_mut() = open_main(open, cx);
             }
             // Closing the window ends Arkor unless it is set to stay in the tray.
             cx.on_window_closed(move |cx, _| {
@@ -733,8 +779,8 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             })
             .detach();
 
-            // Gamepad: navigation in big-screen mode; Start opens Arkor if its window is closed.
-            if let Some(rx) = big_screen::start_gamepad() {
+            // Gamepad: console mode; its middle button opens Arkor when its window is closed.
+            if let Some(rx) = gamepad::start() {
                 let executor = cx.background_executor().clone();
                 let main = main.clone();
                 cx.spawn(async move |cx| {
@@ -745,11 +791,11 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
                                 let handle = main.borrow().clone();
                                 let alive = handle.is_some_and(|(h, lib)| {
                                     h.update(cx, |_, window, cx| {
-                                        lib.update(cx, |lib, cx| lib.nav(nav, window, cx))
+                                        lib.update(cx, |lib, cx| lib.pad(nav, window, cx))
                                     })
                                     .is_ok()
                                 });
-                                if !alive && nav == big_screen::Nav::Toggle {
+                                if !alive && nav == gamepad::Nav::Toggle {
                                     *main.borrow_mut() = open_main(None, cx);
                                 }
                             });
@@ -853,9 +899,18 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
         })
         .unwrap_or((1320., 860.));
     let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
+    let console = open
+        .as_deref()
+        .is_some_and(|o| o.starts_with("console") || o == "big");
     let opened = gpui::open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(
+                if console && std::env::var_os("ARKOR_WINDOW_SIZE").is_none() {
+                    WindowBounds::Fullscreen(bounds)
+                } else {
+                    WindowBounds::Windowed(bounds)
+                },
+            ),
             window_min_size: Some(size(px(1000.), px(640.))),
             app_id: Some("arkor".into()),
             ..Default::default()
@@ -867,7 +922,9 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.open(open.as_deref());
                 // Only the real window installs components and runs the download queue
                 // (not the headless tests).
-                lib.start_intro();
+                if !lib.console.on {
+                    lib.start_intro();
+                }
                 // The package version of lsfg-vk takes a moment to look up.
                 let bg = cx.background_executor().clone();
                 cx.spawn(async move |this, cx| {
@@ -878,6 +935,9 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 })
                 .detach();
                 arkor_launch::downloads::start();
+                if lib.console.on {
+                    lib.console_first(cx);
+                }
                 lib.watch_progress(cx);
                 lib.startup_updates(cx);
                 lib

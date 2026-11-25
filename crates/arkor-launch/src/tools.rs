@@ -362,11 +362,6 @@ pub fn tool_status() -> Vec<ToolStatus> {
         check("winetricks", in_path("winetricks"), "winetricks"),
         check("protontricks", in_path("protontricks"), "protontricks"),
         check(
-            "legendary (Epic)",
-            in_path("legendary") || arkor_stores::epic::Legendary::locate().is_some(),
-            "legendary",
-        ),
-        check(
             "game-performance (CachyOS)",
             in_path("game-performance"),
             "cachyos-settings",
@@ -456,10 +451,20 @@ fn gpu_name() -> Option<String> {
 pub fn http_get_bearer(url: &str, token: &str) -> anyhow::Result<String> {
     use anyhow::Context;
     let out = std::process::Command::new("curl")
-        .args(["-fsSL", "--max-time", "60", "-A", "arkor", "-H"])
-        .arg(format!("Authorization: Bearer {token}"))
+        .args(["-fsSL", "--max-time", "60", "-A", "arkor", "-H", "@-"])
         .arg(url)
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                // Not as an argument: those are visible to every process.
+                writeln!(stdin, "Authorization: Bearer {token}")?;
+            }
+            child.wait_with_output()
+        })
         .context("running curl")?;
     anyhow::ensure!(
         out.status.success(),

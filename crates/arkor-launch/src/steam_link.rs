@@ -399,13 +399,30 @@ pub fn sync(appid: &str, id: &GameId, profile: &Profile) -> anyhow::Result<Vec<&
 
 /// Asks Steam to start `appid`. Steam is started on its own (not as a child of Arkor).
 pub fn open_url(url: &str) -> anyhow::Result<()> {
+    steam_command(Some(url))
+}
+
+/// Starts Steam without any window (nothing when it runs already).
+pub fn start_silent() -> anyhow::Result<()> {
+    if steam_running() {
+        return Ok(());
+    }
+    steam_command(None)
+}
+
+fn steam_command(url: Option<&str>) -> anyhow::Result<()> {
     let program = if crate::start::find_in_path("steam").is_some() {
         "steam"
     } else {
         "xdg-open"
     };
     let mut cmd = std::process::Command::new(program);
-    cmd.arg(url)
+    // Steam that is not running yet starts without its window (and its friends and chat
+    // windows), so nothing of it shows over a game or Arkor.
+    if program == "steam" && !steam_running() {
+        cmd.args(["-silent", "-nofriendsui", "-nochatui"]);
+    }
+    cmd.args(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -420,6 +437,21 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     // Reap it in the background (it exits at once when Steam is already running).
     std::thread::spawn(move || child.wait());
     Ok(())
+}
+
+/// Whether Steam runs any game now.
+pub fn any_game_running() -> bool {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|p| {
+            p.file_name()
+                .to_str()
+                .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
+                && std::fs::read(p.path().join("cmdline"))
+                    .is_ok_and(|c| c.split(|b| *b == 0).any(|a| a == b"SteamLaunch"))
+        })
 }
 
 /// Processes Steam started for `appid` (its `reaper SteamLaunch AppId=<appid>`).

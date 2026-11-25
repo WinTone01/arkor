@@ -180,7 +180,10 @@ fn wine_game(_: &Library, g: &LibraryGame) -> bool {
     g.needs_prefix()
 }
 fn proton_choice(_: &Library, g: &LibraryGame) -> bool {
-    matches!(g.kind, GameKind::Windows | GameKind::Epic { .. })
+    matches!(
+        g.kind,
+        GameKind::Windows | GameKind::Epic { .. } | GameKind::Amazon { .. }
+    )
 }
 fn linux_game(_: &Library, g: &LibraryGame) -> bool {
     g.kind == GameKind::Linux
@@ -603,9 +606,9 @@ pub(super) const FEATURES: &[Feature] = &[
 ];
 
 /// Quick toggles on the Overview tab: (key, feature whose settings it opens, toggle).
-type Toggle = fn(&mut Library);
+pub(super) type Toggle = fn(&mut Library);
 
-const QUICK: [(&str, &str, Toggle); 5] = [
+pub(super) const QUICK: [(&str, &str, Toggle); 5] = [
     ("mangohud", "mangohud", |l| {
         l.profile.mangohud.mode = match l.profile.mangohud.mode {
             HudMode::Off => {
@@ -675,7 +678,7 @@ impl Library {
             .all(|w| hay.contains(w))
     }
 
-    fn quick_label(&self, key: &str) -> (&'static str, &'static str, bool) {
+    pub(super) fn quick_label(&self, key: &str) -> (&'static str, &'static str, bool) {
         let p = &self.profile;
         match key {
             "mangohud" => (
@@ -772,7 +775,7 @@ impl Library {
     fn render_summary(&mut self, entry: &LibraryGame, cx: &mut Context<Self>) -> Div {
         let mut rows: Vec<(&'static str, String, GameTab, &'static str)> = Vec::new();
         match &entry.kind {
-            GameKind::Windows | GameKind::Epic { .. } => {
+            GameKind::Windows | GameKind::Epic { .. } | GameKind::Amazon { .. } => {
                 let proton = match &self.profile.proton {
                     Some(p) => p.clone(),
                     None => match &self.global.defaults.proton {

@@ -2,8 +2,10 @@
 //!
 //! Each downloadable thing has a key: a layer id (`mako`, `afmf`, `vknemu`, `vksumi`),
 //! a mod (`optiscaler`, `dlss-enabler`, `reshade`, `streamline`, a bundle key), a "Latest"
-//! Proton (`latest:<name>`) or a component (`umu`, `runtime`, `anticheat`). `run` installs
-//! or updates one; the queue runs them one at a time on a worker thread, survives restarts
+//! Proton (`latest:<name>`), a component (`umu`, `runtime`, `anticheat`) or a store game
+//! (`game:<store>:<id>`, `repair:<store>:<id>`). `run` installs
+//! or updates one; the queue runs them one after another (store games on a worker of their
+//! own, so small downloads do not wait behind them), survives restarts
 //! (`~/.local/state/arkor/queue.toml`) and can pause (the partial file is kept and
 //! continued), resume, retry and cancel. `needs` lists what a game's settings use but is
 //! missing, so it can be fetched as soon as it is switched on, and again before launch.
@@ -17,10 +19,13 @@ use arkor_core::Profile;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{self, Latest};
-use crate::{bundles, dlss_enabler, layers, optiscaler, progress, reshade, streamline};
+use crate::{bundles, dlss_enabler, layers, optiscaler, progress, reshade, shops, streamline};
 
 /// A display name for `key`.
 pub fn label(key: &str) -> String {
+    if let Some(title) = shops::label(key) {
+        return title;
+    }
     if let Some(name) = key.strip_prefix("latest:") {
         return name.to_string();
     }
@@ -45,6 +50,9 @@ pub fn label(key: &str) -> String {
 
 /// Installs or updates `key` to its newest release; returns a short report. Blocking.
 pub fn run(key: &str) -> anyhow::Result<String> {
+    if shops::parse_key(key).is_some() {
+        return shops::run(key);
+    }
     if let Some(name) = key.strip_prefix("latest:") {
         let l = Latest::from_value(name).with_context(|| format!("unknown Proton {name}"))?;
         components::ensure_latest(l, true)?;
@@ -273,6 +281,13 @@ pub fn check_updates() -> Vec<Update> {
             );
         }
     }
+    out.extend(shops::updates().into_iter().map(|(g, _)| Update {
+        key: shops::key(g.shop, &g.id),
+        label: g.title,
+        // Stores name builds by numbers that say nothing.
+        installed: String::new(),
+        latest: String::new(),
+    }));
     out
 }
 
@@ -366,7 +381,13 @@ pub fn resume(key: &str) {
 /// Removes `key` from the queue, stopping it when it runs.
 pub fn cancel(key: &str) {
     with(|q| q.retain(|i| i.key != key));
-    progress::stop(key);
+    if progress::running(key) {
+        // The worker cleans up when the job has ended.
+        progress::stop(key);
+    } else if shops::parse_key(key).is_some() {
+        let key = key.to_string();
+        std::thread::spawn(move || shops::cancelled(&key));
+    }
 }
 
 /// The end of one queue item.
@@ -423,19 +444,26 @@ pub fn start() {
         {
             with(|q| *q = saved.item);
         }
-        let _ = std::thread::Builder::new()
-            .name("arkor-downloads".into())
-            .spawn(worker);
+        // Store games take hours: the small downloads must not wait behind them.
+        for games in [false, true] {
+            let _ = std::thread::Builder::new()
+                .name("arkor-downloads".into())
+                .spawn(move || worker(games));
+        }
     });
 }
 
-fn worker() {
+fn worker(games: bool) {
     loop {
         let next = QUEUE
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .find(|i| i.state == State::Queued && !progress::running(&i.key))
+            .find(|i| {
+                i.state == State::Queued
+                    && shops::parse_key(&i.key).is_some() == games
+                    && !progress::running(&i.key)
+            })
             .cloned();
         let Some(item) = next else {
             std::thread::sleep(std::time::Duration::from_millis(400));
@@ -445,6 +473,7 @@ fn worker() {
             let _job = progress::job(&item.key, &item.label);
             run(&item.key)
         };
+        let mut cancelled = false;
         let report = with(|q| {
             let pos = q.iter().position(|i| i.key == item.key);
             match (&result, pos) {
@@ -455,7 +484,10 @@ fn worker() {
                 (Ok(msg), None) => Some((true, msg.clone())),
                 // Paused or cancelled meanwhile: nothing to report.
                 (Err(_), Some(pos)) if q[pos].state == State::Paused => None,
-                (Err(_), None) => None,
+                (Err(_), None) => {
+                    cancelled = true;
+                    None
+                }
                 (Err(e), Some(pos)) => {
                     let msg = format!("{e:#}");
                     q[pos].state = State::Failed(msg.clone());
@@ -463,6 +495,9 @@ fn worker() {
                 }
             }
         });
+        if cancelled {
+            shops::cancelled(&item.key);
+        }
         let finished = report.map(|(ok, report)| Finished {
             key: item.key.clone(),
             label: item.label.clone(),

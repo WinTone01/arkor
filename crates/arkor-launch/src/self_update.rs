@@ -54,6 +54,17 @@ pub fn is_newer(a: &str, b: &str) -> bool {
 
 /// The newest release, when it is newer than the running version. Blocking.
 pub fn check() -> anyhow::Result<Option<Release>> {
+    let release = read_release(API)?;
+    // ARKOR_UPDATE_FORCE=1 takes the latest release even when it is not newer (to try the
+    // update path).
+    let force = std::env::var_os("ARKOR_UPDATE_FORCE").is_some_and(|v| v == "1");
+    if !force && !is_newer(&release.version, current_version()) {
+        return Ok(None);
+    }
+    Ok(Some(release))
+}
+
+fn read_release(api: &str) -> anyhow::Result<Release> {
     #[derive(Deserialize)]
     struct Gh {
         tag_name: String,
@@ -68,25 +79,19 @@ pub fn check() -> anyhow::Result<Option<Release>> {
         browser_download_url: String,
     }
     let gh: Gh =
-        serde_json::from_str(&crate::tools::http_get(API)?).context("unexpected GitHub release")?;
+        serde_json::from_str(&crate::tools::http_get(api)?).context("unexpected GitHub release")?;
     let version = gh.tag_name.trim_start_matches('v').to_string();
-    // ARKOR_UPDATE_FORCE=1 takes the latest release even when it is not newer (to try the
-    // update path).
-    let force = std::env::var_os("ARKOR_UPDATE_FORCE").is_some_and(|v| v == "1");
-    if !force && !is_newer(&version, current_version()) {
-        return Ok(None);
-    }
     let asset = gh
         .assets
         .into_iter()
         .find(|a| a.name.ends_with("x86_64-linux.tar.gz"))
         .context("the release has no Linux build")?;
-    Ok(Some(Release {
+    Ok(Release {
         version,
         url: asset.browser_download_url,
         size: asset.size,
         notes: gh.body,
-    }))
+    })
 }
 
 /// Where the running program lives, if Arkor may replace it there (a user-writable
@@ -110,6 +115,42 @@ pub fn updatable_exe() -> anyhow::Result<PathBuf> {
 /// to start. The running process keeps working until it exits. Blocking.
 pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
     let exe = updatable_exe()?;
+    let (work, root) = unpack(release)?;
+    replace_file(&root.join("bin/arkor"), &exe, 0o755)?;
+    // The login window program, when the release has it.
+    let login = root.join("bin/arkor-login");
+    if login.is_file()
+        && let Some(dir) = exe.parent()
+    {
+        let _ = replace_file(&login, &dir.join("arkor-login"), 0o755);
+    }
+    refresh_share(&root, &exe);
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(exe)
+}
+
+/// An updater older than the login window (0.4) put only `arkor` in place: brings
+/// `arkor-login` (and the menu entry) of the running version. Blocking.
+pub fn add_login_window() -> anyhow::Result<()> {
+    let exe = updatable_exe()?;
+    let dir = exe.parent().context("program folder")?;
+    let release = read_release(&format!(
+        "https://api.github.com/repos/WinTone01/arkor/releases/tags/v{}",
+        current_version()
+    ))?;
+    let (work, root) = unpack(&release)?;
+    replace_file(
+        &root.join("bin/arkor-login"),
+        &dir.join("arkor-login"),
+        0o755,
+    )?;
+    refresh_share(&root, &exe);
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(())
+}
+
+/// Downloads a release: the folder to remove afterwards, and the one holding `bin/arkor`.
+fn unpack(release: &Release) -> anyhow::Result<(PathBuf, PathBuf)> {
     let work = dirs::cache_dir()
         .context("no cache dir")?
         .join("arkor/update");
@@ -126,8 +167,11 @@ pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
         .context("running tar")?;
     anyhow::ensure!(status.success(), "could not unpack the update");
     let root = find_root(&work).context("the update has no bin/arkor")?;
-    replace_file(&root.join("bin/arkor"), &exe, 0o755)?;
-    // Desktop entry and icons next to a ~/.local install.
+    Ok((work, root))
+}
+
+/// Desktop entry and icons next to a ~/.local install.
+fn refresh_share(root: &Path, exe: &Path) {
     if let Some(prefix) = exe.parent().and_then(Path::parent)
         && prefix.join("share").is_dir()
         && dirs::home_dir().is_some_and(|h| prefix.starts_with(h))
@@ -136,19 +180,18 @@ pub fn install(release: &Release) -> anyhow::Result<PathBuf> {
         // The packaged entry runs `arkor` from PATH; a ~/.local install points at itself.
         let entry = prefix.join("share/applications/arkor.desktop");
         if let Ok(text) = std::fs::read_to_string(&entry) {
-            let _ = std::fs::write(&entry, desktop_exec(&text, &exe));
+            let _ = std::fs::write(&entry, desktop_exec(&text, exe));
         }
     }
-    let _ = std::fs::remove_dir_all(&work);
-    Ok(exe)
 }
 
 /// The desktop entry with `Exec=` pointing at `exe`.
 fn desktop_exec(text: &str, exe: &Path) -> String {
     text.lines()
         .map(|l| {
-            if l.starts_with("Exec=") {
-                format!("Exec={}", exe.display())
+            // What follows (an action's options) stays.
+            if let Some(rest) = l.strip_prefix("Exec=arkor") {
+                format!("Exec={}{rest}", exe.display())
             } else {
                 l.to_string()
             }
@@ -209,9 +252,10 @@ mod tests {
 
     #[test]
     fn desktop_entry_points_at_the_install() {
-        let text = "[Desktop Entry]\nName=Arkor\nExec=arkor\nIcon=arkor\n";
+        let text = "[Desktop Entry]\nName=Arkor\nExec=arkor\nIcon=arkor\n[Desktop Action c]\nExec=arkor --console\n";
         let out = desktop_exec(text, Path::new("/home/u/.local/bin/arkor"));
         assert!(out.contains("Exec=/home/u/.local/bin/arkor\n") && out.contains("Icon=arkor"));
+        assert!(out.contains("Exec=/home/u/.local/bin/arkor --console\n"));
     }
 
     #[test]

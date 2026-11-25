@@ -43,7 +43,8 @@ impl Library {
     /// CLI) in its own process group, logging its output; reports a failure when it ends badly.
     pub(super) fn play(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else { return };
-        let (mut child, log) = match spawn_launch(&id) {
+        let screen = self.console.on.then_some(self.console.screen_px);
+        let (mut child, log) = match spawn_launch(&id, screen) {
             Ok(c) => c,
             Err(e) => {
                 self.status = Some(format!("{}: {e:#}", self.t().launch_failed).into());
@@ -56,8 +57,9 @@ impl Library {
         self.running.insert(id.to_string(), child.id());
         self.status = Some(self.t().launching.into());
         cx.notify();
-        let close = self.global.close_on_launch;
-        if self.global.splash {
+        // Console mode shows the start itself and is there again after the game.
+        let close = self.global.close_on_launch && !self.console.on;
+        if self.global.splash && !self.console.on {
             let name = self.entry().map(|g| g.name.clone()).unwrap_or_default();
             let subtitle = self.t().launching;
             super::splash::show(name, subtitle, cx, move |cx| {
@@ -70,16 +72,30 @@ impl Library {
             return;
         }
         let bg = cx.background_executor().clone();
+        let started = std::time::Instant::now();
+        let name = self.entry().map(|g| g.name.clone()).unwrap_or_default();
         cx.spawn(async move |this, cx| {
             let status = bg.spawn(async move { child.wait() }).await;
             let failure = match status {
                 Ok(s) if s.success() => None,
-                Ok(s) => Some(last_log_line(&log).unwrap_or_else(|| s.to_string())),
+                // Played for a while: closing it is no failure, whatever the game's exit code
+                // (many end with one, or are ended by a signal when closed).
+                Ok(_) if started.elapsed() > std::time::Duration::from_secs(20) => None,
+                Ok(s) => Some(error_line(&log).unwrap_or_else(|| s.to_string())),
                 Err(e) => Some(e.to_string()),
             };
             // The window may have been closed meanwhile; then there is nothing to update.
             let _ = this.update(cx, |this, cx| {
+                // Stopped from here: not a failure either.
+                let failure = failure.filter(|_| !this.stopping.remove(&id.to_string()));
                 this.running.remove(&id.to_string());
+                // Console mode comes back to the front when the game ends.
+                this.console.come_back = this.console.on;
+                if let Some(why) = &failure
+                    && this.console.on
+                {
+                    this.console_failed(&id, &name, why, &log);
+                }
                 this.sound(if failure.is_some() {
                     super::sounds::Sound::Error
                 } else {
@@ -97,6 +113,7 @@ impl Library {
     /// Stops a game started here: SIGTERM to its process group, then `wineserver -k`.
     pub(super) fn stop(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else { return };
+        self.stopping.insert(id.to_string());
         if let Some(pgid) = self.running.get(&id.to_string()) {
             // SAFETY: plain syscall; a negative pid addresses the whole process group.
             unsafe { libc::kill(-(*pgid as i32), libc::SIGTERM) };
@@ -122,7 +139,7 @@ impl Library {
         }
     }
 
-    fn run_tool(&mut self, tool: PrefixTool, label: String, cx: &mut Context<Self>) {
+    pub(super) fn run_tool(&mut self, tool: PrefixTool, label: String, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else { return };
         // Installers add programs to the prefix; compare before/after to offer them.
         let watch = matches!(tool, PrefixTool::Run(_))
@@ -468,6 +485,21 @@ impl Library {
             GameKind::Epic { app_name } => {
                 card = card.child(widgets::setting_row("Epic", app_name.clone(), div()));
             }
+            GameKind::Amazon { id } => {
+                card = card.child(widgets::setting_row("Amazon", id.clone(), div()));
+            }
+        }
+        // Installed by Arkor: its files can be checked or removed.
+        if let Some((shop, id)) = self.entry_shop(&entry) {
+            card = card.child(widgets::divider()).child(widgets::setting_row(
+                shop.name(),
+                "",
+                style::button("store-manage", self.tr("Manage", "Yönet"), false)
+                    .child(style::icon("store", 13., pal::muted()))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.shop_open_game(shop, &id, cx)),
+                    ),
+            ));
         }
         Some(card)
     }
@@ -857,9 +889,10 @@ impl Library {
                     ),
             ));
         if self.game_ui.umu_loading {
-            card = card.child(widgets::label(
-                self.tr("Searching umu-database…", "umu-database'de aranıyor…"),
-            ));
+            card =
+                card.child(self.loading_inline(
+                    self.tr("Searching umu-database…", "umu-database'de aranıyor…"),
+                ));
         }
         match &self.game_ui.umu_hits {
             Some(Ok(hits)) if hits.is_empty() => {
@@ -1313,14 +1346,23 @@ fn code_box(text: String) -> Div {
 }
 
 /// Spawns `arkor launch <id>` in its own process group, output going to the game's log.
-fn spawn_launch(id: &GameId) -> anyhow::Result<(std::process::Child, std::path::PathBuf)> {
+fn spawn_launch(
+    id: &GameId,
+    console: Option<(u32, u32)>,
+) -> anyhow::Result<(std::process::Child, std::path::PathBuf)> {
     use std::os::unix::process::CommandExt;
     let log = paths::launch_log(id)?;
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let out = std::fs::File::create(&log)?;
-    let child = std::process::Command::new(std::env::current_exe()?)
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    if let Some((w, h)) = console.filter(|(w, h)| *w > 0 && *h > 0) {
+        // Started from console mode: kept full screen (see `arkor_launch::run`).
+        cmd.env("ARKOR_CONSOLE_SIZE", format!("{w}x{h}"));
+        arkor_launch::note_console_launch(id, (w, h));
+    }
+    let child = cmd
         .arg("launch")
         .arg(id.to_string())
         // Set for Arkor's own window only (see `ui::run`).
@@ -1334,14 +1376,35 @@ fn spawn_launch(id: &GameId) -> anyhow::Result<(std::process::Child, std::path::
     Ok((child, log))
 }
 
-/// Last non-empty line of a launch log: usually the error that ended it.
-fn last_log_line(path: &std::path::Path) -> Option<String> {
+/// The line of a launch log that says what went wrong: the last error, else the last line.
+pub(super) fn error_line(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
-    text.lines()
-        .rev()
+    let lines: Vec<&str> = text
+        .lines()
         .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(str::to_owned)
+        .filter(|l| !l.is_empty())
+        .collect();
+    lines
+        .iter()
+        .rev()
+        .find(|l| {
+            let l = l.to_lowercase();
+            l.starts_with("arkor:") || l.contains("error") || l.contains("failed")
+        })
+        .or(lines.last())
+        .map(|l| l.to_string())
+}
+
+/// The last lines of a launch log.
+pub(super) fn log_tail(path: &std::path::Path, n: usize) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    lines[lines.len().saturating_sub(n)..].to_vec()
 }
 
 fn which(name: &str) -> bool {
@@ -1352,7 +1415,7 @@ fn which(name: &str) -> bool {
 /// Starts a library game outside the window (tray menu): own process group, output to its log.
 pub(super) fn launch_detached(id: &str) {
     if let Ok(id) = id.parse::<GameId>() {
-        let _ = spawn_launch(&id);
+        let _ = spawn_launch(&id, None);
     }
 }
 

@@ -16,8 +16,18 @@ use gpui::{App, Bounds, Canvas, Pixels, RenderImage, Window, canvas, point, px, 
 use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
 use image::{AnimationDecoder, Frame, ImageFormat, RgbaImage};
 
-/// Wider pictures are scaled down to this while decoding.
+/// Wider covers are scaled down to this while decoding.
 const MAX_WIDTH: u32 = 640;
+
+/// How a picture is decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Size {
+    Cover,
+    /// Filling the screen.
+    Wide,
+    /// Only its colours: tiny and blurred, to be stretched over the screen.
+    Blur,
+}
 /// Frames decoded ahead of the one shown.
 const AHEAD: usize = 3;
 /// A cover that was not drawn for this long stops decoding.
@@ -27,10 +37,11 @@ const MAX_PLAYING: usize = 16;
 
 static PLAYING: AtomicUsize = AtomicUsize::new(0);
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
-static ART: LazyLock<Mutex<HashMap<PathBuf, Arc<Art>>>> = LazyLock::new(Default::default);
+type Pictures = HashMap<(PathBuf, Size), Arc<Art>>;
+static ART: LazyLock<Mutex<Pictures>> = LazyLock::new(Default::default);
 /// First frames are decoded by a few threads, in the order they are asked for.
 /// A first frame to decode, and where it goes.
-type Job = (PathBuf, Arc<Art>);
+type Job = (PathBuf, Size, Arc<Art>);
 static LOADER: LazyLock<Mutex<Sender<Job>>> = LazyLock::new(|| {
     let (tx, rx) = channel::<Job>();
     let rx = Arc::new(Mutex::new(rx));
@@ -39,8 +50,8 @@ static LOADER: LazyLock<Mutex<Sender<Job>>> = LazyLock::new(|| {
         std::thread::spawn(move || {
             loop {
                 let job = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                let Ok((path, art)) = job else { return };
-                let first = first_frame(&path);
+                let Ok((path, size, art)) = job else { return };
+                let first = first_frame(&path, size);
                 let mut inner = art.lock();
                 match first {
                     Some((image, animated)) => {
@@ -87,30 +98,86 @@ impl Art {
     }
 }
 
-fn art(path: &Path) -> Arc<Art> {
+fn art(path: &Path, size: Size) -> Arc<Art> {
     let mut map = ART.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(a) = map.get(path) {
+    let key = (path.to_path_buf(), size);
+    if let Some(a) = map.get(&key) {
         return a.clone();
     }
     let a = Arc::new(Art::default());
-    map.insert(path.to_path_buf(), a.clone());
-    let _ = LOADER
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .send((path.to_path_buf(), a.clone()));
+    map.insert(key, a.clone());
+    let _ = LOADER.lock().unwrap_or_else(|e| e.into_inner()).send((
+        path.to_path_buf(),
+        size,
+        a.clone(),
+    ));
     a
 }
 
 /// Starts loading `path` and tells whether its picture is there (or will never be).
 pub(super) fn ready(path: &Path) -> bool {
-    let a = art(path);
+    let a = art(path, Size::Cover);
     let inner = a.lock();
     inner.still.is_some() || inner.failed
 }
 
 /// The file at `path` was replaced or removed: read it again.
 pub(super) fn forget(path: &Path) {
-    ART.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
+    ART.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(p, _), _| p != path);
+}
+
+/// When more than `keep` pictures of files under `folder` are loaded, drops those that were
+/// not drawn for some seconds (a long store list would otherwise keep them all).
+pub(super) fn trim(folder: &str, keep: usize, window: &mut Window) {
+    let now = START.elapsed().as_millis() as u64;
+    let mut map = ART.lock().unwrap_or_else(|e| e.into_inner());
+    let mine = |(p, s): &(PathBuf, Size)| *s == Size::Cover && p.to_string_lossy().contains(folder);
+    if map.keys().filter(|k| mine(k)).count() <= keep {
+        return;
+    }
+    let mut gone = Vec::new();
+    map.retain(|key, art| {
+        let old = now.saturating_sub(art.drawn.load(Ordering::Relaxed)) > 4000;
+        if !old || !mine(key) {
+            return true;
+        }
+        let inner = art.lock();
+        if inner.playing || inner.still.is_none() {
+            return true;
+        }
+        gone.extend(inner.still.clone());
+        gone.extend(inner.current.clone());
+        gone.extend(inner.last.clone());
+        false
+    });
+    drop(map);
+    for image in gone {
+        let _ = window.drop_image(image);
+    }
+}
+
+/// Drops screen-filling pictures that are no longer shown (each takes some megabytes).
+pub(super) fn trim_wide(window: &mut Window) {
+    let now = START.elapsed().as_millis() as u64;
+    let mut gone = Vec::new();
+    ART.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(_, size), art| {
+            let old = now.saturating_sub(art.drawn.load(Ordering::Relaxed)) > 8000;
+            if *size != Size::Wide || !old {
+                return true;
+            }
+            match &art.lock().still {
+                Some(still) => gone.push(still.clone()),
+                None => return true,
+            }
+            false
+        });
+    for image in gone {
+        let _ = window.drop_image(image);
+    }
 }
 
 /// Whether any cover is moving (the window then needs to redraw).
@@ -119,15 +186,38 @@ pub(super) fn any_playing() -> bool {
 }
 
 /// Scales down and turns RGBA into the BGRA gpui draws.
-fn to_image(mut buf: RgbaImage) -> Arc<RenderImage> {
-    if buf.width() > MAX_WIDTH {
-        let h = (u64::from(buf.height()) * u64::from(MAX_WIDTH) / u64::from(buf.width())) as u32;
-        buf = image::imageops::thumbnail(&buf, MAX_WIDTH, h.max(1));
+fn to_image(mut buf: RgbaImage, size: Size) -> Arc<RenderImage> {
+    let max = match size {
+        Size::Cover => MAX_WIDTH,
+        Size::Wide => 1920,
+        Size::Blur => 64,
+    };
+    if buf.width() > max {
+        let h = (u64::from(buf.height()) * u64::from(max) / u64::from(buf.width())) as u32;
+        buf = image::imageops::thumbnail(&buf, max, h.max(1));
+    }
+    if size == Size::Blur {
+        buf = image::imageops::blur(&buf, 4.);
     }
     for p in buf.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     Arc::new(RenderImage::new(vec![Frame::new(buf)]))
+}
+
+/// An animation frame made opaque: some animated covers leave parts of their frames see-through,
+/// and whatever is behind the cover (a glow, the background) then shows in the picture.
+fn opaque(mut buf: RgbaImage) -> RgbaImage {
+    for p in buf.as_chunks_mut::<4>().0 {
+        let a = u16::from(p[3]);
+        if a < 255 {
+            for c in &mut p[..3] {
+                *c = (u16::from(*c) * a / 255) as u8;
+            }
+            p[3] = 255;
+        }
+    }
+    buf
 }
 
 /// The frames of an animation, decoded as they are asked for; `None` for a still picture.
@@ -143,15 +233,15 @@ fn frames<'a>(bytes: &'a [u8], format: ImageFormat) -> Option<image::Frames<'a>>
 }
 
 /// The picture to show first, and whether more frames follow.
-fn first_frame(path: &Path) -> Option<(Arc<RenderImage>, bool)> {
+fn first_frame(path: &Path, size: Size) -> Option<(Arc<RenderImage>, bool)> {
     let bytes = std::fs::read(path).ok()?;
     let format = image::guess_format(&bytes).ok()?;
     if let Some(mut frames) = frames(&bytes, format) {
         let first = frames.next()?.ok()?;
-        return Some((to_image(first.into_buffer()), true));
+        return Some((to_image(opaque(first.into_buffer()), size), true));
     }
     let picture = image::load_from_memory_with_format(&bytes, format).ok()?;
-    Some((to_image(picture.into_rgba8()), false))
+    Some((to_image(picture.into_rgba8(), size), false))
 }
 
 /// Decodes frames into the queue until the cover is no longer drawn.
@@ -188,7 +278,7 @@ fn play(path: PathBuf, art: Arc<Art>) {
                 0..=10 => 100,
                 ms => ms,
             };
-            let image = to_image(frame.into_buffer());
+            let image = to_image(opaque(frame.into_buffer()), Size::Cover);
             loop {
                 if art.idle() {
                     return;
@@ -261,7 +351,9 @@ pub(super) fn paint(
     if !window.content_mask().bounds.intersects(&bounds) {
         return;
     }
-    let art = art(path);
+    let art = art(path, Size::Cover);
+    art.drawn
+        .store(START.elapsed().as_millis() as u64, Ordering::Relaxed);
     let mut inner = art.lock();
     let Some(still) = inner.still.clone() else {
         if !inner.failed {
@@ -271,8 +363,6 @@ pub(super) fn paint(
     };
     let mut done = Vec::new();
     if inner.animated && animate {
-        art.drawn
-            .store(START.elapsed().as_millis() as u64, Ordering::Relaxed);
         if !inner.playing && PLAYING.load(Ordering::Relaxed) < MAX_PLAYING {
             inner.playing = true;
             PLAYING.fetch_add(1, Ordering::Relaxed);
@@ -296,6 +386,38 @@ pub(super) fn paint(
         cover_fit(bounds, px_size.width.0 as f32, px_size.height.0 as f32)
     };
     let _ = window.paint_image(bounds, place, px(radius).into(), image, 0, false);
+}
+
+/// A picture behind everything: fills its element, still.
+pub(super) fn backdrop(path: PathBuf, size: Size, radius: f32) -> Canvas<()> {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window: &mut Window, _: &mut App| {
+            let art = art(&path, size);
+            art.drawn
+                .store(START.elapsed().as_millis() as u64, Ordering::Relaxed);
+            let inner = art.lock();
+            let Some(image) = inner.still.clone() else {
+                if !inner.failed {
+                    window.request_animation_frame();
+                }
+                return;
+            };
+            drop(inner);
+            let s = image.size(0);
+            let place = cover_fit(bounds, s.width.0 as f32, s.height.0 as f32);
+            let _ = window.paint_image(bounds, place, px(radius).into(), image, 0, false);
+        },
+    )
+}
+
+/// Whether the backdrop `path` is decoded (or never will be); starts loading it.
+pub(super) fn backdrop_ready(path: &Path, size: Size) -> bool {
+    let a = art(path, size);
+    a.drawn
+        .store(START.elapsed().as_millis() as u64, Ordering::Relaxed);
+    let inner = a.lock();
+    inner.still.is_some() || inner.failed
 }
 
 /// A cover as an element; give it a size.
@@ -324,7 +446,7 @@ mod tests {
 
     #[test]
     fn frames_advance_in_rhythm_and_free_the_old_ones() {
-        let frame = || to_image(RgbaImage::new(2, 3));
+        let frame = || to_image(RgbaImage::new(2, 3), Size::Cover);
         let ms = Duration::from_millis;
         let mut inner = Inner::default();
         for _ in 0..3 {
@@ -355,9 +477,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("cover.png");
         RgbaImage::new(1200, 1800).save(&path).unwrap();
-        let (image, animated) = first_frame(&path).unwrap();
+        let (image, animated) = first_frame(&path, Size::Cover).unwrap();
         assert!(!animated);
         assert_eq!(image.size(0).width.0, MAX_WIDTH as i32, "scaled down");
-        assert!(first_frame(&tmp.path().join("none.png")).is_none());
+        assert!(first_frame(&tmp.path().join("none.png"), Size::Cover).is_none());
     }
 }

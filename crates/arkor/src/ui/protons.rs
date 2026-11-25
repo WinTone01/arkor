@@ -30,10 +30,10 @@ pub(super) enum Component {
 pub(super) struct ProtonsState {
     /// Auto-updated component being installed or checked.
     updating: Option<Component>,
-    variant: Variant,
-    releases: HashMap<&'static str, Result<Vec<Release>, String>>,
-    loading: bool,
-    installing: Option<String>,
+    pub(super) variant: Variant,
+    pub(super) releases: HashMap<&'static str, Result<Vec<Release>, String>>,
+    pub(super) loading: bool,
+    pub(super) installing: Option<String>,
 }
 
 impl Default for ProtonsState {
@@ -49,7 +49,7 @@ impl Default for ProtonsState {
 }
 
 impl Library {
-    fn load_releases(&mut self, variant: Variant, cx: &mut Context<Self>) {
+    pub(super) fn load_releases(&mut self, variant: Variant, cx: &mut Context<Self>) {
         self.protons.loading = true;
         cx.notify();
         let bg = cx.background_executor().clone();
@@ -67,7 +67,7 @@ impl Library {
         .detach();
     }
 
-    fn install_proton(&mut self, release: Release, cx: &mut Context<Self>) {
+    pub(super) fn install_proton(&mut self, release: Release, cx: &mut Context<Self>) {
         self.protons.installing = Some(release.tag.clone());
         cx.notify();
         let bg = cx.background_executor().clone();
@@ -340,9 +340,8 @@ impl Library {
                     ));
                 let mut versions = div().flex().flex_col().gap_1();
                 if self.protons.loading {
-                    versions = versions.child(widgets::label(
-                        self.tr("Loading releases…", "Sürümler yükleniyor…"),
-                    ));
+                    versions = versions
+                        .child(self.loading(self.tr("Loading releases…", "Sürümler yükleniyor…")));
                 }
                 match self.protons.releases.get(variant.label()) {
                     Some(Err(e)) => versions = versions.child(widgets::label(format!("⚠ {e}"))),

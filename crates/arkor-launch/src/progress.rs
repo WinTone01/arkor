@@ -107,6 +107,18 @@ pub fn running(key: &str) -> bool {
         .any(|e| e.key == key)
 }
 
+/// Whether this thread's job was asked to stop.
+pub(crate) fn stop_requested() -> bool {
+    let Some(key) = CURRENT.with(|c| c.borrow().clone()) else {
+        return false;
+    };
+    ENTRIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|e| e.key == key && e.stop)
+}
+
 /// Listed while alive; removes its entry when dropped.
 pub struct Job {
     key: String,
@@ -200,6 +212,20 @@ impl Transfer {
                 }
             }
         }
+    }
+
+    /// Reports the state as another program measured it; `false` when the job was asked to
+    /// stop. `speed` in bytes per second.
+    pub(crate) fn report(&self, done: u64, total: Option<u64>, speed: f64) -> bool {
+        with(|v| match v.iter_mut().find(|e| e.key == self.key) {
+            Some(e) => {
+                e.done = done;
+                e.total = total.or(e.total);
+                e.speed = speed;
+                !e.stop
+            }
+            None => true,
+        })
     }
 
     /// Reports `done` bytes; `false` when the job was asked to stop.

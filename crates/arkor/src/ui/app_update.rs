@@ -98,7 +98,7 @@ impl Library {
                 "Yeni sürümler Arkor'un GitHub sürümlerinden gelir. Güncellemek Arkor'u yeniden başlatır; açık oyunlar çalışmaya devam eder.",
             ),
             if u.checking {
-                widgets::label(self.tr("Checking…", "Denetleniyor…")).into_any_element()
+                self.loading_inline(self.tr("Checking…", "Denetleniyor…")).into_any_element()
             } else {
                 style::button("app-update-check", self.tr("Check for updates", "Güncellemeleri denetle"), false)
                     .child(style::icon("refresh-cw", 13., pal::muted()))

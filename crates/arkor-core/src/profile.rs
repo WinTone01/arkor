@@ -369,6 +369,12 @@ pub struct Global {
     pub mangohud: GlobalHud,
     /// Where per-game Wine prefixes are created. `None` = `~/Games/Arkor/Prefixes`.
     pub prefixes_dir: Option<PathBuf>,
+    /// Where store games are installed. `None` = `~/Games/Arkor/Games`.
+    pub games_dir: Option<PathBuf>,
+    /// Open in console mode (the full-screen gamepad interface).
+    pub start_in_console: bool,
+    /// Games started from console mode run as they are (not full screen in gamescope).
+    pub console_windowed: bool,
     /// Environment for every game (each game's own `env` overrides it).
     pub env: BTreeMap<String, String>,
     /// Close Arkor's window after starting a game.
@@ -688,6 +694,15 @@ impl Global {
             dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join("Games/Arkor/Prefixes")
+        })
+    }
+
+    /// The folder store games are installed in (one subfolder per store).
+    pub fn games_dir(&self) -> PathBuf {
+        self.games_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join("Games/Arkor/Games")
         })
     }
 

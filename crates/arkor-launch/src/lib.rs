@@ -6,7 +6,9 @@
 //! and either replaces the process with the game or waits for it.
 //! `start` (see [`start`]) is the library-aware entry point behind `arkor launch` / Play.
 
+pub mod admin;
 pub mod bundles;
+pub mod compat;
 pub mod components;
 pub mod covers;
 pub mod discord;
@@ -20,6 +22,7 @@ pub mod progress;
 pub mod proton_dl;
 pub mod reshade;
 pub mod self_update;
+pub mod shops;
 pub mod shortcuts;
 pub mod start;
 pub mod steam_link;
@@ -251,14 +254,59 @@ pub fn exec(id: &GameId, command: &[String]) -> anyhow::Result<i32> {
 
 /// Like [`exec`], with environment set before the profile is applied (so the profile can still
 /// override it) and an optional working directory.
+/// Where console mode notes a game it starts (for games Steam starts, which do not inherit
+/// Arkor's environment).
+fn console_marker() -> Option<PathBuf> {
+    Some(dirs::state_dir()?.join("arkor/console-launch"))
+}
+
+/// Notes that console mode starts `id` on a screen of `w`×`h` pixels.
+pub fn note_console_launch(id: &GameId, (w, h): (u32, u32)) {
+    if let Some(path) = console_marker() {
+        let _ = path.parent().map(std::fs::create_dir_all);
+        let now = arkor_core::stats::now();
+        let _ = std::fs::write(path, format!("{id}\n{w}x{h}\n{now}\n"));
+    }
+}
+
+/// The screen size when `id` was started from console mode (lately).
+fn console_screen(id: &GameId) -> Option<(u32, u32)> {
+    let parse = |s: &str| {
+        let (w, h) = s.trim().split_once('x')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    };
+    if let Ok(size) = std::env::var("ARKOR_CONSOLE_SIZE") {
+        return parse(&size);
+    }
+    let text = std::fs::read_to_string(console_marker()?).ok()?;
+    let mut lines = text.lines();
+    let (who, size, at) = (lines.next()?, lines.next()?, lines.next()?);
+    let age = arkor_core::stats::now().saturating_sub(at.parse().ok()?);
+    (who == id.to_string() && age < 15 * 60)
+        .then(|| parse(size))
+        .flatten()
+}
+
 pub fn run(
     id: &GameId,
     command: &[String],
     base_env: &BTreeMap<String, String>,
     working_dir: Option<&Path>,
 ) -> anyhow::Result<i32> {
-    let profile = Profile::load(id)?;
+    let mut profile = Profile::load(id)?;
     let global = Global::load_or_import()?;
+    // Started from console mode: the game is kept full screen in gamescope, so no panel
+    // or other window shows over (or next to) it.
+    if !global.console_windowed
+        && !profile.gamescope.enabled
+        && let Some((w, h)) = console_screen(id)
+        && start::find_in_path("gamescope").is_some()
+    {
+        let g = &mut profile.gamescope;
+        g.enabled = true;
+        (g.width, g.height) = (Some(w), Some(h));
+        g.fullscreen = true;
+    }
     let game_dir = paths::game_config_dir(id)?;
     let plan = plan(&profile, &global, &Host::detect(id), &game_dir, command)?;
 

@@ -373,7 +373,7 @@ impl Library {
         }
         root = root
             .child(wordmark(t, r, cy0).opacity(words))
-            .child(self.loading(intro, t, h).opacity(words))
+            .child(self.intro_loading(intro, t, h).opacity(words))
             .when(leaving, |d| d.child(wave(r, cx0, cy0, w, h)));
         Some(root.into_any_element())
     }
@@ -485,7 +485,7 @@ impl Library {
     }
 
     /// What is being loaded, with a thin bar.
-    fn loading(&self, intro: &Intro, t: f32, h: f32) -> Div {
+    fn intro_loading(&self, intro: &Intro, t: f32, h: f32) -> Div {
         let total = intro.cards.len();
         let ready = intro
             .cards

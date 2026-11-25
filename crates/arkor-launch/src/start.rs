@@ -3,6 +3,7 @@
 //! - Steam: Arkor's settings are written into Steam's (see `steam_link`), then Steam starts
 //!   the game (`steam://rungameid`) and Arkor waits while it runs.
 //! - Epic: `legendary launch` (login/ownership), with `arkor run <id> -- umu-run` as wrapper.
+//! - Amazon: `nile launch`, the same way.
 //! - Windows: `umu-run <exe>` through `arkor run`, in the game's prefix with its Proton.
 //! - Linux: the executable itself, optionally inside a Steam Linux Runtime through umu.
 //!
@@ -39,6 +40,7 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
             match &game.kind {
                 GameKind::Steam { appid } => crate::steam_link::launch(appid, id),
                 GameKind::Epic { app_name } => epic_game(id, &game, app_name, &global),
+                GameKind::Amazon { id: game_id } => amazon_game(id, &game, game_id, &global),
                 GameKind::Windows | GameKind::Linux => {
                     let target = arkor_stores::launch_target(id, &global.prefixes_dir())?;
                     run_target(id, target)
@@ -55,25 +57,54 @@ fn epic_game(
     app_name: &str,
     global: &Global,
 ) -> anyhow::Result<i32> {
-    let (proton, latest) = chosen_proton(id, game.source_proton.clone());
-    crate::components::before_launch(global.updates_on_launch(), latest);
-    let legendary = epic::Legendary::locate()
-        .context("legendary not found: install `legendary` or Heroic Games Launcher")?;
+    let legendary = epic::Legendary::locate_for(app_name)
+        .context("legendary not found: log in to Epic on Arkor's Stores page")?;
     anyhow::ensure!(
         legendary.is_logged_in(),
-        "not logged in to Epic: run `legendary auth` or log in with Heroic"
+        "not logged in to Epic: log in on Arkor's Stores page"
     );
+    let command = legendary.launch_command(app_name, &umu_wrapper(id)?);
+    through_client(id, game, "egs", command, global)
+}
+
+fn amazon_game(
+    id: &GameId,
+    game: &LibraryGame,
+    game_id: &str,
+    global: &Global,
+) -> anyhow::Result<i32> {
+    let nile = arkor_stores::amazon::Nile::locate_for(game_id)
+        .context("this Amazon game is not installed, or nile is missing")?;
+    let command = nile.launch_command(game_id, &umu_wrapper(id)?);
+    through_client(id, game, "amazon", command, global)
+}
+
+/// `arkor run <id> -- umu-run`, which a store's client puts in front of the game.
+fn umu_wrapper(id: &GameId) -> anyhow::Result<Vec<String>> {
     let me = std::env::current_exe().context("locating the arkor binary")?;
-    let wrapper = [
+    Ok(vec![
         me.display().to_string(),
         "run".into(),
         id.to_string(),
         "--".into(),
         umu_run()?,
-    ];
-    let (argv, mut env) = legendary.launch_command(app_name, &wrapper);
+    ])
+}
+
+/// Becomes the store client that starts the game, in the game's prefix with its Proton.
+fn through_client(
+    id: &GameId,
+    game: &LibraryGame,
+    umu_store: &str,
+    (argv, mut env): (Vec<String>, BTreeMap<String, String>),
+    global: &Global,
+) -> anyhow::Result<i32> {
+    let (proton, latest) = chosen_proton(id, game.source_proton.clone());
+    crate::components::before_launch(global.updates_on_launch(), latest);
     let prefix = game.effective_prefix(&global.prefixes_dir());
-    env.extend(proton_env(Some("egs"), &prefix, proton, id));
+    std::fs::create_dir_all(&prefix)
+        .with_context(|| format!("creating prefix {}", prefix.display()))?;
+    env.extend(proton_env(Some(umu_store), &prefix, proton, id));
     if !global.updates_on_launch() {
         env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
     }

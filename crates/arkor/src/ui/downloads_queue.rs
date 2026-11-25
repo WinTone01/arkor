@@ -49,7 +49,9 @@ impl SpeedGraph {
 
 /// An icon for a queue key (store downloads will bring their own art).
 fn icon_for(key: &str) -> &'static str {
-    if key.starts_with("latest:") || key.contains("proton") {
+    if arkor_launch::shops::parse_key(key).is_some() {
+        "gamepad-2"
+    } else if key.starts_with("latest:") || key.contains("proton") {
         "wine"
     } else if key.starts_with("component:") {
         "package"
@@ -60,8 +62,21 @@ fn icon_for(key: &str) -> &'static str {
     }
 }
 
-/// The art tile at the start of a row (or the large one in the current-download card).
-fn art(key: &str, w: f32, h: f32) -> Div {
+/// The art tile at the start of a row (or the large one in the current-download card):
+/// a store game's picture, else an icon.
+fn art(lib: &mut Library, key: &str, w: f32, h: f32, cx: &mut Context<Library>) -> Div {
+    if let Some((shop, id, _)) = arkor_launch::shops::parse_key(key)
+        && let Some(path) = lib
+            .shop_wide(shop, id, cx)
+            .or_else(|| lib.shop_cover(shop, id, cx))
+    {
+        let radius = (h * 0.14).clamp(8., 16.);
+        return div().w(px(w)).h(px(h)).flex_none().child(
+            super::cover_art::cover(path, radius, false)
+                .w(px(w))
+                .h(px(h)),
+        );
+    }
     div()
         .w(px(w))
         .h(px(h))
@@ -122,6 +137,9 @@ impl Library {
     fn current_download(&mut self, e: &progress::Entry, cx: &mut Context<Self>) -> Div {
         let downloading = e.phase == Phase::Downloading;
         let status = match e.phase {
+            Phase::Preparing if arkor_launch::shops::parse_key(&e.key).is_some() => {
+                self.tr("Preparing", "Hazırlanıyor").to_string()
+            }
             Phase::Preparing => self
                 .tr("Checking for updates", "Güncellemeler denetleniyor")
                 .to_string(),
@@ -154,6 +172,8 @@ impl Library {
             .h(px(84.))
             .flex()
             .items_end()
+            // The newest sample stays in view.
+            .justify_end()
             .gap(px(1.))
             .overflow_hidden();
         for &v in graph.samples.iter() {
@@ -180,7 +200,8 @@ impl Library {
                 )
         };
         let graph_panel = div()
-            .w(px(340.))
+            // Narrower windows leave the room to the name and the figures.
+            .w(px(if self.viewport_w < 1500. { 220. } else { 340. }))
             .flex_none()
             .flex()
             .flex_col()
@@ -210,7 +231,7 @@ impl Library {
             .flex()
             .items_center()
             .gap_5()
-            .child(art(&e.key, 200., 112.))
+            .child(art(self, &e.key, 200., 112., cx))
             .child(
                 div()
                     .flex_1()
@@ -283,7 +304,7 @@ impl Library {
     /// One row of "Up next" or "Completed".
     fn queue_row(
         &self,
-        key: &str,
+        art: Div,
         title: String,
         detail: String,
         detail_color: gpui::Hsla,
@@ -299,7 +320,7 @@ impl Library {
             .when(!last, |d| {
                 d.border_b_1().border_color(pal::glass_spec().border)
             })
-            .child(art(key, 64., 36.))
+            .child(art)
             .child(
                 div()
                     .flex_1()
@@ -391,8 +412,9 @@ impl Library {
                     cx.notify();
                 }),
             ));
+            let picture = art(self, &item.key, 64., 36., cx);
             list = list.child(self.queue_row(
-                &item.key,
+                picture,
                 item.label,
                 detail,
                 color,
@@ -460,7 +482,9 @@ impl Library {
                 )
             };
             let actions = div().child(style::icon(icon, 16., icolor));
-            list = list.child(self.queue_row(&f.key, f.label, detail, color, actions, ix + 1 == n));
+            let picture = art(self, &f.key, 64., 36., cx);
+            list =
+                list.child(self.queue_row(picture, f.label, detail, color, actions, ix + 1 == n));
         }
         out = out.child(list);
         out
@@ -514,8 +538,9 @@ impl Library {
                     .tr("Checking for updates", "Güncellemeler denetleniyor")
                     .to_string(),
             };
+            let picture = art(self, &e.key, 64., 36., cx);
             out = out.child(style::card().child(self.queue_row(
-                &e.key,
+                picture,
                 e.label.clone(),
                 detail,
                 pal::muted(),

@@ -1,0 +1,11 @@
+[package]
+name = "arkor-login"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A small browser window for logging in to game stores (used by Arkor)"
+
+[dependencies]
+wry = "0.57"
+tao = "0.37"
+gtk = "0.18"

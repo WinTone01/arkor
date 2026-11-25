@@ -292,7 +292,12 @@ pub fn hint_icon(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Sta
         .id(id)
         .flex_none()
         .child(super::style::icon("info", 13., super::style::pal::faint()))
-        .tooltip(move |_, cx| cx.new(|_| HintTip(text.clone())).into())
+        .tooltip(move |_, cx| tip(text.clone(), cx))
+}
+
+/// What hovering something shows.
+pub fn tip(text: SharedString, cx: &mut gpui::App) -> gpui::AnyView {
+    cx.new(|_| HintTip(text)).into()
 }
 
 struct HintTip(SharedString);

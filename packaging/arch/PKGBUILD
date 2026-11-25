@@ -1,7 +1,7 @@
 # Maintainer: WinTone01
 pkgname=arkor-git
 _pkgname=arkor
-pkgver=0.4.1
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="Game launcher for Linux: Steam, Epic, GOG and your own games with Proton, MangoHud, Gamescope and upscalers per game"
 arch=('x86_64')
@@ -12,15 +12,15 @@ depends=(
   'vulkan-icd-loader' 'wayland' 'fontconfig' 'freetype2'
   'curl' 'tar' 'xz' 'python'
 )
-makedepends=('cargo' 'git')
+makedepends=('cargo' 'git' 'webkit2gtk-4.1')
 optdepends=(
   'umu-launcher: system umu-run (Arkor downloads its own otherwise)'
   'mangohud: performance overlay'
   'gamescope: Valve’s gaming compositor'
   'winetricks: prefix tools'
   'steam: Steam games'
-  'legendary: Epic games (or Heroic Games Launcher)'
   'vkbasalt: post-processing effects'
+  'webkit2gtk-4.1: log in to Epic, GOG and Amazon inside Arkor'
 )
 # GCC LTO objects from bundled C code (SQLite, Wayland) can't be linked by Rust's linker.
 options=('!lto')
@@ -45,12 +45,13 @@ build() {
   cd "$_pkgname"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p arkor
+  cargo build --frozen --release -p arkor -p arkor-login
 }
 
 package() {
   cd "$_pkgname"
   install -Dm755 target/release/arkor "$pkgdir/usr/bin/arkor"
+  install -Dm755 target/release/arkor-login "$pkgdir/usr/bin/arkor-login"
   install -Dm644 packaging/arkor.desktop "$pkgdir/usr/share/applications/arkor.desktop"
   install -Dm644 crates/arkor/assets/logo/arkor.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/arkor.svg"
   for size in 16 24 32 48 64 128 256 512; do

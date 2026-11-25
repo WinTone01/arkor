@@ -19,6 +19,15 @@ pub fn covers_dir() -> anyhow::Result<PathBuf> {
 
 /// Steam's portrait capsule for an app, if Steam has cached it.
 pub fn steam_cover(appid: &str) -> Option<PathBuf> {
+    steam_art(appid, &["library_600x900.jpg", "library_capsule.jpg"])
+}
+
+/// Steam's wide picture for an app, if Steam has cached it.
+pub fn steam_hero(appid: &str) -> Option<PathBuf> {
+    steam_art(appid, &["library_hero.jpg"])
+}
+
+fn steam_art(appid: &str, names: &[&str]) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let roots = [
         home.join(".local/share/Steam/appcache/librarycache"),
@@ -26,7 +35,7 @@ pub fn steam_cover(appid: &str) -> Option<PathBuf> {
     ];
     for root in roots {
         let dir = root.join(appid);
-        for name in ["library_600x900.jpg", "library_capsule.jpg"] {
+        for name in names {
             if dir.join(name).is_file() {
                 return Some(dir.join(name));
             }
@@ -36,7 +45,7 @@ pub fn steam_cover(appid: &str) -> Option<PathBuf> {
             continue;
         };
         for e in entries.flatten() {
-            for name in ["library_600x900.jpg", "library_capsule.jpg"] {
+            for name in names {
                 if e.path().join(name).is_file() {
                     return Some(e.path().join(name));
                 }
@@ -227,6 +236,74 @@ pub fn sgdb_covers(game: u64, animated: bool, api_key: &str) -> anyhow::Result<V
         image.animated = animated;
     }
     Ok(list)
+}
+
+fn heroes_dir() -> anyhow::Result<PathBuf> {
+    Ok(dirs::cache_dir()
+        .context("no cache dir")?
+        .join("arkor/heroes"))
+}
+
+/// A game's wide picture fetched before (see [`fetch_hero`]). Reads the folder only.
+pub fn hero(id: &str) -> Option<PathBuf> {
+    let dir = heroes_dir().ok()?;
+    ["png", "jpg", "jpeg", "webp"]
+        .iter()
+        .map(|e| dir.join(format!("{id}.{e}")))
+        .find(|p| p.is_file())
+}
+
+/// Whether SteamGridDB was asked lately and had nothing (it is not asked again for a week).
+pub fn hero_missing(id: &str) -> bool {
+    heroes_dir()
+        .ok()
+        .and_then(|d| std::fs::metadata(d.join(format!("{id}.none"))).ok())
+        .and_then(|m| m.modified().ok())
+        .is_some_and(|t| t.elapsed().is_ok_and(|a| a.as_secs() < 7 * 86_400))
+}
+
+/// Finds a game on SteamGridDB by its name and keeps its best wide picture ("hero"), for
+/// games no store gives one for. Blocking.
+pub fn fetch_hero(game: &LibraryGame, api_key: &str) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(p) = hero(&game.id) {
+        return Ok(Some(p));
+    }
+    let dir = heroes_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let found = sgdb_search(&game.name, api_key)?;
+    // The exact name first; otherwise SteamGridDB's best match.
+    let pick = found
+        .iter()
+        .find(|m| same_name(&m.name, &game.name))
+        .or(found.first());
+    let image = match pick {
+        Some(m) => sgdb_get::<SgdbImage>(
+            &format!(
+                "/heroes/game/{}?types=static&mimes=image/png,image/jpeg,image/webp",
+                m.id
+            ),
+            api_key,
+        )?
+        .into_iter()
+        .next(),
+        None => None,
+    };
+    let Some(image) = image else {
+        std::fs::write(dir.join(format!("{}.none", game.id)), "")?;
+        return Ok(None);
+    };
+    let ext = image
+        .url
+        .rsplit('.')
+        .next()
+        .map(|e| e.split(['?', '#']).next().unwrap_or("").to_lowercase())
+        .filter(|e| ["png", "jpg", "jpeg", "webp"].contains(&e.as_str()))
+        .unwrap_or_else(|| "png".into());
+    let tmp = dir.join(format!(".{}.part", game.id));
+    crate::progress::quietly(|| crate::tools::download(&image.url, &tmp))?;
+    let path = dir.join(format!("{}.{ext}", game.id));
+    std::fs::rename(&tmp, &path)?;
+    Ok(Some(path))
 }
 
 fn has_ffmpeg() -> bool {
@@ -454,5 +531,28 @@ mod sgdb_network {
                 std::fs::metadata(&t).unwrap().len()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod hero_network {
+    /// Network: needs ARKOR_SGDB_KEY.
+    #[test]
+    #[ignore]
+    fn finds_a_hero_by_name() {
+        let key = std::env::var("ARKOR_SGDB_KEY").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: single test, ignored by default.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", tmp.path()) };
+        let mut lib = arkor_core::library::Library::default();
+        let id = lib.add(arkor_core::library::NewGame::windows(
+            "Far Cry 6",
+            "/x.exe".into(),
+        ));
+        let game = lib.get(&id).unwrap();
+        let path = super::fetch_hero(game, &key).unwrap().expect("a hero");
+        let img = std::fs::metadata(&path).unwrap().len();
+        println!("{} {img} bytes", path.display());
+        assert_eq!(super::hero(&id), Some(path));
     }
 }

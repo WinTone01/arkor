@@ -10,20 +10,20 @@ use gpui::{ClipboardItem, Context, Div, div, prelude::*, px};
 use super::style::{self, pal};
 use super::{Library, widgets};
 
-type SystemInfo = (Vec<(&'static str, String)>, Vec<ToolStatus>);
+pub(super) type SystemInfo = (Vec<(&'static str, String)>, Vec<ToolStatus>);
 
 #[derive(Default)]
 pub(super) struct SystemState {
-    info: Option<SystemInfo>,
-    loading: bool,
+    pub(super) info: Option<SystemInfo>,
+    pub(super) loading: bool,
     /// Missing packages split into (in the pacman repos, elsewhere such as the AUR).
-    split: Option<(Vec<&'static str>, Vec<&'static str>)>,
-    installing: bool,
+    pub(super) split: Option<(Vec<&'static str>, Vec<&'static str>)>,
+    pub(super) installing: bool,
 }
 
 /// Shorter names for the tiles: "NVIDIA GeForce RTX 3060" instead of lspci's
 /// "NVIDIA Corporation GA106 [GeForce RTX 3060]", no (R)/(TM) in CPU names.
-fn tidy(key: &str, value: &str) -> String {
+pub(super) fn tidy(key: &str, value: &str) -> String {
     match key {
         // The model is in the last [...] (AMD names have "[AMD/ATI]" first).
         "GPU" => match (value.rfind('['), value.rfind(']')) {
@@ -50,7 +50,7 @@ fn tidy(key: &str, value: &str) -> String {
 }
 
 /// Icon and caption for a line of `tools::system_info`.
-fn info_look(key: &str, lib: &Library) -> (&'static str, &'static str) {
+pub(super) fn info_look(key: &str, lib: &Library) -> (&'static str, &'static str) {
     match key {
         "OS" => ("monitor", lib.tr("Operating system", "İşletim sistemi")),
         "Kernel" => ("terminal", lib.tr("Kernel", "Çekirdek")),
@@ -113,7 +113,7 @@ impl Library {
             ),
         ));
         let Some((info, _)) = self.system.info.clone() else {
-            return page.child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
+            return page.child(self.loading(self.tr("Looking…", "Bakılıyor…")));
         };
         let value = |key: &str| {
             info.iter()
@@ -299,7 +299,7 @@ impl Library {
             self.scan_system(cx);
         }
         let Some((_, list)) = self.system.info.clone() else {
-            return div().child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
+            return div().child(self.loading(self.tr("Looking…", "Bakılıyor…")));
         };
         let (repo, other) = self.system.split.clone().unwrap_or_default();
         let missing = list.iter().filter(|t| t.found.is_none()).count();

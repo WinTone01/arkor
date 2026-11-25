@@ -256,6 +256,14 @@ impl Library {
                         ))
                         .child(widgets::divider())
                         .child(widgets::setting_row(
+                            self.tr("Start in console mode", "Konsol modunda başlat"),
+                            self.tr("The full-screen gamepad interface (F11 switches it).", "Tam ekran oyun kolu arayüzü (F11 ile geçilir)."),
+                            switch("start-console", self.global.start_in_console, cx, |this| {
+                                this.global.start_in_console = !this.global.start_in_console
+                            }),
+                        ))
+                        .child(widgets::divider())
+                        .child(widgets::setting_row(
                             self.tr("Splash window while starting", "Başlarken açılış penceresi"),
                             self.tr("A small window for a few seconds.", "Birkaç saniyelik küçük bir pencere."),
                             switch("splash", self.global.splash, cx, |this| this.global.splash = !this.global.splash),
@@ -268,6 +276,51 @@ impl Library {
                                 this.global.close_on_launch = !this.global.close_on_launch
                             }),
                         )),
+                )
+                .child(
+                    widgets::section(self.tr("Store games", "Mağaza oyunları")).child(
+                        widgets::setting_row(
+                            self.tr("Games folder", "Oyun klasörü"),
+                            self.global.games_dir().display().to_string(),
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    style::button(
+                                        "games-dir",
+                                        self.tr("Change…", "Değiştir…"),
+                                        false,
+                                    )
+                                    .child(style::icon("folder-open", 13., style::pal::muted()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let title = this.tr(
+                                            "Where to install games",
+                                            "Oyunların kurulacağı yer",
+                                        );
+                                        this.prompt_path(true, title, cx, |this, path, _| {
+                                            this.global.games_dir = Some(path);
+                                            this.save();
+                                        });
+                                    })),
+                                )
+                                .when(self.global.games_dir.is_some(), |d| {
+                                    d.child(
+                                        style::button(
+                                            "games-dir-default",
+                                            self.tr("Default", "Varsayılan"),
+                                            false,
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.global.games_dir = None;
+                                                this.save();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                }),
+                        ),
+                    ),
                 ),
             SettingsTab::Appearance => self.render_appearance(_window, cx),
             SettingsTab::Defaults => self.render_defaults(cx),

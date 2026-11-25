@@ -1,7 +1,9 @@
 //! Game sources. The library is the user's own list (`arkor_core::library`); the other
 //! launchers here only *suggest* games to add: Steam, Epic/GOG (via legendary/Heroic),
-//! games added to Heroic, Faugus or Lutris. Arkor never downloads games.
+//! games added to Heroic, Faugus or Lutris. Store games Arkor installs itself
+//! (`arkor_launch::shops`) are found the same way.
 
+pub mod amazon;
 pub mod epic;
 pub mod faugus;
 pub mod gog;
@@ -9,6 +11,7 @@ pub mod heroic;
 pub mod lutris;
 pub mod prefix;
 pub mod steam;
+pub mod steam_library;
 pub mod target;
 pub mod vdf;
 pub mod vdf_edit;
@@ -18,6 +21,12 @@ use arkor_core::library::{GameKind, Library, NewGame};
 use arkor_core::{Game, GameId, Store};
 
 use target::ExeTarget;
+
+/// The helper program `name` (`legendary`, `gogdl`, `nile`) Arkor downloaded, if it did.
+pub fn helper_bin(name: &str) -> Option<std::path::PathBuf> {
+    let dir = arkor_core::paths::stores_dir().ok()?.join("bin");
+    Some(dir.join(name)).filter(|p| p.is_file())
+}
 
 /// The user's library as games, sorted by name.
 pub fn library_games() -> anyhow::Result<Vec<Game>> {
@@ -38,7 +47,7 @@ pub struct Detected {
 /// second value and does not hide the others.
 pub fn detect() -> (Vec<Detected>, Vec<anyhow::Error>) {
     let (mut games, mut errors) = steam::installed_games();
-    if let Some(legendary) = epic::Legendary::locate() {
+    for legendary in epic::Legendary::all() {
         match legendary.games() {
             Ok(epic) => games.extend(epic),
             Err(e) => errors.push(e.context("Epic (legendary)")),
@@ -46,6 +55,7 @@ pub fn detect() -> (Vec<Detected>, Vec<anyhow::Error>) {
     }
     for (found, errs) in [
         gog::installed_games(),
+        amazon::installed_games(),
         heroic::sideload_games(),
         lutris::games(),
     ] {
@@ -56,6 +66,9 @@ pub fn detect() -> (Vec<Detected>, Vec<anyhow::Error>) {
         Ok(found) => games.extend(found),
         Err(e) => errors.push(e.context("Faugus Launcher")),
     }
+    // The same game through two launchers (or two logins) is listed once.
+    let mut seen = std::collections::HashSet::new();
+    games.retain(|g| seen.insert(g.id.clone()));
     games.sort_by_key(|g| g.name.to_lowercase());
     let detected = games
         .into_iter()
@@ -93,6 +106,9 @@ pub fn to_new_game(game: &Game) -> anyhow::Result<NewGame> {
             new.source_proton = heroic::proton(&game.id.id);
             Ok(new)
         }
+        Store::Amazon => Ok(base(GameKind::Amazon {
+            id: game.id.id.clone(),
+        })),
         Store::Gog | Store::Heroic | Store::Faugus | Store::Lutris => {
             let target = source_target(&game.id)?;
             Ok(NewGame {

@@ -1,8 +1,9 @@
 //! Epic Games Store through legendary (https://github.com/derrod/legendary).
 //!
 //! Arkor does not talk to Epic itself: it reads legendary's own files and launches games
-//! through `legendary launch`, which handles login and ownership tokens. It works with a
-//! standalone legendary and with the copy Heroic bundles, sharing Heroic's login.
+//! through `legendary launch`, which handles login and ownership tokens. It works with
+//! Arkor's own legendary (see `arkor_launch::shops`), with a standalone one and with the
+//! copy Heroic bundles.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,15 +28,55 @@ const HEROIC_ROOTS: &[(&str, &str)] = &[
         ".var/app/com.heroicgameslauncher.hgl/config/heroic",
     ),
 ];
-const HEROIC_LEGENDARY_BIN: &str = "app.asar.unpacked/build/bin/x64/linux/legendary";
+const HEROIC_BIN_DIR: &str = "app.asar.unpacked/build/bin/x64/linux";
+
+/// A helper Heroic ships (`legendary`, `gogdl`, `nile`), if Heroic is installed.
+pub fn heroic_bin(name: &str) -> Option<PathBuf> {
+    HEROIC_ROOTS
+        .iter()
+        .map(|(root, _)| Path::new(root).join(HEROIC_BIN_DIR).join(name))
+        .find(|p| p.is_file())
+}
 
 impl Legendary {
     /// Finds legendary, preferring a config dir that has a logged-in user.
-    /// Order: `$LEGENDARY_CONFIG_PATH`, standalone `~/.config/legendary`, then Heroic's.
     pub fn locate() -> Option<Self> {
-        let home = dirs::home_dir()?;
+        let mut candidates = Self::all();
+        let logged_in = candidates.iter().position(Self::is_logged_in);
+        match logged_in {
+            Some(ix) => Some(candidates.swap_remove(ix)),
+            None => candidates.into_iter().next(),
+        }
+    }
+
+    /// The legendary that installed `app_name` (each config dir has its own games), else
+    /// the one [`Legendary::locate`] finds.
+    pub fn locate_for(app_name: &str) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|l| l.installed().is_ok_and(|g| g.contains_key(app_name)))
+            .or_else(Self::locate)
+    }
+
+    /// Every usable legendary, in order: Arkor's own, `$LEGENDARY_CONFIG_PATH`, standalone
+    /// `~/.config/legendary`, then Heroic's.
+    pub fn all() -> Vec<Self> {
+        let Some(home) = dirs::home_dir() else {
+            return Vec::new();
+        };
         let path_bin = find_in_path("legendary");
         let mut candidates: Vec<Self> = Vec::new();
+
+        if let Ok(dir) = arkor_core::paths::stores_dir()
+            && let Some(bin) = crate::helper_bin("legendary")
+                .or_else(|| path_bin.clone())
+                .or_else(|| heroic_bin("legendary"))
+        {
+            candidates.push(Self {
+                bin,
+                config_dir: dir.join("epic"),
+            });
+        }
 
         if let (Some(dir), Some(bin)) = (std::env::var_os("LEGENDARY_CONFIG_PATH"), &path_bin) {
             candidates.push(Self {
@@ -50,7 +91,7 @@ impl Legendary {
             });
         }
         for (resources, config) in HEROIC_ROOTS {
-            let bundled = Path::new(resources).join(HEROIC_LEGENDARY_BIN);
+            let bundled = Path::new(resources).join(HEROIC_BIN_DIR).join("legendary");
             let bin = if bundled.is_file() {
                 Some(bundled)
             } else {
@@ -65,13 +106,9 @@ impl Legendary {
         }
 
         candidates.retain(|c| c.config_dir.is_dir());
-        let logged_in = candidates
-            .iter()
-            .position(|c| c.config_dir.join("user.json").is_file());
-        match logged_in {
-            Some(ix) => Some(candidates.swap_remove(ix)),
-            None => candidates.into_iter().next(),
-        }
+        let mut seen = std::collections::BTreeSet::new();
+        candidates.retain(|c| seen.insert(c.config_dir.clone()));
+        candidates
     }
 
     pub fn is_logged_in(&self) -> bool {
@@ -143,7 +180,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
+pub fn find_in_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())

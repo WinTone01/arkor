@@ -2,13 +2,15 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-/// Where a game was found. Arkor only lists installed games; it never downloads any.
+/// Where a game comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Store {
     Steam,
-    /// Epic Games Store, installed through legendary or Heroic.
+    /// Epic Games Store, installed through Arkor, legendary or Heroic.
     Epic,
     Gog,
+    /// Amazon Games, installed through Arkor or Heroic.
+    Amazon,
     /// Games added to Heroic by hand ("sideloaded").
     Heroic,
     /// Games added in Faugus Launcher.
@@ -20,10 +22,11 @@ pub enum Store {
 }
 
 impl Store {
-    pub const ALL: [Store; 7] = [
+    pub const ALL: [Store; 8] = [
         Store::Steam,
         Store::Epic,
         Store::Gog,
+        Store::Amazon,
         Store::Heroic,
         Store::Faugus,
         Store::Lutris,
@@ -35,6 +38,7 @@ impl Store {
             Store::Steam => "steam",
             Store::Epic => "epic",
             Store::Gog => "gog",
+            Store::Amazon => "amazon",
             Store::Heroic => "heroic",
             Store::Faugus => "faugus",
             Store::Lutris => "lutris",

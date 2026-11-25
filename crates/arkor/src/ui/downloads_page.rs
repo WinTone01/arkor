@@ -147,7 +147,7 @@ pub(super) struct DownloadsState {
     /// Bumped after each change so the list is read again.
     generation: u64,
     /// Newer versions found by the last check.
-    updates: Vec<Update>,
+    pub(super) updates: Vec<Update>,
     checking: bool,
     checked: bool,
     /// `downloads::finished()` count last seen, to notice queue items ending.
@@ -158,6 +158,18 @@ pub(super) struct DownloadsState {
 
 type Job = Box<dyn FnOnce() -> anyhow::Result<String> + Send + 'static>;
 type Action = std::rc::Rc<dyn Fn() -> Job>;
+
+/// Something Arkor downloaded, for console mode.
+pub(super) struct InstalledThing {
+    /// Stable for one thing: its key and folder.
+    pub(super) id: String,
+    pub(super) icon: &'static str,
+    pub(super) title: String,
+    pub(super) detail: String,
+    pub(super) update: Option<String>,
+    pub(super) removable: bool,
+    pub(super) proton: bool,
+}
 
 /// One row of the installed list.
 struct Row {
@@ -301,9 +313,16 @@ impl Library {
                             if last.ok {
                                 this.downloads.updates.retain(|u| u.key != last.key);
                             }
-                            this.status = Some(last.report.into());
+                            // A store game says only its name.
+                            let game = arkor_launch::shops::parse_key(&last.key).is_some();
+                            this.status = Some(if game && last.ok {
+                                format!("{}: {}", this.tr("Ready", "Hazır"), last.report).into()
+                            } else {
+                                last.report.into()
+                            });
                         }
                         this.rescan_tools();
+                        this.shops_after_download(cx);
                     }
                     cx.notify();
                 });
@@ -407,6 +426,45 @@ impl Library {
         rows
     }
 
+    /// Everything installed, for console mode.
+    pub(super) fn installed_things(&self) -> Vec<InstalledThing> {
+        self.proton_rows()
+            .into_iter()
+            .chain(self.tool_rows())
+            .map(|r| InstalledThing {
+                id: format!("{}|{}", r.key, r.detail),
+                icon: r.icon,
+                proton: r.filter == Filter::Proton,
+                title: r.title,
+                detail: r.detail,
+                update: r.update,
+                removable: r.remove.is_some(),
+            })
+            .collect()
+    }
+
+    /// Removes one of `installed_things` (in the background).
+    pub(super) fn remove_installed(&mut self, id: &str, cx: &mut Context<Self>) {
+        let row = self
+            .proton_rows()
+            .into_iter()
+            .chain(self.tool_rows())
+            .find(|r| format!("{}|{}", r.key, r.detail) == id);
+        if let Some(Row {
+            key,
+            title,
+            remove: Some(remove),
+            ..
+        }) = row
+        {
+            self.downloads_job(key, title, remove(), cx);
+        }
+    }
+
+    pub(super) fn downloads_checking(&self) -> bool {
+        self.downloads.checking
+    }
+
     /// "N updates available · Update all", with each update's versions.
     fn updates_card(&mut self, cx: &mut Context<Self>) -> Div {
         let st = &self.downloads;
@@ -449,7 +507,11 @@ impl Library {
             .flex()
             .items_center()
             .gap_3()
-            .child(style::icon(icon, 18., color))
+            .child(if st.checking {
+                super::loader::spinner(22., self.global.appearance.reduce_motion)
+            } else {
+                style::icon(icon, 18., color).into_any_element()
+            })
             .child(
                 div()
                     .flex_1()
@@ -496,12 +558,13 @@ impl Library {
                     .border_t_1()
                     .border_color(pal::glass_spec().border)
                     .child(div().flex_1().min_w_0().truncate().child(u.label))
-                    .child(
+                    // Games have no version numbers worth showing.
+                    .children((!u.latest.is_empty()).then(|| {
                         div()
                             .text_sm()
                             .text_color(pal::muted())
-                            .child(format!("{} → {}", u.installed, u.latest)),
-                    )
+                            .child(format!("{} → {}", u.installed, u.latest))
+                    }))
                     .child(if busy {
                         div()
                             .w(px(110.))
