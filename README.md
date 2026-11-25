@@ -11,9 +11,10 @@
 </p>
 
 <p align="center">
-  <b>Arkor</b> is a fast, native game launcher for Linux. Steam, Epic, GOG and your own
-  Windows and Linux games in one library, started with the right Proton, each with its own
-  MangoHud, Gamescope, frame generation and upscaler settings — no config files to edit.
+  <b>Arkor</b> is a fast, native game launcher for Linux. Steam, Epic, GOG, Amazon and your
+  own Windows and Linux games in one library, started with the right Proton, each with its
+  own MangoHud, Gamescope, frame generation and upscaler settings — no config files to edit,
+  and a console mode that needs nothing but a gamepad.
 </p>
 
 <p align="center">
@@ -71,7 +72,8 @@
 >
 > It downloads the latest release from [Releases](https://github.com/WinTone01/arkor/releases)
 > (no build, no root) and installs it into `~/.local` with its app-menu entry and icon.
-> Arkor then updates itself: **Settings → General → Arkor updates**, or the note in the
+> Arkor then updates itself: **Settings → General → Arkor updates** (in console mode
+> **Settings → Arkor update**), or the note in the
 > sidebar when a new version is out.
 
 On the first start Arkor sets itself up: it downloads umu-launcher, the Steam Linux Runtime,
@@ -166,19 +168,20 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       <img src="docs/icons/store.svg" width="40"><br>
       <b>Steam, Epic, GOG and Amazon</b><br>
       Log in in Arkor's own login window (nothing to copy), see every game you own and
-      <b>install</b> it: pause and resume, updates, file checks and removal, single DLC,
-      GOG's Linux versions and languages. Before installing, Arkor says how a game runs on
-      Linux (<b>anti-cheat</b>, <b>ProtonDB</b>, Steam Deck). <b>Cloud saves</b> of Epic and GOG games, with
-      copies you can put back. Logins stay on your computer, encrypted by systemd.
+      <b>install</b> it where you want: pause and resume, updates, file checks and removal,
+      single DLC, GOG's Linux versions and languages. Before installing, Arkor says how a
+      game runs on Linux (<b>anti-cheat</b>, <b>ProtonDB</b>, Steam Deck). Logins stay on
+      your computer, <b>encrypted</b> by systemd.
     </td>
     <td valign="top">
       <img src="docs/icons/console.svg" width="40"><br>
       <b>Console mode</b><br>
       From boot to game with only a <b>gamepad</b>: your games, the stores and their logins,
       downloads, Proton builds, disks, settings and the power menu, full screen, with an
-      on-screen keyboard wherever something is typed, sounds of its own and a start-up
-      animation with your games. Press the pad's middle button or
-      <kbd>F11</kbd>, or let Arkor start in it when the computer does.
+      on-screen keyboard wherever something is typed, sounds of its own, a start-up
+      animation with your games and Arkor's own updates. Steam's windows stay behind it.
+      Press the pad's middle button or <kbd>F11</kbd>, or let Arkor start in it when the
+      computer does.
     </td>
   </tr>
   <tr>
@@ -188,6 +191,7 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       Steam still starts them, and Arkor writes its choices into Steam: the game's
       <b>Proton</b> and launch options that run it <b>through Arkor</b>, so MangoHud, frame
       generation and the environment apply whether you press Play in Arkor or in Steam.
+      New games go into the <b>library folder you choose</b>, a new one on another disk too.
       Optionally Arkor <b>controls Steam</b>: downloads and their order, installing, moving,
       achievements, DLC and workshop, without Steam's windows.
     </td>
@@ -227,8 +231,25 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       <b>Everything a game needs</b><br>
       Launch options in Steam style (<code>VAR=1 %command%</code>), commands before and after,
       a second program next to the game, winecfg and winetricks, protonfixes found by name,
-      clear launch logs with <b>"Why did it not start?"</b> (the reason, and fixes that take one
-      press), benchmarks from MangoHud logs, backups and Discord status.
+      clear launch logs, benchmarks from MangoHud logs, backups and Discord status.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/icons/help.svg" width="40"><br>
+      <b>"Why did it not start?"</b><br>
+      When a game does not start, Arkor looks at its log, files, prefix and settings and at
+      your computer, names the reason in plain words and offers fixes that take one press:
+      a missing Windows component, another Proton, a driver, a disk that is not mounted.
+      A game can also be started once with a detailed log, or once without any extras.
+    </td>
+    <td valign="top">
+      <img src="docs/icons/saves.svg" width="40"><br>
+      <b>Saves that are not lost</b><br>
+      <b>Cloud saves</b> of Epic and GOG games: fetched before a game starts, uploaded when it
+      ends, compared by their contents. When they changed on both sides you choose, and a
+      <b>copy</b> is kept before anything is put over them, to put back with one press.
+      Deleting goes through a guard; prefixes go to the trash.
     </td>
   </tr>
   <tr>
@@ -252,6 +273,7 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
 | **2. Add your games** | **Library → Add game**: pick a game Arkor found on your computer, or add an `.exe` (or a Linux game) by hand. **Stores** installs your Steam, Epic, GOG and Amazon games. |
 | **3. Play** | A game's page has its settings: *Overview* holds the most used switches, and every feature says in one line what it does. |
 | **4. Set your defaults** | **Settings → Game defaults** sets the Proton for all games and what new games start with. |
+| **Something wrong?** | A game that does not start: **Logs → Why did it not start?** on its page, or **Why?** in console mode. |
 
 Steam games keep starting from Steam. Arkor sets their Proton and launch options in Steam
 for you (**Compatibility → Steam** on the game's page), so its settings apply from either
@@ -292,7 +314,7 @@ Run `arkor help` for the full list.
 | --- | --- |
 | Settings, library, game profiles | `~/.config/arkor/` |
 | Launch logs, download queue | `~/.local/state/arkor/` |
-| umu-run, anti-cheat runtimes, downloaded tools, store logins | `~/.local/share/arkor/` |
+| umu-run, anti-cheat runtimes, downloaded tools, store logins (encrypted) | `~/.local/share/arkor/` |
 | Copies of saves | `~/.local/share/arkor/saves/` |
 | Games installed from stores | `~/Games/Arkor/Games/` (changeable in Settings) |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam and Faugus) |
