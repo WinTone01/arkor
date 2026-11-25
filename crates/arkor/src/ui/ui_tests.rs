@@ -16,6 +16,9 @@ fn scratch_home() -> tempfile::TempDir {
         // SAFETY: single-threaded test setup before the app starts.
         unsafe { std::env::set_var(k, tmp.path().join(d)) };
     }
+    // Made-up logins are not worth sealing.
+    // SAFETY: as above.
+    unsafe { std::env::set_var("ARKOR_CREDS", "none") };
     let exe = tmp.path().join("Game.exe");
     std::fs::write(&exe, "").unwrap();
     let mut lib = GameLibrary::load().unwrap();
@@ -1239,5 +1242,159 @@ fn console_shows_what_steam_has_and_asks() {
         l.steam_news(News::NotStarted("730".into(), "AppError_8".into()), cx);
         assert!(l.console.launching.is_none());
         assert!(matches!(l.console.overlay, Some(Overlay::Failed(..))));
+    });
+}
+
+#[test]
+fn saves_are_asked_about_and_put_back() {
+    use super::console::{Act, Overlay, Screen, Value};
+    use arkor_core::library::{GameKind, NewGame};
+    use arkor_launch::saves::{self, Conflict, Report};
+    use arkor_launch::shops::{self, Shop};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = scratch_home();
+    // A game from Epic with its saves in the cloud.
+    let dir = shops::shop_dir(Shop::Epic).unwrap();
+    std::fs::create_dir_all(dir.join("metadata")).unwrap();
+    std::fs::create_dir_all(home.path().join("Fox")).unwrap();
+    let write = |name: &str, text: String| std::fs::write(dir.join(name), text).unwrap();
+    write("user.json", r#"{"account_id": "abc"}"#.into());
+    write(
+        "installed.json",
+        format!(
+            r#"{{"FoxApp": {{"title": "Fox", "install_path": "{}"}}}}"#,
+            home.path().join("Fox").display()
+        ),
+    );
+    write(
+        "metadata/FoxApp.json",
+        r#"{"metadata": {"customAttributes":
+            {"CloudSaveFolder": {"value": "{AppData}/Fox/Saved"}}}}"#
+            .into(),
+    );
+    let mut lib = GameLibrary::load().unwrap();
+    let mut game = NewGame::windows("Fox", home.path().join("Fox"));
+    game.kind = GameKind::Epic {
+        app_name: "FoxApp".into(),
+    };
+    game.origin = Some("epic:FoxApp".into());
+    game.prefix = Some(home.path().join("pfx"));
+    let entry = lib.add(game);
+    lib.save().unwrap();
+    let file = home
+        .path()
+        .join("pfx/drive_c/users/steamuser/AppData/Local/Fox/Saved/one.sav");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "first").unwrap();
+
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update(cx, |l, cx| {
+        l.console_open(Screen::Game(entry.clone()), cx);
+        l.console_open(Screen::Saves(entry.clone()), cx);
+    });
+    cx.run_until_parked();
+    let labels = |l: &Library| -> Vec<String> {
+        l.console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.label.clone()))
+            .collect()
+    };
+    view.update(cx, |l, cx| {
+        assert_eq!(l.console.screen(), Screen::Saves(entry.clone()));
+        assert_eq!(labels(l).len(), 3, "{:?}", labels(l));
+        // Follows the cloud unless told otherwise, in Settings or here.
+        let on = |l: &Library| match &l.console_rows()[0].items[0].look {
+            super::console::Look::Line { value, .. } => value.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(on(l), Value::Switch(true));
+        l.saves_do(Act::SavesToggle, cx);
+        assert_eq!(on(l), Value::Switch(false));
+        assert_eq!(l.profile.cloud_saves, Some(false));
+        l.saves_do(Act::SavesToggle, cx);
+        assert_eq!(l.profile.cloud_saves, None);
+        // The game's screen leads here.
+        let rows = l.game_rows(&entry);
+        assert!(
+            rows.iter()
+                .flat_map(|r| &r.items)
+                .any(|i| { i.act == Act::Screen(Screen::Saves(entry.clone())) })
+        );
+        l.saves_do(Act::SavesCopy, cx);
+    });
+    cx.run_until_parked();
+    let copy = view.update(cx, |l, cx| {
+        assert_eq!(labels(l).len(), 4);
+        let Act::SavesAskRestore(copy) = l.console_rows()[3].items[0].act.clone() else {
+            panic!("no copy")
+        };
+        std::fs::write(&file, "second").unwrap();
+        l.saves_do(Act::SavesAskRestore(copy.clone()), cx);
+        assert!(matches!(
+            &l.console.overlay,
+            Some(Overlay::Ask(_, _, Act::SavesRestore(c))) if *c == copy
+        ));
+        copy
+    });
+    view.update(cx, |l, cx| l.saves_do(Act::SavesRestore(copy), cx));
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "first");
+    view.update(cx, |l, cx| {
+        assert_eq!(labels(l).len(), 5, "what was there is kept, too");
+        // Both sides changed: asked, with the answer that changes nothing in focus.
+        let game = saves::find(&l.games[0].id)
+            .or_else(|_| saves::find(&l.games[1].id))
+            .unwrap();
+        let report = Report {
+            conflict: Some(Conflict {
+                here: Some(1),
+                cloud: Some(2),
+                here_bytes: 10,
+                cloud_bytes: 20,
+            }),
+            ..Default::default()
+        };
+        l.saves_synced(&game, Ok(report), cx);
+        let Some(Overlay::Pick(_, options)) = &l.console.overlay else {
+            panic!("not asked")
+        };
+        let acts: Vec<Act> = options.iter().map(|o| o.1.clone()).collect();
+        assert_eq!(
+            acts,
+            [
+                Act::SavesKeep(entry.clone(), true),
+                Act::SavesKeep(entry.clone(), false),
+                Act::Close
+            ]
+        );
+        assert_eq!(l.console.over_focus.row, 2);
+    });
+    cx.run_until_parked();
+    // The desktop's card.
+    view.update(cx, |l, cx| {
+        l.console.overlay = None;
+        l.console.on = false;
+        assert!(l.render_saves(cx).is_some());
+        // A failed sync starts nothing by itself and is said.
+        let game = saves::find(&l.games[0].id)
+            .or_else(|_| saves::find(&l.games[1].id))
+            .unwrap();
+        l.saves_synced(&game, Err(anyhow::anyhow!("offline")), cx);
+        assert!(l.status.as_ref().unwrap().contains("offline"));
+        assert!(l.running.is_empty());
     });
 }

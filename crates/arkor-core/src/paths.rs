@@ -17,6 +17,15 @@ pub fn stores_dir() -> anyhow::Result<PathBuf> {
         .join("arkor/stores"))
 }
 
+/// `~/.local/share/arkor/saves/<id>`: copies of a game's saves, and how they stand against
+/// the store's cloud.
+pub fn saves_dir(id: &crate::GameId) -> anyhow::Result<PathBuf> {
+    Ok(dirs::data_dir()
+        .context("no XDG data dir")?
+        .join("arkor/saves")
+        .join(id.file_stem()))
+}
+
 /// `~/.config/arkor/profiles`
 pub fn profiles_dir() -> anyhow::Result<PathBuf> {
     Ok(config_dir()?.join("profiles"))

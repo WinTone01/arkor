@@ -28,6 +28,8 @@ pub(super) struct ShopsState {
     owned: HashMap<Shop, Vec<Owned>>,
     installed: HashMap<ShopGame, Installed>,
     logged_in: HashSet<Shop>,
+    /// How each login is kept.
+    kept: HashMap<Shop, shops::vault::Kept>,
     accounts: HashMap<Shop, String>,
     /// Asked the store in this session already.
     asked: HashSet<Shop>,
@@ -213,6 +215,7 @@ impl ShopsState {
         } else {
             self.logged_in.remove(&shop);
         }
+        self.kept.insert(shop, shops::vault::kept(shop));
         match shops::account(shop) {
             Some(name) => self.accounts.insert(shop, name),
             None => self.accounts.remove(&shop),
@@ -230,6 +233,13 @@ impl ShopsState {
 
     pub(super) fn logged_in(&self, shop: Shop) -> bool {
         self.logged_in.contains(&shop)
+    }
+
+    pub(super) fn kept(&self, shop: Shop) -> shops::vault::Kept {
+        self.kept
+            .get(&shop)
+            .copied()
+            .unwrap_or(shops::vault::Kept::Nothing)
     }
 
     pub(super) fn account(&self, shop: Shop) -> Option<&str> {

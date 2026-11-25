@@ -50,6 +50,8 @@ pub struct Profile {
     pub layers: crate::layers::Layers,
     /// Steam games only: what Arkor sets in Steam for the game.
     pub steam: SteamSettings,
+    /// Whether the game's saves follow the store's cloud. `None` = as in Settings.
+    pub cloud_saves: Option<bool>,
 }
 
 /// What Arkor writes into Steam's own settings for a Steam game (Steam starts it).
@@ -380,6 +382,8 @@ pub struct Global {
     /// Steam's downloads are controlled through its developer port (off unless asked for:
     /// any program on the computer can use that port while it is open).
     pub steam_control: bool,
+    /// Saves of Epic and GOG games do not follow the store's cloud (they do unless turned off).
+    pub no_cloud_saves: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Environment for every game (each game's own `env` overrides it).

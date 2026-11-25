@@ -1019,6 +1019,14 @@ impl Library {
                     ),
                 ),
                 line(
+                    Opt::CloudSaves,
+                    "cloud",
+                    t(
+                        "Saves follow the stores' clouds",
+                        "Kayıtlar mağaza bulutuyla eşitlensin",
+                    ),
+                ),
+                line(
                     Opt::DefaultProton,
                     "wine",
                     t("Proton for new games", "Yeni oyunlar için Proton"),
@@ -1224,6 +1232,7 @@ impl Library {
             Opt::SteamControl => Value::Switch(g.steam_control),
             Opt::GlobalHud => Value::Switch(g.mangohud.enabled),
             Opt::FullScreen => Value::Switch(!g.console_windowed),
+            Opt::CloudSaves => Value::Switch(!g.no_cloud_saves),
             Opt::InstallMenu => Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.menu)),
             Opt::InstallDesktop => {
                 Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.desktop))
@@ -1315,6 +1324,7 @@ impl Library {
             Opt::ConsoleIntro => g.console_no_intro = !g.console_no_intro,
             Opt::GlobalHud => g.mangohud.enabled = !g.mangohud.enabled,
             Opt::FullScreen => g.console_windowed = !g.console_windowed,
+            Opt::CloudSaves => g.no_cloud_saves = !g.no_cloud_saves,
             _ => return,
         }
         let r = self.global.save();

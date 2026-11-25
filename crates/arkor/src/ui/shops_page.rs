@@ -3,6 +3,7 @@
 
 use arkor_launch::progress::human_bytes;
 use arkor_launch::shops::Shop;
+use arkor_launch::shops::vault::Kept;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, Context, Div, FontWeight, Window, div, prelude::*, px, relative, uniform_list,
@@ -274,6 +275,18 @@ impl Library {
             }
             None => self.tr("Not logged in", "Giriş yapılmadı").to_string(),
         };
+        // How the login is kept, where Arkor keeps it.
+        let kept = match self.shops.kept(shop) {
+            Kept::Sealed => Some(self.tr(
+                "The login is encrypted on this computer.",
+                "Giriş bu bilgisayarda şifreli duruyor.",
+            )),
+            Kept::Plain => Some(self.tr(
+                "The login is a file only you can read (systemd cannot encrypt it here).",
+                "Giriş yalnızca senin okuyabildiğin bir dosyada (systemd burada şifreleyemiyor).",
+            )),
+            Kept::Nothing => None,
+        };
         div()
             .flex_1()
             .min_w_0()
@@ -281,10 +294,29 @@ impl Library {
             .flex_col()
             .child(
                 div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .truncate()
-                    .child(shop.name()),
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .truncate()
+                            .child(shop.name()),
+                    )
+                    .when_some(kept, |d, text| {
+                        let icon = match self.shops.kept(shop) {
+                            Kept::Sealed => "lock-keyhole",
+                            _ => "lock-open",
+                        };
+                        d.child(
+                            div()
+                                .id(("login-kept", shop as usize))
+                                .flex_none()
+                                .child(style::icon(icon, 11., pal::faint()))
+                                .tooltip(move |_, cx| widgets::tip(text.into(), cx)),
+                        )
+                    }),
             )
             .child(
                 div()

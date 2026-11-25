@@ -21,6 +21,7 @@ pub mod optiscaler;
 pub mod progress;
 pub mod proton_dl;
 pub mod reshade;
+pub mod saves;
 pub mod self_update;
 pub mod shops;
 pub mod shortcuts;
@@ -382,10 +383,37 @@ pub fn run(
     if let Some(mut extra) = extra_child {
         let _ = extra.kill();
     }
+    upload_saves(id);
     if !profile.post_launch.trim().is_empty() {
         shell(&profile.post_launch, &shell_env, working_dir)?;
     }
     Ok(status.code().unwrap_or(1))
+}
+
+/// Uploads what the game saved, in a process of its own: whoever started the game need not
+/// wait for it, and stopping the game does not stop it.
+fn upload_saves(id: &GameId) {
+    use std::os::unix::process::CommandExt;
+    if !saves::follows(id) {
+        return;
+    }
+    let Ok(me) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(me);
+    cmd.args(["saves", "upload"])
+        .arg(id.to_string())
+        .stdin(std::process::Stdio::null());
+    // SAFETY: only an async-signal-safe syscall between fork and exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    if let Err(e) = cmd.spawn() {
+        eprintln!("arkor: the saves were not uploaded: {e}");
+    }
 }
 
 fn shell(

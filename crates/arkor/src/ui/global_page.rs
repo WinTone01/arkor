@@ -295,7 +295,19 @@ impl Library {
                     )),
                 )
                 .child(
-                    widgets::section(self.tr("Store games", "Mağaza oyunları")).child(
+                    widgets::section(self.tr("Store games", "Mağaza oyunları"))
+                        .child(widgets::setting_row(
+                            self.tr("Saves follow the stores' clouds", "Kayıtlar mağaza bulutuyla eşitlensin"),
+                            self.tr(
+                                "Epic and GOG games: newer saves are fetched before a game starts and uploaded when it ends. Copies are kept; each game can be set on its own.",
+                                "Epic ve GOG oyunları: yeni kayıtlar oyun başlamadan alınır, kapanınca yüklenir. Kopyalar saklanır; her oyun ayrıca ayarlanabilir.",
+                            ),
+                            switch("cloud-saves-all", !self.global.no_cloud_saves, cx, |this| {
+                                this.global.no_cloud_saves = !this.global.no_cloud_saves
+                            }),
+                        ))
+                        .child(widgets::divider())
+                        .child(
                         widgets::setting_row(
                             self.tr("Games folder", "Oyun klasörü"),
                             self.global.games_dir().display().to_string(),

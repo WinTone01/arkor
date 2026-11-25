@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -108,6 +109,7 @@ pub fn ensure(shop: Shop) -> anyhow::Result<PathBuf> {
 pub fn command(shop: Shop) -> anyhow::Result<Command> {
     let bin = ensure(shop)?;
     let dir = super::shop_dir(shop)?;
+    super::vault::settle(shop);
     let mut cmd = Command::new(bin);
     match shop {
         Shop::Epic => {
@@ -186,11 +188,67 @@ fn error_line(text: &str) -> Option<String> {
 
 /// Runs a helper to its end (logins, lists, information). Blocking.
 pub fn output(mut cmd: Command) -> anyhow::Result<Output> {
-    let out = cmd.output().context("running the store helper")?;
+    let out = cmd.output().context("running the store helper");
+    // The helper may have renewed the login.
+    super::vault::settle_all();
+    let out = out?;
     Ok(Output {
         ok: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    })
+}
+
+/// As [`output`], ended after `patience` or when `stop` is set. Blocking.
+pub fn output_within(
+    mut cmd: Command,
+    patience: Duration,
+    stop: &AtomicBool,
+) -> anyhow::Result<Output> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .context("running the store helper")?;
+    let pipes: [Option<Box<dyn Read + Send>>; 2] = [
+        child.stdout.take().map(|p| Box::new(p) as _),
+        child.stderr.take().map(|p| Box::new(p) as _),
+    ];
+    let readers = pipes.map(|pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    });
+    let began = Instant::now();
+    let group = -(child.id() as i32);
+    let ended = loop {
+        if let Some(status) = child.try_wait()? {
+            break Ok(status);
+        }
+        let stopped = stop.load(Ordering::Relaxed);
+        if stopped || began.elapsed() > patience {
+            // SAFETY: plain syscall on the helper's own process group.
+            unsafe { libc::kill(group, libc::SIGKILL) };
+            let _ = child.wait();
+            break Err(anyhow::anyhow!(if stopped {
+                tools::STOPPED
+            } else {
+                "the store did not answer in time"
+            }));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    super::vault::settle_all();
+    let [stdout, stderr] = readers.map(|r| r.join().unwrap_or_default());
+    Ok(Output {
+        ok: ended?.success(),
+        stdout,
+        stderr,
     })
 }
 
@@ -267,6 +325,7 @@ pub fn run(mut cmd: Command, label: &str, total: Option<u64>) -> anyhow::Result<
     let mut state = LogState::default();
     let (mut stdout, mut stderr) = (Tail::default(), Tail::default());
     let mut stopping: Option<Instant> = None;
+    let mut settled = Instant::now();
     let status = loop {
         while let Ok((err, line)) = rx.try_recv() {
             let read = parse_line(&line);
@@ -297,8 +356,14 @@ pub fn run(mut cmd: Command, label: &str, total: Option<u64>) -> anyhow::Result<
             }
             _ => {}
         }
+        // The login is renewed at the start: not left unsealed for a long download.
+        if settled.elapsed() > Duration::from_secs(20) {
+            super::vault::settle_all();
+            settled = Instant::now();
+        }
         std::thread::sleep(Duration::from_millis(150));
     };
+    super::vault::settle_all();
     if stopping.is_some() {
         // Workers the helper left behind.
         // SAFETY: as above.

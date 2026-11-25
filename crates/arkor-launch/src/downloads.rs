@@ -139,7 +139,7 @@ fn prune(all: Vec<(String, PathBuf)>, kept: &Path) -> anyhow::Result<()> {
             && !same.starts_with(&kept)
             && same.starts_with(&root)
         {
-            std::fs::remove_dir_all(&dir)?;
+            arkor_core::fs_guard::remove_dir_in(&dir, &root)?;
         }
     }
     Ok(())

@@ -474,6 +474,36 @@ pub fn http_get_bearer(url: &str, token: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// As [`http_get_bearer`] for a list of things: `None` when there is none (404).
+pub fn http_get_json(url: &str, token: &str) -> anyhow::Result<Option<String>> {
+    use anyhow::Context;
+    let mut child = std::process::Command::new("curl")
+        .args(["-sSL", "--max-time", "30", "-A", "arkor"])
+        .args(["-H", "Accept: application/json", "-H", "@-"])
+        .args(["-w", "\n%{http_code}"])
+        .arg(url)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("running curl")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        writeln!(stdin, "Authorization: Bearer {token}")?;
+    }
+    let out = child.wait_with_output()?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
+    match code.trim() {
+        "200" => Ok(Some(body.to_string())),
+        "404" => Ok(None),
+        code => anyhow::bail!(
+            "request failed: {url}: {code} {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+    }
+}
+
 /// Splits `packages` into those in the configured pacman repositories and the rest (AUR or
 /// not packaged for this distribution).
 pub fn split_repo_packages<'a>(packages: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {

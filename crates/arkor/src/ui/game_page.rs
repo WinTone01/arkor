@@ -76,6 +76,10 @@ impl Library {
             .detach();
             return;
         }
+        // Newer saves from the cloud first; it starts by itself then.
+        if self.saves_first(&id, cx) {
+            return;
+        }
         let screen = self.console.on.then_some(self.console.screen_px);
         let (mut child, log) = match spawn_launch(&id, screen) {
             Ok(c) => c,
@@ -122,6 +126,7 @@ impl Library {
                 // Stopped from here: not a failure either.
                 let failure = failure.filter(|_| !this.stopping.remove(&id.to_string()));
                 this.running.remove(&id.to_string());
+                this.saves_after(&id, cx);
                 // Console mode comes back to the front when the game ends.
                 this.console.come_back = this.console.on;
                 if let Some(why) = &failure
@@ -303,8 +308,8 @@ impl Library {
         if result.is_ok()
             && let Some(prefix) = prefix
         {
-            result = std::fs::remove_dir_all(&prefix)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", prefix.display()));
+            // It may hold saves: from the trash it can be put back.
+            result = arkor_core::fs_guard::trash(&prefix);
         }
         self.selection = None;
         self.reload_games();
@@ -679,7 +684,10 @@ impl Library {
             )))
             .when_some(deletable, |d, prefix| {
                 d.child(widgets::setting_row(
-                    self.tr("Also delete its prefix", "Prefix'ini de sil"),
+                    self.tr(
+                        "Also move its prefix to the trash",
+                        "Prefix'ini de çöpe taşı",
+                    ),
                     format!(
                         "{} · {}",
                         self.tr(
@@ -1398,6 +1406,8 @@ fn spawn_launch(
     let child = cmd
         .arg("launch")
         .arg(id.to_string())
+        // They were looked at here (see `saves_first`).
+        .env("ARKOR_SAVES_DONE", "1")
         // Set for Arkor's own window only (see `ui::run`).
         .env_remove("DISABLE_MANGOHUD")
         .stdin(std::process::Stdio::null())

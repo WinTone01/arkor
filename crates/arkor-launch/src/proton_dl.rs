@@ -237,8 +237,7 @@ pub fn uninstall(path: &Path) -> anyhow::Result<()> {
         "only builds in {} can be removed",
         root.display()
     );
-    std::fs::remove_dir_all(path)?;
-    Ok(())
+    arkor_core::fs_guard::remove_dir_in(path, &root)
 }
 
 #[cfg(test)]

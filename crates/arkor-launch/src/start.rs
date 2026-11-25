@@ -11,7 +11,6 @@
 //! running game.
 
 use std::collections::BTreeMap;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -35,6 +34,10 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
                 .get(&id.id)
                 .with_context(|| format!("`{id}` is not in the library"))?
                 .clone();
+            // Newer saves from the cloud (Arkor's window did that itself).
+            if std::env::var_os("ARKOR_SAVES_DONE").is_none() {
+                crate::saves::before_launch(id);
+            }
             // What the game's settings use but is missing (a layer, a "Latest" Proton).
             crate::downloads::ensure_needs(&Profile::load(id).unwrap_or_default());
             match &game.kind {
@@ -57,6 +60,7 @@ fn epic_game(
     app_name: &str,
     global: &Global,
 ) -> anyhow::Result<i32> {
+    crate::shops::vault::settle(crate::shops::Shop::Epic);
     let legendary = epic::Legendary::locate_for(app_name)
         .context("legendary not found: log in to Epic on Arkor's Stores page")?;
     anyhow::ensure!(
@@ -73,6 +77,7 @@ fn amazon_game(
     game_id: &str,
     global: &Global,
 ) -> anyhow::Result<i32> {
+    crate::shops::vault::settle(crate::shops::Shop::Amazon);
     let nile = arkor_stores::amazon::Nile::locate_for(game_id)
         .context("this Amazon game is not installed, or nile is missing")?;
     let command = nile.launch_command(game_id, &umu_wrapper(id)?);
@@ -108,11 +113,64 @@ fn through_client(
     if !global.updates_on_launch() {
         env.insert("UMU_RUNTIME_UPDATE".into(), "0".into());
     }
-    let err = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .envs(&env)
-        .exec();
-    Err(err).with_context(|| format!("failed to exec `{}`", argv[0]))
+    let code = wait_for_game(
+        std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .envs(&env),
+    )
+    .with_context(|| format!("failed to start `{}`", argv[0]));
+    crate::shops::vault::settle_all();
+    code
+}
+
+/// Runs a store's client and waits for the game it starts: legendary ends as soon as the
+/// game runs, which would look like the game had ended.
+fn wait_for_game(client: &mut std::process::Command) -> anyhow::Result<i32> {
+    // What the client leaves behind becomes a child of this process.
+    // SAFETY: plain syscall.
+    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
+    let mut client = client.spawn()?;
+    // The client renewed the login at its start: sealed right away, not after hours of play.
+    std::thread::spawn(|| {
+        for wait in [5, 20, 60] {
+            std::thread::sleep(std::time::Duration::from_secs(wait));
+            crate::shops::vault::settle_all();
+        }
+    });
+    let status = client.wait()?;
+    let mut code = status.code().unwrap_or(1);
+    // `arkor run`, which waits for the game itself.
+    let me = std::env::current_exe().ok();
+    while let Some(pid) = own_child(me.as_deref()) {
+        let mut status = 0;
+        // SAFETY: waits for a child of this process.
+        if unsafe { libc::waitpid(pid, &mut status, 0) } == pid {
+            code = if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else {
+                1
+            };
+        }
+    }
+    Ok(code)
+}
+
+/// A child of this process that is `arkor run`.
+fn own_child(me: Option<&Path>) -> Option<i32> {
+    let parent = std::process::id().to_string();
+    std::fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
+        let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+        // "pid (name) state parent ...": the name may hold spaces and brackets.
+        let mut rest = stat.rsplit_once(')')?.1.split_whitespace();
+        let (state, of) = (rest.next()?, rest.next()?);
+        let ours = of == parent && state != "Z";
+        let exe = std::fs::read_link(e.path().join("exe")).ok();
+        // Not the one that uploads the saves afterwards.
+        let run = std::fs::read(e.path().join("cmdline"))
+            .is_ok_and(|c| c.split(|b| *b == 0).nth(1) == Some(b"run"));
+        (ours && run && exe.is_some() && exe.as_deref() == me).then_some(pid)
+    })
 }
 
 fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {

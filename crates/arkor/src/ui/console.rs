@@ -80,6 +80,8 @@ pub(super) enum Screen {
     SettingsCat(super::console_settings::AppCat),
     /// What Steam has about a game.
     Steam(u32, SteamPage),
+    /// A library game's saves.
+    Saves(String),
 }
 
 impl Screen {
@@ -128,6 +130,8 @@ pub(super) enum Opt {
     Autostart,
     /// Games started from console mode full screen in gamescope.
     FullScreen,
+    /// Saves follow the stores' clouds.
+    CloudSaves,
     GlobalHud,
     /// One of a game's settings.
     Game(super::console_settings::GameOpt),
@@ -172,6 +176,17 @@ pub(super) enum Act {
     SteamLicence(u32),
     Licence(bool),
     ShowSteamWindow,
+    /// A game's saves: follow the cloud, now, the question, its answer (this computer's?),
+    /// its answer for later.
+    SavesToggle,
+    SavesSync,
+    SavesAsk,
+    SavesKeep(String, bool),
+    SavesLater(String),
+    /// Copies of them.
+    SavesCopy,
+    SavesAskRestore(String),
+    SavesRestore(String),
     SteamDlc(u32, u32, bool),
     WorkshopMenu(u32, String),
     SteamWorkshop(u32, String, bool),
@@ -756,6 +771,7 @@ impl Library {
             }
             Screen::SettingsCat(c) => self.app_cat_rows(c),
             Screen::Steam(app, page) => self.steam_page_rows(app, page),
+            Screen::Saves(id) => self.saves_rows(&id),
         }
     }
 
@@ -1244,7 +1260,7 @@ impl Library {
         self.console_overlay(Overlay::Pick(label, options));
     }
 
-    fn game_rows(&self, id: &str) -> Vec<Row> {
+    pub(super) fn game_rows(&self, id: &str) -> Vec<Row> {
         let Some(g) = self.library.get(id).cloned() else {
             return Vec::new();
         };
@@ -1286,6 +1302,10 @@ impl Library {
             self.tr("Settings", "Ayarlar"),
             false,
         ));
+        pills.extend(
+            self.saves_pill()
+                .filter(|_| self.entry().is_some_and(|e| e.id == g.id)),
+        );
         if let Some((shop, id)) = &shop {
             pills.push(match self.removing_pill(*shop, id) {
                 Some(pill) => pill,
@@ -1962,6 +1982,11 @@ impl Library {
             }
             Some(s) => match s.split_once('/') {
                 Some(("game", id)) => vec![Screen::Library, Screen::Game(id.into())],
+                Some(("saves", id)) => vec![
+                    Screen::Library,
+                    Screen::Game(id.into()),
+                    Screen::Saves(id.into()),
+                ],
                 Some(("login", shop)) => {
                     self.shops.on_open = Some(("login".into(), shop.into()));
                     vec![Screen::Stores]
@@ -1986,7 +2011,7 @@ impl Library {
     pub(super) fn console_first(&mut self, cx: &mut Context<Self>) {
         match self.console.screen() {
             s @ Screen::SettingsCat(_) => self.console_open(s, cx),
-            Screen::Game(id) | Screen::GameSettings(id) => {
+            Screen::Game(id) | Screen::GameSettings(id) | Screen::Saves(id) => {
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == id) {
                     self.select(Selection::Game(ix), cx);
                 }
@@ -2009,9 +2034,10 @@ impl Library {
         let entry = self.shop_entry(*shop, id);
         let of_it = |s: &Screen| match s {
             Screen::ShopGame(sh, i) => sh == shop && i == id,
-            Screen::Game(e) | Screen::GameSettings(e) | Screen::GameCat(e, _) => {
-                entry.as_deref() == Some(e.as_str())
-            }
+            Screen::Game(e)
+            | Screen::GameSettings(e)
+            | Screen::GameCat(e, _)
+            | Screen::Saves(e) => entry.as_deref() == Some(e.as_str()),
             _ => false,
         };
         if self.console.stack.iter().any(of_it) {
@@ -2388,6 +2414,13 @@ impl Library {
         if let Some(l) = self.console.launching.clone()
             && !l.dismissed
         {
+            // Waiting for its saves: the game starts without them.
+            if self.saves.starting(&l.id) {
+                if nav == Nav::Back {
+                    self.saves_skip();
+                }
+                return;
+            }
             match nav {
                 Nav::Back | Nav::Accept => self.console_back(cx),
                 Nav::Search if l.steam_may_ask() => self.console_show_steam(None, cx),
@@ -2627,17 +2660,37 @@ impl Library {
         self.console.steam_shown = None;
         self.cue(Cue::Launch);
         self.select(Selection::Game(ix), cx);
+        let entry = self.games[ix].id.id.clone();
+        // The same screen goes on when its saves were looked at.
+        let waited = self
+            .console
+            .launching
+            .as_ref()
+            .is_some_and(|l| l.id == entry);
+        if !waited {
+            self.console_launch_screen(&entry);
+        }
+        if let Some(l) = self.console.launching.as_mut() {
+            l.at = Instant::now();
+            l.steam = steam;
+        }
+        self.play(cx);
+        if !waited {
+            self.launch_over_soon(cx);
+        }
+    }
+
+    /// The screen of a game that starts.
+    pub(super) fn console_launch_screen(&mut self, entry: &str) {
         self.console.launching = Some(Launch {
-            id: self.games[ix].id.id.clone(),
+            id: entry.to_string(),
             at: Instant::now(),
             playing: false,
             dismissed: false,
-            steam,
+            steam: None,
             came: false,
             updating: false,
         });
-        self.play(cx);
-        self.launch_over_soon(cx);
     }
 
     /// A game Steam has to update first: Steam does it in the background, the game starts
@@ -2951,6 +3004,14 @@ impl Library {
                 self.console.overlay = None;
                 self.steam_do(move || steam_control::place(appid, place), |_| None, cx);
             }
+            Act::SavesToggle
+            | Act::SavesSync
+            | Act::SavesAsk
+            | Act::SavesKeep(..)
+            | Act::SavesLater(_)
+            | Act::SavesCopy
+            | Act::SavesAskRestore(_)
+            | Act::SavesRestore(_) => self.saves_do(act, cx),
             Act::SteamMoveAsk(app) => self.steam_move_ask(app, cx),
             Act::SteamMove(app, folder) => self.steam_move(app, folder, cx),
             Act::SteamMoveMenu => self.steam_move_menu(),
@@ -3359,7 +3420,7 @@ impl Library {
 
     /// The black screen stays while the game runs (its window lies on top of it); when the
     /// game ends, or does not start, console mode is back.
-    fn launch_over_soon(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn launch_over_soon(&mut self, cx: &mut Context<Self>) {
         let timer = cx.background_executor().clone();
         let steam = self
             .console
@@ -3398,7 +3459,7 @@ impl Library {
                         .running
                         .keys()
                         .any(|k| k.split_once(':').is_some_and(|(_, i)| i == id));
-                    if !running {
+                    if !running && !this.saves.starting(&id) {
                         this.console.launching = None;
                         cx.notify();
                         return false;

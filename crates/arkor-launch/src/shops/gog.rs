@@ -62,10 +62,8 @@ fn account_name() -> anyhow::Result<String> {
 }
 
 pub(super) fn logout() -> anyhow::Result<()> {
-    let path = shop_dir(Shop::Gog)?.join("auth.json");
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
+    // gogdl has nothing to say to GOG: the login is just removed (by the caller).
+    let _ = std::fs::remove_file(shop_dir(Shop::Gog)?.join("auth.json"));
     Ok(())
 }
 
@@ -375,8 +373,7 @@ pub(super) fn uninstall(game: &Installed) -> anyhow::Result<()> {
             "{} does not look like this game's folder; delete it by hand",
             game.path.display()
         );
-        std::fs::remove_dir_all(&game.path)
-            .with_context(|| format!("deleting {}", game.path.display()))?;
+        arkor_core::fs_guard::remove_dir(&game.path)?;
     }
     let mut f = read()?;
     f.installed.retain(|e| e.app_name != game.id);

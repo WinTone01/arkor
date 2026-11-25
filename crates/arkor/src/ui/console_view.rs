@@ -427,9 +427,10 @@ impl Library {
     /// Follows the focus with the picture behind the screen, when it rests.
     fn step_behind(&mut self, item: &Option<Item>, f: Frame, cx: &mut Context<Self>) {
         let art = match self.console.screen() {
-            Screen::Game(id) | Screen::GameSettings(id) | Screen::GameCat(id, _) => {
-                Some(Art::Game(id))
-            }
+            Screen::Game(id)
+            | Screen::GameSettings(id)
+            | Screen::GameCat(id, _)
+            | Screen::Saves(id) => Some(Art::Game(id)),
             Screen::ShopGame(shop, id) => Some(Art::Shop(shop, id)),
             Screen::Steam(app, _) => Some(Art::Shop(Shop::Steam, app.to_string())),
             _ => match item.as_ref().map(|i| &i.look) {
@@ -891,6 +892,10 @@ impl Library {
             Screen::GameSettings(id) => {
                 let (title, _) = self.spotlight_game(&id)?;
                 (title, vec![self.tr("Settings", "Ayarlar").to_string()])
+            }
+            Screen::Saves(id) => {
+                let (title, _) = self.spotlight_game(&id)?;
+                (title, vec![self.tr("Saves", "Oyun kayıtları").to_string()])
             }
             Screen::GameCat(id, c) => {
                 let (title, _) = self.spotlight_game(&id)?;
@@ -2047,6 +2052,7 @@ impl Library {
         {
             l.playing = true;
         }
+        let saves = self.saves.starting(&l.id);
         let g = self.library.get(&l.id)?.clone();
         let cover: Option<PathBuf> = self.covers.get(&l.id).cloned().flatten();
         let t = if f.still {
@@ -2098,6 +2104,7 @@ impl Library {
                     .text_color(gpui::white().opacity(0.7))
                     .child(super::loader::spinner(40. * u, f.still))
                     .child(match &l.steam {
+                        _ if saves => self.saves_looking().to_string(),
                         Some(app) => self.steam_launch_task(app).unwrap_or_else(|| {
                             self.tr("Steam starts the game…", "Steam oyunu başlatıyor…")
                                 .to_string()
@@ -2105,6 +2112,21 @@ impl Library {
                         None => self.t().launching.to_string(),
                     }),
             );
+            if saves {
+                screen = screen.child(
+                    div()
+                        .id("skip-saves")
+                        .flex()
+                        .items_center()
+                        .gap(px(10. * u))
+                        .cursor_pointer()
+                        .text_size(px(22. * u))
+                        .text_color(gpui::white().opacity(0.8))
+                        .child(self.console_glyph(if self.console.pad { "B" } else { "Esc" }, f))
+                        .child(self.tr("Start without it", "Eşitlemeden başlat"))
+                        .on_click(cx.listener(|this, _, _, _| this.saves_skip())),
+                );
+            }
             // Nothing for a while: Steam may want an answer (a licence, a sync conflict).
             if l.steam_may_ask() {
                 let pad = self.console.pad;

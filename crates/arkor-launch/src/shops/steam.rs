@@ -220,13 +220,16 @@ fn remove_files(m: &lib::Manifest) -> anyhow::Result<()> {
             !lib::folder_shared(&m.path, &m.folder),
             "another Steam game uses the same folder: remove it in Steam"
         );
-        std::fs::remove_dir_all(&real)?;
+        arkor_core::fs_guard::remove_dir_keeping(
+            &real,
+            [steamapps.to_path_buf(), steamapps.join("common")],
+        )?;
     }
     // What was downloaded and not put together yet.
     let downloading = steamapps.join("downloading");
     let begun = downloading.join(m.appid.to_string());
     if begun.is_dir() && !begun.is_symlink() {
-        std::fs::remove_dir_all(&begun)?;
+        arkor_core::fs_guard::remove_dir_keeping(&begun, [downloading.clone()])?;
     }
     let state = format!("state_{}_", m.appid);
     for e in std::fs::read_dir(&downloading)

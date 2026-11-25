@@ -48,6 +48,9 @@ usage:
   arkor update [--check]                  update Arkor itself from its GitHub releases
   arkor layer list | install <vksumi|vknemu|mako> | remove <id>
                                           extra Vulkan layers (user folder)
+  arkor saves status <id> | sync <id> [--keep here|cloud] | upload <id>
+              | copy <id> | list <id> | restore <id> <copy>
+                                          saves of Epic and GOG games: the cloud, and copies
   arkor backup create [--with-prefixes] | restore <file>
                                           back up / restore Arkor's data";
 
@@ -118,6 +121,7 @@ fn main() -> anyhow::Result<()> {
         Some("optiscaler") => optiscaler(&args[1..]),
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
         Some("reshade") => reshade(&args[1..]),
+        Some("saves") => saves(&args[1..]),
         Some("backup") => backup(&args[1..]),
         Some("layer") => layer(&args[1..]),
         Some("update") => self_update(args.get(1).is_some_and(|a| a == "--check")),
@@ -626,6 +630,68 @@ fn backup(args: &[String]) -> anyhow::Result<()> {
             backup::restore(std::path::Path::new(arg(args, 1)?))?;
             println!("restored");
         }
+        _ => anyhow::bail!(USAGE),
+    }
+    Ok(())
+}
+
+fn saves(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::saves::{self, Prefer, Report};
+    let id: GameId = arg(args, 1)?.parse()?;
+    let say = |r: &Report| match r {
+        Report {
+            conflict: Some(_), ..
+        } => {
+            eprintln!("arkor: the saves changed here and in the cloud; nothing was touched");
+            eprintln!("arkor: choose with `arkor saves sync {id} --keep here|cloud`");
+        }
+        r if r.downloaded => eprintln!("arkor: saves downloaded from the cloud"),
+        r if r.uploaded => eprintln!("arkor: saves uploaded to the cloud"),
+        _ => eprintln!("arkor: the saves are up to date"),
+    };
+    match args.first().map(String::as_str) {
+        Some("status") => {
+            let s = saves::state(&id);
+            println!(
+                "synced    {}",
+                s.synced.map_or("never".into(), |t| t.to_string())
+            );
+            println!(
+                "conflict  {}",
+                if s.conflict.is_some() { "yes" } else { "no" }
+            );
+            if let Some(e) = s.error {
+                println!("error     {e}");
+            }
+        }
+        Some("sync") => {
+            let prefer = match (args.get(2).map(String::as_str), args.get(3)) {
+                (None, _) => Prefer::Ask,
+                (Some("--keep"), Some(k)) if k == "here" => Prefer::Here,
+                (Some("--keep"), Some(k)) if k == "cloud" => Prefer::Cloud,
+                _ => anyhow::bail!(USAGE),
+            };
+            say(&saves::sync(
+                &saves::find(&id)?,
+                prefer,
+                &Default::default(),
+            )?);
+        }
+        Some("upload") => {
+            if let Some(r) = saves::after_exit(&id) {
+                say(&r?);
+            }
+        }
+        Some("copy") => println!("{} kept", saves::copy_now(&saves::find(&id)?)?),
+        Some("list") => {
+            for s in saves::copies(&id) {
+                println!(
+                    "{:<16} {:?} {} files, {} bytes",
+                    s.id, s.why, s.files, s.bytes
+                );
+            }
+        }
+        Some("restore") => saves::restore(&id, arg(args, 2)?)?,
         _ => anyhow::bail!(USAGE),
     }
     Ok(())

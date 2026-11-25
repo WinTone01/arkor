@@ -12,6 +12,7 @@ mod epic;
 mod gog;
 pub mod helper;
 mod steam;
+pub mod vault;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -103,16 +104,7 @@ pub fn logged_in(shop: Shop) -> bool {
     if shop == Shop::Steam {
         return steam::logged_in();
     }
-    let Ok(dir) = paths::stores_dir().map(|d| d.join(shop.key())) else {
-        return false;
-    };
-    let file = match shop {
-        Shop::Epic => dir.join("user.json"),
-        Shop::Gog => dir.join("auth.json"),
-        Shop::Amazon => dir.join("nile/current_user.json"),
-        Shop::Steam => return false,
-    };
-    std::fs::read_to_string(file).is_ok_and(|t| !["", "{}", "null"].contains(&t.trim()))
+    vault::kept(shop) != vault::Kept::Nothing
 }
 
 /// The account's name, when known.
@@ -171,6 +163,7 @@ pub fn find_code(shop: Shop, text: &str) -> Option<String> {
 
 /// Finishes logging in with the code from [`find_code`]. Blocking.
 pub fn finish_login(login: &Login, code: &str) -> anyhow::Result<()> {
+    vault::prepare(login.shop);
     let name = match login.shop {
         Shop::Epic => epic::finish_login(code)?,
         Shop::Gog => gog::finish_login(code)?,
@@ -197,6 +190,7 @@ pub fn logout(shop: Shop) -> anyhow::Result<()> {
         Shop::Amazon => amazon::logout()?,
         Shop::Steam => anyhow::bail!("log out of Steam in Steam itself"),
     }
+    vault::forget(shop);
     let dir = shop_dir(shop)?;
     for f in ["account", "owned.json"] {
         let _ = std::fs::remove_file(dir.join(f));
@@ -608,7 +602,7 @@ pub(crate) fn cancelled(key: &str) {
         && order.fresh
         && deletable(&order.folder)
     {
-        let _ = std::fs::remove_dir_all(&order.folder);
+        let _ = arkor_core::fs_guard::remove_dir(&order.folder);
     }
     if let Ok(dir) = shop_dir(shop) {
         match shop {
@@ -667,22 +661,7 @@ pub use steam::{GAME_RUNS, HELD};
 /// Whether a game folder may be deleted as a whole: a real folder, and nothing that could
 /// hold more than one game (home, a drive, the games folder itself).
 fn deletable(dir: &Path) -> bool {
-    let Ok(real) = std::fs::canonicalize(dir) else {
-        return false;
-    };
-    let home = dirs::home_dir().and_then(|h| std::fs::canonicalize(h).ok());
-    let holds_library = arkor_core::Global::load_or_import()
-        .map(|g| g.games_dir())
-        .ok()
-        .and_then(|d| std::fs::canonicalize(d).ok())
-        .is_some_and(|d| d.starts_with(&real));
-    real.is_dir()
-        && !dir.is_symlink()
-        && dir.is_absolute()
-        && real.components().count() > 3
-        && !holds_library
-        && !home.is_some_and(|h| h.starts_with(&real))
-        && !real.join("drive_c").exists()
+    arkor_core::fs_guard::check(dir).is_ok_and(|real| !real.join("drive_c").exists())
 }
 
 /// Deletes an installed game's files. The library entry and its prefix (saves) are the

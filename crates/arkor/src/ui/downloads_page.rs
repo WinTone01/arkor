@@ -132,13 +132,7 @@ fn remove_dir(dir: &Path) -> anyhow::Result<()> {
     let root = dirs::data_dir()
         .ok_or_else(|| anyhow::anyhow!("no XDG data dir"))?
         .join("arkor");
-    anyhow::ensure!(
-        dir.starts_with(&root) && dir != root,
-        "{} is not one of Arkor's downloads",
-        dir.display()
-    );
-    std::fs::remove_dir_all(dir)?;
-    Ok(())
+    arkor_core::fs_guard::remove_dir_in(dir, &root)
 }
 
 #[derive(Default)]

@@ -191,6 +191,9 @@ fn linux_game(_: &Library, g: &LibraryGame) -> bool {
 fn steam_game(_: &Library, g: &LibraryGame) -> bool {
     matches!(g.kind, GameKind::Steam { .. })
 }
+fn cloud_saves(lib: &Library, _: &LibraryGame) -> bool {
+    lib.saves_apply()
+}
 fn has_other_layers(lib: &Library, _: &LibraryGame) -> bool {
     lib.has_other_layers()
 }
@@ -224,6 +227,20 @@ pub(super) const FEATURES: &[Feature] = &[
         applies: always,
         active: None,
         render: |l, cx| l.render_exec_card(cx),
+    },
+    Feature {
+        id: "saves",
+        tab: GameTab::Game,
+        icon: "cloud",
+        name: ("Saves", "Oyun kayıtları"),
+        desc: (
+            "The store's cloud, and copies of the saves that can be put back.",
+            "Mağazanın bulutu ve geri yüklenebilecek kayıt kopyaları.",
+        ),
+        keywords: "save cloud sync backup restore kayıt bulut eşitle yedek geri yükle epic gog",
+        applies: cloud_saves,
+        active: None,
+        render: |l, cx| l.render_saves(cx),
     },
     Feature {
         id: "shortcuts",
@@ -1206,7 +1223,8 @@ impl Library {
                     cx.listener(|this, _, _, cx| this.go(super::shell::Nav::Library, cx)),
                 ),
             ))
-            .child(hero);
+            .child(hero)
+            .children(self.render_saves_question(cx));
         let mut content = div().flex().flex_col().gap_4();
 
         let query = self.feature_query.trim().to_string();

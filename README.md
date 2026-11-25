@@ -168,7 +168,8 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       Log in in Arkor's own login window (nothing to copy), see every game you own and
       <b>install</b> it: pause and resume, updates, file checks and removal, single DLC,
       GOG's Linux versions and languages. Before installing, Arkor says how a game runs on
-      Linux (<b>anti-cheat</b>, <b>ProtonDB</b>, Steam Deck). Logins stay on your computer.
+      Linux (<b>anti-cheat</b>, <b>ProtonDB</b>, Steam Deck). <b>Cloud saves</b> of Epic and GOG games, with
+      copies you can put back. Logins stay on your computer, encrypted by systemd.
     </td>
     <td valign="top">
       <img src="docs/icons/console.svg" width="40"><br>
@@ -271,6 +272,7 @@ Everything in the window is also scriptable:
 | `arkor run <id> -- <command>` | Runs any command with a game's settings |
 | `arkor tool <id> winecfg \| winetricks \| run <file>` | Prefix tools |
 | `arkor proton installed \| list \| install` | Proton builds |
+| `arkor saves sync \| list \| restore <id>` | Cloud saves of Epic and GOG games, and copies of them |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor update [--check]` | Updates Arkor to the latest release |
 
@@ -289,6 +291,7 @@ Run `arkor help` for the full list.
 | Settings, library, game profiles | `~/.config/arkor/` |
 | Launch logs, download queue | `~/.local/state/arkor/` |
 | umu-run, anti-cheat runtimes, downloaded tools, store logins | `~/.local/share/arkor/` |
+| Copies of saves | `~/.local/share/arkor/saves/` |
 | Games installed from stores | `~/Games/Arkor/Games/` (changeable in Settings) |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam and Faugus) |
 | Wine prefixes of new games | `~/Games/Arkor/Prefixes/` (changeable in Settings) |

@@ -31,6 +31,7 @@ mod intro;
 mod kwin;
 mod loader;
 mod protons;
+mod saves;
 mod sgdb_picker;
 mod shell;
 mod shops;
@@ -153,6 +154,8 @@ pub struct Library {
     downloads: downloads_page::DownloadsState,
     /// Steam's settings for the selected Steam game.
     steam: steam_card::SteamState,
+    /// The selected game's saves and the cloud's.
+    saves: saves::SavesUi,
     /// Store accounts and their games.
     shops: shops::ShopsState,
     /// The window was in use when it was last drawn.
@@ -224,6 +227,7 @@ impl Library {
             settings_tab: Default::default(),
             downloads: Default::default(),
             steam: Default::default(),
+            saves: Default::default(),
             shops: shops::ShopsState::load(),
             window_active: true,
             sgdb: None,
@@ -514,6 +518,7 @@ impl Library {
             });
             self.tools.select(&self.games[ix]);
             self.steam_refresh(true);
+            self.saves_load();
             self.sgdb = None;
             self.find_game_folders();
         }
@@ -713,6 +718,8 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
     // SAFETY: called before any threads are spawned. Games started from the UI get it
     // removed again (see `game_page::spawn_launch`).
     unsafe { std::env::set_var("DISABLE_MANGOHUD", "1") };
+    // Logins an older Arkor kept as plain files.
+    std::thread::spawn(arkor_launch::shops::vault::settle_all);
     let global = Global::load_or_import().unwrap_or_default();
     gpui::application()
         .with_assets(icons::ArkorAssets)
