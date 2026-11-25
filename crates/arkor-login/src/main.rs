@@ -13,17 +13,15 @@
 //!
 //! It is a program of its own because Arkor's window toolkit cannot hold a browser.
 
+mod pointer;
+
 use std::io::Write;
-use std::time::{Duration, Instant};
 
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
-
-/// A common desktop browser: some login pages refuse what they do not know.
-const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 /// Epic shows the code as a page of JSON at this address.
 const EPIC_DONE: &str = "https://www.epicgames.com/id/api/redirect";
@@ -34,36 +32,8 @@ enum Done {
     Nav(String),
     /// The pointer is wanted, here.
     Pointer(f64, f64),
-}
-
-/// The pointer moved with the gamepad.
-struct Pointer {
-    x: f64,
-    y: f64,
-    /// The last direction, when, and how often in a row: held, it gets faster.
-    last: Option<(String, Instant, u32)>,
-}
-
-impl Pointer {
-    /// Moves one step; `false` when `nav` is not a direction.
-    fn step(&mut self, nav: &str, now: Instant, (w, h): (f64, f64)) -> bool {
-        let (dx, dy) = match nav {
-            "up" => (0., -1.),
-            "down" => (0., 1.),
-            "left" => (-1., 0.),
-            "right" => (1., 0.),
-            _ => return false,
-        };
-        let run = match &self.last {
-            Some((n, t, run)) if n == nav && now - *t < Duration::from_millis(200) => run + 1,
-            _ => 0,
-        };
-        self.last = Some((nav.to_string(), now, run));
-        let step = (8. + 7. * f64::from(run)).min(64.);
-        self.x = (self.x + dx * step).clamp(0., w - 1.);
-        self.y = (self.y + dy * step).clamp(0., h - 1.);
-        true
-    }
+    /// A was pressed or let go (read from the gamepad directly).
+    Press(bool),
 }
 
 /// What the page's script answered: `{"x":…,"y":…}`.
@@ -75,56 +45,6 @@ fn point(answer: &str) -> Option<(f64, f64)> {
     };
     let (x, y) = (number("x")?, number("y")?);
     (x.is_finite() && y.is_finite()).then_some((x, y))
-}
-
-/// Real pointer events in the page, as from a mouse.
-#[cfg(target_os = "linux")]
-mod mouse {
-    use gtk::gdk::ffi;
-    use gtk::glib::translate::ToGlibPtr;
-    use gtk::prelude::*;
-
-    fn send(widget: &gtk::Widget, kind: ffi::GdkEventType, x: f64, y: f64, pressed: bool) {
-        let (Some(window), Some(pointer)) = (
-            widget.window(),
-            widget.display().default_seat().and_then(|s| s.pointer()),
-        ) else {
-            return;
-        };
-        let (_, ox, oy) = window.origin();
-        let state = if pressed { ffi::GDK_BUTTON1_MASK } else { 0 };
-        // SAFETY: the event is made by GDK for this kind, only the fields of that kind are
-        // written, the window gets the reference the event gives back when it is freed.
-        unsafe {
-            let event = ffi::gdk_event_new(kind);
-            let win: *mut ffi::GdkWindow = window.to_glib_full();
-            if kind == ffi::GDK_MOTION_NOTIFY {
-                let e = &mut *(event as *mut ffi::GdkEventMotion);
-                (e.window, e.x, e.y, e.state) = (win, x, y, state);
-                (e.x_root, e.y_root) = (f64::from(ox) + x, f64::from(oy) + y);
-                e.time = (gtk::glib::monotonic_time() / 1000) as u32;
-            } else {
-                let e = &mut *(event as *mut ffi::GdkEventButton);
-                (e.window, e.x, e.y, e.state, e.button) = (win, x, y, state, 1);
-                (e.x_root, e.y_root) = (f64::from(ox) + x, f64::from(oy) + y);
-                e.time = (gtk::glib::monotonic_time() / 1000) as u32;
-            }
-            let device: *mut ffi::GdkDevice = pointer.to_glib_none().0;
-            ffi::gdk_event_set_device(event, device);
-            gtk::ffi::gtk_widget_event(widget.to_glib_none().0, event);
-            ffi::gdk_event_free(event);
-        }
-    }
-
-    pub fn moved(widget: &gtk::Widget, x: f64, y: f64) {
-        send(widget, ffi::GDK_MOTION_NOTIFY, x, y, false);
-    }
-
-    pub fn click(widget: &gtk::Widget, x: f64, y: f64) {
-        moved(widget, x, y);
-        send(widget, ffi::GDK_BUTTON_PRESS, x, y, false);
-        send(widget, ffi::GDK_BUTTON_RELEASE, x, y, true);
-    }
 }
 
 /// The page's gamepad script, with its words in the user's language.
@@ -196,6 +116,8 @@ fn run(
     }
     let window = builder.build(&event_loop)?;
     if console {
+        let presses = event_loop.create_proxy();
+        pointer::read_gamepad(move |down| presses.send_event(Done::Press(down)).is_ok());
         // Arkor's gamepad buttons, one per line.
         let proxy = event_loop.create_proxy();
         std::thread::spawn(move || {
@@ -226,7 +148,6 @@ fn run(
     );
     let builder = WebViewBuilder::new()
         .with_url(url)
-        .with_user_agent(USER_AGENT)
         .with_initialization_script(&script)
         .with_initialization_script(if console {
             pad_script(turkish)
@@ -258,39 +179,30 @@ fn run(
     let webview = builder.build(&window)?;
 
     let pointer_proxy = event_loop.create_proxy();
-    let mut pointer: Option<Pointer> = None;
+    let pointer = pointer::Pointer::new(gtk::prelude::Cast::upcast(wry::WebViewExtUnix::webview(
+        &webview,
+    )));
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
+        // The page shows the pointer's hints while it is out.
+        let hints = |on: bool| {
+            let _ =
+                webview.evaluate_script(&format!("window.__arkor && window.__arkor.pointer({on})"));
+        };
         match event {
+            Event::UserEvent(Done::Press(down)) => pointer.press(down),
             Event::UserEvent(Done::Nav(nav)) => match nav.as_str() {
                 // The menu button leaves the login.
                 "menu" => std::process::exit(1),
-                n if pointer.is_some() => {
-                    use wry::WebViewExtUnix;
-                    let Some(p) = pointer.as_mut() else { return };
-                    let page = gtk::prelude::Cast::upcast::<gtk::Widget>(webview.webview());
-                    let size = {
-                        use gtk::prelude::WidgetExt;
-                        (
-                            f64::from(page.allocated_width()),
-                            f64::from(page.allocated_height()),
-                        )
-                    };
-                    let draw = |x: &str, y: &str| {
-                        let _ = webview.evaluate_script(&format!(
-                            "window.__arkor && window.__arkor.pointer({x}, {y})"
-                        ));
-                    };
-                    if p.step(n, Instant::now(), size) {
-                        mouse::moved(&page, p.x, p.y);
-                        draw(&p.x.to_string(), &p.y.to_string());
-                    } else if n == "accept" {
-                        mouse::click(&page, p.x, p.y);
-                        // After a click the page may be another one: drawn again.
-                        draw(&p.x.to_string(), &p.y.to_string());
-                    } else if matches!(n, "back" | "extra") {
-                        pointer = None;
-                        draw("null", "null");
+                "back" | "extra" if pointer.out() => {
+                    pointer.hide();
+                    hints(false);
+                }
+                n if cfg!(debug_assertions) && n.contains(' ') => pointer::pretend(n),
+                n if pointer.out() => {
+                    // The gamepad is read directly; without that, Arkor's steps do.
+                    if !pointer::direct() {
+                        pointer.step(n);
                     }
                 }
                 n if n.chars().all(|c| c.is_ascii_lowercase()) => {
@@ -307,10 +219,8 @@ fn run(
                 _ => {}
             },
             Event::UserEvent(Done::Pointer(x, y)) => {
-                pointer = Some(Pointer { x, y, last: None });
-                let _ = webview.evaluate_script(&format!(
-                    "window.__arkor && window.__arkor.pointer({x}, {y})"
-                ));
+                pointer.show(x, y);
+                hints(true);
             }
             Event::UserEvent(Done::Code(code)) => {
                 let mut out = std::io::stdout();
@@ -330,29 +240,6 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_pointer_speeds_up_while_held_and_stays_inside() {
-        let mut p = Pointer {
-            x: 50.,
-            y: 50.,
-            last: None,
-        };
-        let t = Instant::now();
-        let ms = Duration::from_millis;
-        assert!(p.step("right", t, (100., 100.)));
-        assert_eq!(p.x, 58.);
-        assert!(p.step("right", t + ms(95), (100., 100.)));
-        assert_eq!(p.x, 73.);
-        // Let go, then pressed again: a small step.
-        assert!(p.step("right", t + ms(600), (100., 100.)));
-        assert_eq!(p.x, 81.);
-        for n in 0..9 {
-            p.step("up", t + ms(700 + n * 90), (100., 100.));
-        }
-        assert_eq!(p.y, 0.);
-        assert!(!p.step("accept", t, (100., 100.)));
-    }
 
     #[test]
     fn reads_where_the_pointer_starts() {

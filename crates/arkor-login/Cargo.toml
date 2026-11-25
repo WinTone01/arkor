@@ -9,3 +9,4 @@ description = "A small browser window for logging in to game stores (used by Ark
 wry = "0.57"
 tao = "0.37"
 gtk = "0.18"
+gilrs = "0.11.2"

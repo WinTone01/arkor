@@ -202,17 +202,153 @@ impl Library {
             )
             .child(self.console_top(f, cx))
             .children(over)
+            .children(self.render_shop_login(f, cx))
             .child(self.console_footer(&item, f, cx))
             .children(launching)
-            .children(self.render_shop_login(cx))
     }
 
-    /// The login window of a store (the game window is a screen here).
-    fn render_shop_login(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.shops
-            .login
-            .is_some()
-            .then(|| self.render_shop_windows(cx))?
+    /// A store's login (its page is a window of its own; this is what is around it).
+    fn render_shop_login(&mut self, f: Frame, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use super::shops::LoginMode;
+        let u = f.u;
+        let l = self.shops.login.as_ref()?;
+        let (shop, mode, busy, error) = (l.shop, l.mode, l.busy, l.error.clone());
+        let (no_webkit, known) = (l.no_webkit, l.login.is_some());
+        let waiting = busy || (error.is_none() && mode != LoginMode::Closed);
+        let (title, text) = if no_webkit {
+            (
+                self.tr(
+                    "The login window needs WebKitGTK",
+                    "Giriş penceresi WebKitGTK istiyor",
+                ),
+                self.tr(
+                    "The package webkit2gtk-4.1 is not installed.",
+                    "webkit2gtk-4.1 paketi kurulu değil.",
+                ),
+            )
+        } else if busy && known {
+            (
+                self.tr("Logging in…", "Giriş yapılıyor…"),
+                self.tr("Almost there.", "Neredeyse bitti."),
+            )
+        } else if waiting && mode == LoginMode::Browser {
+            (
+                self.tr("Log in in your browser", "Tarayıcında giriş yap"),
+                self.tr(
+                    "Then copy the page (Epic) or its address (GOG, Amazon): Arkor takes it.",
+                    "Sonra sayfayı (Epic) ya da adresini (GOG, Amazon) kopyala: Arkor alır.",
+                ),
+            )
+        } else if waiting {
+            (
+                self.tr("Opening the login window…", "Giriş penceresi açılıyor…"),
+                "",
+            )
+        } else if error.is_some() {
+            (self.tr("The login did not work", "Giriş olmadı"), "")
+        } else {
+            (
+                self.tr("The login window was closed", "Giriş penceresi kapatıldı"),
+                self.tr("Open it again to log in.", "Giriş yapmak için yeniden aç."),
+            )
+        };
+        let error = error.filter(|_| !no_webkit).map(|e| self.shop_error(&e));
+        let rows = self.login_rows();
+        self.console.over_focus.step(&rows, 0, 0);
+        let col = self.console.over_focus.col();
+        let mut pills = div().flex().flex_wrap().justify_center().gap(px(14. * u));
+        for (c, item) in rows[0].items.iter().enumerate() {
+            let glow = if c == col { 1. } else { 0. };
+            pills = pills.child(self.console_pill(item, ("over-login", 0, c), glow, f, cx));
+        }
+        let color = super::shops_page::shop_color(shop);
+        Some(
+            div()
+                .id("console-login")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.68))
+                .child(
+                    div()
+                        .w(px((860. * u).min(f.vw * 0.9)))
+                        .rounded(px(28. * u))
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(pal::border_strong())
+                        .bg(pal::bg())
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .h(px(230. * u))
+                                .rounded_t(px(28. * u))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(linear_gradient(
+                                    180.,
+                                    linear_color_stop(color.opacity(0.55), 0.),
+                                    linear_color_stop(color.opacity(0.), 1.),
+                                ))
+                                .child(
+                                    div()
+                                        .relative()
+                                        .size(px(180. * u))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .when(waiting, |d| {
+                                            d.child(
+                                                div().absolute().inset_0().child(
+                                                    super::loader::spinner(180. * u, f.still),
+                                                ),
+                                            )
+                                        })
+                                        .child(super::shops_page::shop_mark(shop, 92. * u)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .px(px(48. * u))
+                                .pb(px(48. * u))
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .text_center()
+                                .gap(px(16. * u))
+                                .child(
+                                    div()
+                                        .text_size(px(34. * u))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(title),
+                                )
+                                .when(!text.is_empty(), |d| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(22. * u))
+                                            .text_color(pal::muted())
+                                            .child(text),
+                                    )
+                                })
+                                .children(error.map(|e| {
+                                    div()
+                                        .w_full()
+                                        .text_size(px(21. * u))
+                                        .text_color(pal::warning())
+                                        .child(e)
+                                }))
+                                .child(div().pt(px(18. * u)).child(pills)),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     // ---- Behind everything ----
@@ -574,12 +710,14 @@ impl Library {
         let pad = self.console.pad;
         let mut hints: Vec<(&'static str, &'static str, Nav)> = Vec::new();
         let keyboard = self.console.overlay == Some(Overlay::Keyboard);
+        let login = self.shops.login.is_some();
         hints.push((
             if pad { "A" } else { "↵" },
             self.tr("Choose", "Seç"),
             Nav::Accept,
         ));
         if self.console.overlay.is_none()
+            && !login
             && let Some(Item {
                 look:
                     Look::Line {
@@ -608,7 +746,7 @@ impl Library {
             if pad {
                 hints.push(("Y", self.tr("Space", "Boşluk"), Nav::Search));
             }
-        } else if self.console.overlay.is_none() {
+        } else if self.console.overlay.is_none() && !login {
             let extra = item.as_ref().and_then(|i| self.extra(i)).map(|a| match a {
                 Act::Stop(_) => self.tr("Stop", "Durdur"),
                 Act::CancelDownload(_) => self.tr("Cancel", "İptal et"),
@@ -632,15 +770,17 @@ impl Library {
             },
             Nav::Back,
         ));
-        hints.push((
-            if pad { "☰" } else { "F10" },
-            if keyboard {
-                self.tr("Done", "Tamam")
-            } else {
-                self.tr("Menu", "Menü")
-            },
-            Nav::Menu,
-        ));
+        if !login {
+            hints.push((
+                if pad { "☰" } else { "F10" },
+                if keyboard {
+                    self.tr("Done", "Tamam")
+                } else {
+                    self.tr("Menu", "Menü")
+                },
+                Nav::Menu,
+            ));
+        }
         let mut right = div().flex().items_center().gap(px(30. * u));
         for (ix, (glyph, text, nav)) in hints.into_iter().enumerate() {
             right = right.child(

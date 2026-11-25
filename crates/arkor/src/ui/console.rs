@@ -131,6 +131,11 @@ pub(super) enum Act {
     Search,
     ClearSearch,
     Login(Shop),
+    /// What the login window's message offers.
+    LoginAgain,
+    LoginBrowser,
+    LoginInstall,
+    LoginClose,
     Shift,
     Symbols,
     Queue(String),
@@ -1268,6 +1273,58 @@ impl Library {
         list
     }
 
+    /// What can be done while a store's login is under way.
+    pub(super) fn login_rows(&self) -> Vec<Row> {
+        use super::shops::LoginMode;
+        let mut items = Vec::new();
+        if let Some(l) = &self.shops.login {
+            let waiting = l.busy || (l.error.is_none() && l.mode != LoginMode::Closed);
+            if l.no_webkit {
+                items.push(Item::main(
+                    Act::LoginInstall,
+                    "download",
+                    self.tr("Install it", "Kur"),
+                ));
+            }
+            if !waiting && l.mode != LoginMode::Browser {
+                items.push(if l.no_webkit {
+                    Item::pill(
+                        Act::LoginAgain,
+                        "rotate-ccw",
+                        self.tr("Try again", "Yeniden dene"),
+                        false,
+                    )
+                } else {
+                    Item::main(
+                        Act::LoginAgain,
+                        "log-in",
+                        self.tr("Open it again", "Yeniden aç"),
+                    )
+                });
+                // Leaves console mode's reach: only offered when nothing else is left.
+                if l.no_webkit {
+                    items.push(Item::pill(
+                        Act::LoginBrowser,
+                        "external-link",
+                        self.tr("Use my browser", "Tarayıcımı kullan"),
+                        false,
+                    ));
+                }
+            }
+            items.push(Item::pill(
+                Act::LoginClose,
+                "x",
+                if waiting {
+                    self.tr("Cancel", "Vazgeç")
+                } else {
+                    self.tr("Close", "Kapat")
+                },
+                false,
+            ));
+        }
+        vec![Row::new(Kind::Pills, items)]
+    }
+
     /// The rows of what is over the screen.
     pub(super) fn overlay_rows(&self, overlay: &Overlay) -> Vec<Row> {
         let line = |act, icon, label: &str| {
@@ -1472,6 +1529,10 @@ impl Library {
             }
             Some(s) => match s.split_once('/') {
                 Some(("game", id)) => vec![Screen::Library, Screen::Game(id.into())],
+                Some(("login", shop)) => {
+                    self.shops.on_open = Some(("login".into(), shop.into()));
+                    vec![Screen::Stores]
+                }
                 Some(("settings", id)) => vec![
                     Screen::Library,
                     Screen::Game(id.into()),
@@ -1726,7 +1787,9 @@ impl Library {
             }
             return;
         }
-        if !window.is_window_active() {
+        // A login that ended may leave the focus nowhere: its message still answers.
+        let login = self.console.on && self.shops.login.is_some() && self.running.is_empty();
+        if !window.is_window_active() && !login {
             if nav == Nav::Toggle && self.running.is_empty() {
                 window.activate_window();
             }
@@ -1754,9 +1817,26 @@ impl Library {
         // The start-up animation ends with the first input.
         self.skip_intro(cx);
         if self.shops.login.is_some() {
-            if nav == Nav::Back {
-                self.console_back(cx);
+            let rows = self.login_rows();
+            let focus = &mut self.console.over_focus;
+            focus.clamp(&rows);
+            match nav {
+                Nav::Left | Nav::Up => {
+                    focus.step(&rows, -1, 0);
+                }
+                Nav::Right | Nav::Down => {
+                    focus.step(&rows, 1, 0);
+                }
+                Nav::Accept => {
+                    let act = rows[0].items.get(focus.col()).map(|i| i.act.clone());
+                    if let Some(act) = act {
+                        self.console_do(act, window, cx);
+                    }
+                }
+                Nav::Back => self.console_back(cx),
+                _ => {}
             }
+            cx.notify();
             return;
         }
         // Starting or playing: only the buttons of that screen.
@@ -1988,7 +2068,30 @@ impl Library {
             }
             Act::Login(shop) => {
                 self.console.overlay = None;
+                self.console.over_focus = Focus::default();
                 self.shop_login(shop, cx);
+            }
+            Act::LoginAgain => {
+                self.console.over_focus = Focus::default();
+                match self
+                    .shops
+                    .login
+                    .as_ref()
+                    .map(|l| (l.shop, l.login.is_some()))
+                {
+                    Some((_, true)) => self.shop_login_window(cx),
+                    // The store could not be asked: from the beginning.
+                    Some((shop, false)) => self.shop_login(shop, cx),
+                    None => {}
+                }
+            }
+            Act::LoginBrowser => self.shop_login_browser(cx),
+            Act::LoginInstall => {
+                self.close_shop_windows(cx);
+                self.console_install_tools(vec![super::shops::WEBKIT.into()]);
+            }
+            Act::LoginClose => {
+                self.close_shop_windows(cx);
             }
             Act::Logout(shop) => self.shop_logout(shop, cx),
             Act::Folder(what) => {

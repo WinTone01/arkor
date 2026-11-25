@@ -215,12 +215,13 @@ dependencies = [
 
 [[package]]
 name = "arkor"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arkor-core",
  "arkor-launch",
  "arkor-stores",
+ "async-channel",
  "dirs 6.0.0",
  "gilrs",
  "gpui-kit",
@@ -234,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -245,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-launch"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arkor-core",
@@ -260,8 +261,9 @@ dependencies = [
 
 [[package]]
 name = "arkor-login"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
+ "gilrs",
  "gtk",
  "tao",
  "wry",
@@ -269,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-stores"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arkor-core",

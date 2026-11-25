@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs, PowerInfo};
@@ -138,8 +137,8 @@ impl Held {
 }
 
 /// Reads gamepads on a thread; `None` when they cannot be read.
-pub(super) fn start() -> Option<Receiver<Nav>> {
-    let (tx, rx) = channel();
+pub(super) fn start() -> Option<async_channel::Receiver<Nav>> {
+    let (tx, rx) = async_channel::unbounded();
     std::thread::Builder::new()
         .name("arkor-gamepad".into())
         .spawn(move || {
@@ -207,7 +206,7 @@ pub(super) fn start() -> Option<Receiver<Nav>> {
                 }
                 out.extend(held.due(now));
                 for nav in out {
-                    if tx.send(nav).is_err() {
+                    if tx.send_blocking(nav).is_err() {
                         return;
                     }
                 }

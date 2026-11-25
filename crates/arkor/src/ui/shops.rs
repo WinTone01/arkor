@@ -101,6 +101,9 @@ pub(super) enum LoginMode {
     Browser,
 }
 
+/// The package the login window needs.
+pub(super) const WEBKIT: &str = "webkit2gtk-4.1";
+
 /// Arkor's login window program, next to Arkor (or on the PATH).
 fn login_helper() -> Option<PathBuf> {
     let next = std::env::current_exe()
@@ -120,6 +123,8 @@ pub(super) struct LoginUi {
     pub(super) paste: bool,
     /// Where the login happens.
     pub(super) mode: LoginMode,
+    /// The login window could not open: WebKitGTK is missing.
+    pub(super) no_webkit: bool,
     /// The login window's input, for the gamepad's buttons in console mode.
     pub(super) pad: Option<std::sync::Arc<std::sync::Mutex<std::process::ChildStdin>>>,
     /// What was on the clipboard before: not the code.
@@ -570,6 +575,7 @@ impl Library {
             error: None,
             paste: false,
             mode: LoginMode::Starting,
+            no_webkit: false,
             pad: None,
             clipboard: clipboard_text(cx),
             request,
@@ -662,6 +668,7 @@ impl Library {
             return self.shop_login_browser(cx);
         };
         l.mode = LoginMode::Window(child.id());
+        l.no_webkit = false;
         l.pad = child
             .stdin
             .take()
@@ -672,9 +679,17 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let out = bg.spawn(async move { child.wait_with_output() }).await;
             let _ = this.update(cx, |this, cx| {
+                // The window that had the keyboard is gone: Arkor's comes to the front, its
+                // message starts at its first button.
+                if this.console.on {
+                    this.console.come_back = true;
+                    this.console.over_focus = Default::default();
+                    cx.notify();
+                }
                 let Some(l) = this.shops.login.as_mut().filter(|l| l.request == request) else {
                     return;
                 };
+                l.pad = None;
                 match out {
                     Ok(out) if out.status.success() => {
                         let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -690,7 +705,13 @@ impl Library {
                     }
                     // Closed by the user.
                     Ok(out) if out.status.code() == Some(1) => l.mode = LoginMode::Closed,
-                    // No window could be opened (no WebKitGTK): the browser it is.
+                    // No window could be opened (no WebKitGTK). Console mode offers to install
+                    // it; on the desktop the browser it is.
+                    _ if this.console.on => {
+                        l.mode = LoginMode::Closed;
+                        l.no_webkit = true;
+                        l.error = Some(WEBKIT.to_string());
+                    }
                     _ => this.shop_login_browser(cx),
                 }
                 cx.notify();

@@ -781,25 +781,21 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
 
             // Gamepad: console mode; its middle button opens Arkor when its window is closed.
             if let Some(rx) = gamepad::start() {
-                let executor = cx.background_executor().clone();
                 let main = main.clone();
                 cx.spawn(async move |cx| {
-                    loop {
-                        executor.timer(std::time::Duration::from_millis(30)).await;
-                        while let Ok(nav) = rx.try_recv() {
-                            cx.update(|cx| {
-                                let handle = main.borrow().clone();
-                                let alive = handle.is_some_and(|(h, lib)| {
-                                    h.update(cx, |_, window, cx| {
-                                        lib.update(cx, |lib, cx| lib.pad(nav, window, cx))
-                                    })
-                                    .is_ok()
-                                });
-                                if !alive && nav == gamepad::Nav::Toggle {
-                                    *main.borrow_mut() = open_main(None, cx);
-                                }
+                    while let Ok(nav) = rx.recv().await {
+                        cx.update(|cx| {
+                            let handle = main.borrow().clone();
+                            let alive = handle.is_some_and(|(h, lib)| {
+                                h.update(cx, |_, window, cx| {
+                                    lib.update(cx, |lib, cx| lib.pad(nav, window, cx))
+                                })
+                                .is_ok()
                             });
-                        }
+                            if !alive && nav == gamepad::Nav::Toggle {
+                                *main.borrow_mut() = open_main(None, cx);
+                            }
+                        });
                     }
                 })
                 .detach();

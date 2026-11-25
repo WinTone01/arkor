@@ -6,7 +6,7 @@
   const A = (window.__arkor = {});
   const LETTERS = ["1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm.-_"];
   const SYMBOLS = ["1234567890", "!#$%&*+=?/", "()[]{}<>:;", "'\",~^|\\`€"];
-  let current = null, kbd = null, kx = 0, ky = 1, shift = false, sym = false;
+  let current = null, kbd = null, kx = 0, ky = 1, shift = false, sym = false, ptr = false;
 
   const css = `
     .__arkor-focus { outline: 4px solid #a78bfa !important; outline-offset: 3px !important;
@@ -22,8 +22,6 @@
     #__arkor-hints { position: fixed; left: 0; right: 0; bottom: 0; height: 56px; z-index: 2147483646;
       display: flex; gap: 28px; align-items: center; justify-content: flex-end; padding: 0 40px;
       background: linear-gradient(transparent, #0c0b12ee 45%); color: #d4d4d8; font: 500 16px system-ui, sans-serif; }
-    #__arkor-ptr { position: fixed; z-index: 2147483647; width: 30px; height: 30px; pointer-events: none;
-      transition: left .09s linear, top .09s linear; filter: drop-shadow(0 2px 5px #000b); }
     #__arkor-hints b { border: 1px solid #ffffff55; border-radius: 8px; padding: 2px 8px; margin-right: 8px; }`;
 
   function ready(f) {
@@ -43,38 +41,24 @@
   function hints() {
     const h = document.getElementById("__arkor-hints");
     if (!h) return;
-    const on = !!document.getElementById("__arkor-ptr");
-    const list = on
+    const list = ptr
       ? [["A", L.click], ["B", L.leave], ["☰", L.close]]
       : [["A", L.choose], ["B", L.back], ["X", L.pointer], ["☰", L.close]];
     h.innerHTML = list.map(([k, t]) => `<span><b>${k}</b>${t}</span>`).join("");
   }
-  // The pointer, drawn where Arkor's window says it is (the clicks are its own, real ones).
-  A.pointer = function (x, y) {
-    let p = document.getElementById("__arkor-ptr");
-    if (x === null) {
-      if (p) p.remove();
-      return hints();
-    }
-    if (!p) {
-      p = document.createElement("div");
-      p.id = "__arkor-ptr";
-      p.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30"><path d="M3 2l7.5 19 2.6-7.9L21 10.500z" fill="#fff" stroke="#6d28d9" stroke-width="1.6" stroke-linejoin="round"/></svg>';
-      document.body.appendChild(p);
-      closeKbd();
-      mark(null);
-      hints();
-    }
-    // The tip is at (3, 2) of 24.
-    p.style.left = x - 3.75 + "px";
-    p.style.top = y - 2.5 + "px";
+  // The window draws the pointer and moves it; here only the hints change.
+  A.pointer = function (on) {
+    ptr = on;
+    if (on) { closeKbd(); mark(null); }
+    hints();
   };
-  // Where the pointer starts: on the checkbox of what has the focus, else on its middle.
+  // Where the pointer starts: beside a frame (the user takes it to the box), else in the
+  // middle of what has the focus.
   function pointerAt() {
     if (!current || !document.contains(current)) return { x: innerWidth / 2, y: innerHeight / 2 };
     const r = current.getBoundingClientRect();
-    const x = current.tagName === "IFRAME" && r.height < 120 ? Math.min(r.width / 2, 22) : r.width / 2;
-    return { x: r.left + x, y: r.top + r.height / 2 };
+    if (current.tagName !== "IFRAME") return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    return { x: Math.max(20, r.left + Math.min(r.width / 2, 120)), y: Math.min(innerHeight - 90, r.bottom + 60) };
   }
 
   function visible(e) {

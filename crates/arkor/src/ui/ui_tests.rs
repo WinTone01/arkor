@@ -736,3 +736,72 @@ fn console_folder_choice_password_and_tools() {
         && l.console.overlay.is_none()
         && l.console.query.is_empty()));
 }
+
+#[test]
+fn console_login_message_answers_the_gamepad() {
+    use super::console::Screen;
+    use super::gamepad::Nav;
+    use super::shops::LoginMode;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#stores"));
+        lib
+    });
+    cx.run_until_parked();
+    let closed = |cx: &mut gpui_test::VisualTestContext| {
+        view.update(cx, |l, cx| {
+            l.shop_login(arkor_launch::shops::Shop::Gog, cx);
+            let ui = l.shops.login.as_mut().unwrap();
+            ui.busy = false;
+            ui.mode = LoginMode::Closed;
+            cx.notify();
+        });
+        cx.run_until_parked();
+    };
+    let press = |nav: Nav, cx: &mut gpui_test::VisualTestContext| {
+        view.update_in(cx, |l, w, cx| l.pad(nav, w, cx));
+        cx.run_until_parked();
+    };
+    closed(cx);
+    // The first button opens it again; in a test nothing is spawned, it waits.
+    press(Nav::Accept, cx);
+    assert!(view.read_with(cx, |l, _| {
+        l.shops
+            .login
+            .as_ref()
+            .is_some_and(|u| u.busy && u.mode == LoginMode::Starting)
+    }));
+    closed(cx);
+    // To the second one: closed, and the stores are under it.
+    press(Nav::Right, cx);
+    press(Nav::Accept, cx);
+    assert!(view.read_with(cx, |l, _| {
+        l.shops.login.is_none() && l.console.screen() == Screen::Stores
+    }));
+    // B closes it too; without WebKitGTK the first button asks for the password.
+    closed(cx);
+    press(Nav::Back, cx);
+    assert!(view.read_with(cx, |l, _| l.shops.login.is_none()));
+    closed(cx);
+    view.update(cx, |l, cx| {
+        l.shops.login.as_mut().unwrap().no_webkit = true;
+        l.console.over_focus = Default::default();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    press(Nav::Accept, cx);
+    assert!(view.read_with(cx, |l, _| {
+        l.shops.login.is_none() && l.console.secret.is_some()
+    }));
+}
