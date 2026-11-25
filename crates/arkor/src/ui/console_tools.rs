@@ -36,20 +36,95 @@ pub(super) enum AfterDisk {
     Stay,
 }
 
+/// Release notes as plain text: without Markdown's signs and the part about installing.
+pub(super) fn plain_notes(notes: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut skip = false;
+    let mut code = false;
+    for line in notes.lines() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            code = !code;
+            continue;
+        }
+        if let Some(title) = t.strip_prefix('#') {
+            let title = title.trim_start_matches('#').trim();
+            skip = title.to_lowercase().starts_with("install");
+            if !skip {
+                out.push(String::new());
+                out.push(title.to_uppercase());
+            }
+            continue;
+        }
+        if skip || code || t.starts_with("> [!") {
+            continue;
+        }
+        let t = t.strip_prefix("> ").unwrap_or(t);
+        let t = match t.strip_prefix("- ") {
+            Some(item) => format!("•  {item}"),
+            None => t.to_string(),
+        };
+        out.push(links(&t).replace("**", "").replace('`', ""));
+    }
+    let text = out.join("\n");
+    let mut text = text.trim().to_string();
+    while text.contains("\n\n\n") {
+        text = text.replace("\n\n\n", "\n\n");
+    }
+    text
+}
+
+/// `[text](address)` as just the text.
+fn links(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some((before, after)) = rest.split_once('[') {
+        let Some((text, tail)) = after.split_once("](") else {
+            break;
+        };
+        let Some((_, tail)) = tail.split_once(')') else {
+            break;
+        };
+        out.push_str(before);
+        out.push_str(text);
+        rest = tail;
+    }
+    out + rest
+}
+
 impl Library {
     fn line(&self, act: Act, icon: &'static str, label: &str, value: Value) -> Row {
         Row::new(Kind::Line, vec![Item::line(act, icon, label, value)])
+    }
+
+    /// How Arkor's own update stands, in a few words.
+    pub(super) fn console_arkor_state(&self) -> String {
+        let u = &self.app_update;
+        if u.installing {
+            return match self.arkor_progress() {
+                Some(f) => self.percent(f),
+                None => self.tr("Updating…", "Güncelleniyor…").into(),
+            };
+        }
+        match &u.available {
+            Some(r) => format!("{} {}", r.version, self.tr("is out", "çıktı")),
+            None => arkor_launch::self_update::current_version().to_string(),
+        }
+    }
+
+    /// How much of the update is downloaded.
+    fn arkor_progress(&self) -> Option<f32> {
+        arkor_launch::progress::list()
+            .iter()
+            .find(|e| e.key == "arkor-update")
+            .and_then(|e| e.fraction())
     }
 
     /// Arkor itself: its version, a look for a newer one and its installation.
     pub(super) fn console_arkor_row(&self) -> Row {
         let u = &self.app_update;
         let (act, icon, value) = if u.installing {
-            (
-                Act::Nothing,
-                "loader-circle",
-                self.tr("Updating…", "Güncelleniyor…").to_string(),
-            )
+            (Act::Nothing, "loader-circle", self.console_arkor_state())
         } else if u.checking {
             (
                 Act::Nothing,
@@ -59,7 +134,7 @@ impl Library {
         } else if let Some(r) = &u.available {
             (
                 Act::AskArkor,
-                "sparkles",
+                "download",
                 format!("{} {}", self.tr("Update to", "Güncelle:"), r.version),
             )
         } else {
@@ -72,6 +147,7 @@ impl Library {
         };
         let version = arkor_launch::self_update::current_version();
         let mut row = self.line(act, icon, &format!("Arkor {version}"), Value::Text(value));
+        row.items[0].progress = u.installing.then(|| self.arkor_progress()).flatten();
         row.items[0].sub = match (&u.message, &u.available) {
             (Some(m), _) => m.clone(),
             (None, Some(r)) => format!(
@@ -83,6 +159,27 @@ impl Library {
             (None, None) => String::new(),
         };
         row
+    }
+
+    /// The section of Arkor's updates.
+    pub(super) fn console_arkor_rows(&self) -> Vec<Row> {
+        let mut rows = vec![self.console_arkor_row()];
+        let u = &self.app_update;
+        if u.available.is_some() && !u.installing {
+            rows.push(self.line(
+                Act::ArkorNotes,
+                "scroll-text",
+                self.tr("What is new", "Yenilikler"),
+                Value::None,
+            ));
+            rows.push(self.line(
+                Act::CheckArkor,
+                "refresh-cw",
+                self.tr("Look again", "Yeniden denetle"),
+                Value::None,
+            ));
+        }
+        rows
     }
 
     /// The Downloads screen's part below the queue: updates, then what is installed.
@@ -122,10 +219,7 @@ impl Library {
         let mut row = Row::new(Kind::Pills, pills);
         row.title = Some(self.tr("Updates", "Güncellemeler").into());
         rows.push(row);
-        // Only when there is something to see; looking is in Settings too.
-        if self.app_update.available.is_some() || self.app_update.installing {
-            rows.push(self.console_arkor_row());
-        }
+        rows.push(self.console_arkor_row());
         for u in waiting {
             let value = if u.latest.is_empty() {
                 self.tr("Update", "Güncelle").to_string()

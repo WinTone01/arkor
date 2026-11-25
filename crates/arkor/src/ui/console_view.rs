@@ -94,6 +94,7 @@ impl Library {
         if std::mem::take(&mut self.console.come_back) && !window.is_window_active() {
             window.activate_window();
         }
+        self.watch_pointer(window, cx);
         let still = self.global.appearance.reduce_motion;
         let now = Instant::now();
         // After a rest the time since the last frame says nothing: a move begins with one
@@ -430,7 +431,8 @@ impl Library {
             Screen::Game(id)
             | Screen::GameSettings(id)
             | Screen::GameCat(id, _)
-            | Screen::Saves(id) => Some(Art::Game(id)),
+            | Screen::Saves(id)
+            | Screen::Trouble(id) => Some(Art::Game(id)),
             Screen::ShopGame(shop, id) => Some(Art::Shop(shop, id)),
             Screen::Steam(app, _) => Some(Art::Shop(Shop::Steam, app.to_string())),
             _ => match item.as_ref().map(|i| &i.look) {
@@ -892,6 +894,16 @@ impl Library {
             Screen::GameSettings(id) => {
                 let (title, _) = self.spotlight_game(&id)?;
                 (title, vec![self.tr("Settings", "Ayarlar").to_string()])
+            }
+            Screen::Trouble(id) => {
+                let (title, _) = self.spotlight_game(&id)?;
+                (
+                    title,
+                    vec![
+                        self.tr("Why did it not start?", "Neden açılmadı?")
+                            .to_string(),
+                    ],
+                )
             }
             Screen::Saves(id) => {
                 let (title, _) = self.spotlight_game(&id)?;

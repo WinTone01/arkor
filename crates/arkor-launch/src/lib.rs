@@ -32,6 +32,7 @@ pub mod steam_downloads;
 pub mod steam_link;
 pub mod streamline;
 pub mod tools;
+pub mod trouble;
 pub mod umu_db;
 
 use std::collections::BTreeMap;
@@ -298,11 +299,14 @@ pub fn run(
     working_dir: Option<&Path>,
 ) -> anyhow::Result<i32> {
     let mut profile = Profile::load(id)?;
-    let global = Global::load_or_import()?;
+    let mut global = Global::load_or_import()?;
+    let trial = trouble::Trial::from_env();
+    trial.apply(id, &mut profile, &mut global);
     // Started from console mode: the game is kept full screen in gamescope, so no panel
     // or other window shows over (or next to) it.
     if !global.console_windowed
         && !profile.gamescope.enabled
+        && !trial.plain
         && let Some((w, h)) = console_screen(id)
         && start::find_in_path("gamescope").is_some()
     {

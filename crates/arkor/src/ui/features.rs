@@ -604,6 +604,20 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     // Logs
     Feature {
+        id: "trouble",
+        tab: GameTab::Logs,
+        icon: "stethoscope",
+        name: ("Why did it not start?", "Neden açılmadı?"),
+        desc: (
+            "Looks for the reason and offers fixes that take one press.",
+            "Sebebini arar, tek tuşla düzeltmeler sunar.",
+        ),
+        keywords: "trouble problem sorun çöktü crash fix düzelt neden açılmadı başlamıyor",
+        applies: always,
+        active: None,
+        render: |l, cx| l.render_trouble(cx),
+    },
+    Feature {
         id: "logs",
         tab: GameTab::Logs,
         icon: "scroll-text",

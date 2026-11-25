@@ -1015,7 +1015,7 @@ fn console_shows_removal_and_arkors_update() {
                 .collect::<Vec<_>>()
         };
         l.console_open(
-            Screen::SettingsCat(super::console_settings::AppCat::General),
+            Screen::SettingsCat(super::console_settings::AppCat::Arkor),
             cx,
         );
         assert!(acts(l).contains(&Act::CheckArkor));
@@ -1023,9 +1023,15 @@ fn console_shows_removal_and_arkors_update() {
             version: "9.9.9".into(),
             url: String::new(),
             size: 1000,
-            notes: String::new(),
+            notes: "## Install or update\n\nrun this\n```bash\ncurl x\n```\n## New\n\n> [!NOTE]\n- **Saves** from [GOG](https://x.y) in `cloud`\n".into(),
         });
         assert!(acts(l).contains(&Act::AskArkor));
+        l.console_do(Act::ArkorNotes, w, cx);
+        assert!(matches!(
+            &l.console.overlay,
+            Some(Overlay::Read(_, text, _)) if text == "NEW\n\n•  Saves from GOG in cloud"
+        ));
+        l.console.overlay = None;
         l.console_open(Screen::Downloads, cx);
         assert!(acts(l).contains(&Act::AskArkor));
         l.console_do(Act::AskArkor, w, cx);
@@ -1396,5 +1402,95 @@ fn saves_are_asked_about_and_put_back() {
         l.saves_synced(&game, Err(anyhow::anyhow!("offline")), cx);
         assert!(l.status.as_ref().unwrap().contains("offline"));
         assert!(l.running.is_empty());
+    });
+}
+
+#[test]
+fn trouble_is_found_fixed_and_undone() {
+    use super::console::{Act, Overlay, Screen};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console"));
+        lib
+    });
+    cx.run_until_parked();
+    let (id, entry) = view.update(cx, |l, _| (l.games[0].id.clone(), l.games[0].id.id.clone()));
+    let log = arkor_core::paths::launch_log(&id).unwrap();
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(
+        &log,
+        "0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"x\") not found\n",
+    )
+    .unwrap();
+    // The game did not start: the console asks why.
+    view.update(cx, |l, cx| {
+        l.console_failed(&id, "Test Game", "exit status 1", &log);
+        let rows = l.overlay_rows(l.console.overlay.as_ref().unwrap());
+        assert_eq!(
+            rows[0].items[0].act,
+            Act::Screen(Screen::Trouble(entry.clone()))
+        );
+        l.console.overlay = None;
+        l.console_open(Screen::Game(entry.clone()), cx);
+        l.console_open(Screen::Trouble(entry.clone()), cx);
+    });
+    cx.run_until_parked();
+    let acts = view.update(cx, |l, _| {
+        l.console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| (i.act.clone(), i.label.clone())))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(acts[0].0, Act::Play(id.to_string()));
+    assert!(
+        acts.iter().any(|(_, l)| l.contains("vcrun2022")),
+        "{acts:?}"
+    );
+    let wined3d = acts
+        .iter()
+        .find(|(_, l)| l.contains("WineD3D"))
+        .map(|(a, _)| a.clone())
+        .expect("a general fix");
+    view.update(cx, |l, cx| {
+        let Act::Fix(p, n) = wined3d else {
+            unreachable!()
+        };
+        l.trouble_choose(p, n, cx);
+        assert!(l.profile.tweaks.contains("wined3d"));
+        let saved = arkor_core::Profile::load(&id).unwrap();
+        assert!(saved.tweaks.contains("wined3d"));
+        assert!(
+            l.console_rows()[0]
+                .items
+                .iter()
+                .any(|i| i.act == Act::TroubleUndo)
+        );
+        l.trouble_undo(cx);
+        assert!(!l.profile.tweaks.contains("wined3d"));
+        // A plain start is for the next start of this game only.
+        l.trouble.trial = Some((
+            id.clone(),
+            arkor_launch::trouble::Trial {
+                plain: true,
+                detail: false,
+            },
+        ));
+        assert!(l.trouble_trial(&id).plain);
+        assert!(!l.trouble_trial(&id).plain);
+        l.trouble_log();
+        assert!(
+            matches!(&l.console.overlay, Some(Overlay::Read(_, t, _)) if t.contains("MSVCP140"))
+        );
     });
 }

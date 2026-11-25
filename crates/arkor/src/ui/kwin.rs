@@ -4,9 +4,13 @@
 
 use std::process::{Command, Stdio};
 
-/// Stays loaded while it is wanted and only acts when a window appears or comes to the front,
-/// so it costs nothing in between. It does nothing unless Arkor fills a screen: should Arkor
-/// end without unloading it, Steam is left alone.
+/// Stays loaded while it is wanted and only acts when a window appears, comes to the front or
+/// is no longer minimised, so it costs nothing in between. It does nothing unless Arkor fills
+/// a screen: should Arkor end without unloading it, Steam is left alone.
+///
+/// What was in front comes back: Arkor, or the game (the pad's middle button makes Steam come
+/// forward by itself). Steam asks for the front more than once, so it is looked at again a
+/// little later.
 const SCRIPT: &str = r#"
 function all() { return workspace.windowList ? workspace.windowList() : workspace.clientList(); }
 function kind(w) { return w ? String(w.resourceClass).toLowerCase() : ""; }
@@ -18,18 +22,63 @@ function arkor() {
     }
     return null;
 }
+var last = null;
+function back(a) {
+    var list = all();
+    for (var i = 0; i < list.length; i++) {
+        if (last !== null && list[i] === last && !last.minimized) { return last; }
+    }
+    return a;
+}
 function away(w) {
     if (!isSteam(w)) { return; }
     var a = arkor();
     if (!a) { return; }
     if (!w.minimized) { w.minimized = true; }
-    if (workspace.activeWindow !== undefined) { workspace.activeWindow = a; }
-    else { workspace.activeClient = a; }
+    var to = back(a);
+    if (workspace.activeWindow !== undefined) { workspace.activeWindow = to; }
+    else { workspace.activeClient = to; }
 }
-(workspace.windowAdded || workspace.clientAdded).connect(away);
-(workspace.windowActivated || workspace.clientActivated).connect(away);
+function open(w) {
+    var list = all();
+    for (var i = 0; i < list.length; i++) {
+        if (list[i] === w) { return !w.minimized; }
+    }
+    return false;
+}
+function later(w, ms) {
+    var t = new QTimer();
+    t.singleShot = true;
+    t.interval = ms;
+    t.timeout.connect(function () { if (open(w)) { away(w); } t.stop(); });
+    t.start();
+}
+function seen(w) {
+    if (!isSteam(w)) { return; }
+    away(w);
+    later(w, 60);
+    later(w, 400);
+}
+function watch(w) {
+    if (!isSteam(w)) { return; }
+    if (w.minimizedChanged) {
+        w.minimizedChanged.connect(function () { if (!w.minimized) { seen(w); } });
+    }
+}
+function added(w) { watch(w); seen(w); }
+function activated(w) {
+    if (!w) { return; }
+    if (isSteam(w)) { seen(w); }
+    else if (w.normalWindow && (w.fullScreen || kind(w) === "arkor")) { last = w; }
+}
+(workspace.windowAdded || workspace.clientAdded).connect(added);
+(workspace.windowActivated || workspace.clientActivated).connect(activated);
+activated(workspace.activeWindow !== undefined ? workspace.activeWindow : workspace.activeClient);
 var list = all();
-for (var i = 0; i < list.length; i++) { if (isSteam(list[i]) && !list[i].minimized) { away(list[i]); } }
+for (var i = 0; i < list.length; i++) {
+    watch(list[i]);
+    if (isSteam(list[i]) && !list[i].minimized) { away(list[i]); }
+}
 "#;
 
 const NAME: &str = "arkor-steam-back";

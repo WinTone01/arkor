@@ -81,7 +81,8 @@ impl Library {
             return;
         }
         let screen = self.console.on.then_some(self.console.screen_px);
-        let (mut child, log) = match spawn_launch(&id, screen) {
+        let trial = self.trouble_trial(&id);
+        let (mut child, log) = match spawn_launch(&id, screen, trial) {
             Ok(c) => c,
             Err(e) => {
                 self.status = Some(format!("{}: {e:#}", self.t().launch_failed).into());
@@ -113,6 +114,14 @@ impl Library {
         let name = self.entry().map(|g| g.name.clone()).unwrap_or_default();
         cx.spawn(async move |this, cx| {
             let status = bg.spawn(async move { child.wait() }).await;
+            let ended = arkor_launch::trouble::Ended {
+                // A signal as shells count it.
+                code: status.as_ref().ok().and_then(|s| {
+                    use std::os::unix::process::ExitStatusExt;
+                    s.code().or(s.signal().map(|n| 128 + n))
+                }),
+                secs: started.elapsed().as_secs(),
+            };
             let failure = match status {
                 Ok(s) if s.success() => None,
                 // Played for a while: closing it is no failure, whatever the game's exit code
@@ -127,6 +136,7 @@ impl Library {
                 let failure = failure.filter(|_| !this.stopping.remove(&id.to_string()));
                 this.running.remove(&id.to_string());
                 this.saves_after(&id, cx);
+                this.trouble_ended(&id, ended, cx);
                 // Console mode comes back to the front when the game ends.
                 this.console.come_back = this.console.on;
                 if let Some(why) = &failure
@@ -1390,6 +1400,7 @@ fn code_box(text: String) -> Div {
 fn spawn_launch(
     id: &GameId,
     console: Option<(u32, u32)>,
+    trial: arkor_launch::trouble::Trial,
 ) -> anyhow::Result<(std::process::Child, std::path::PathBuf)> {
     use std::os::unix::process::CommandExt;
     let log = paths::launch_log(id)?;
@@ -1402,6 +1413,9 @@ fn spawn_launch(
         // Started from console mode: kept full screen (see `arkor_launch::run`).
         cmd.env("ARKOR_CONSOLE_SIZE", format!("{w}x{h}"));
         arkor_launch::note_console_launch(id, (w, h));
+    }
+    if let Some(text) = trial.text() {
+        cmd.env(arkor_launch::trouble::TRIAL_ENV, text);
     }
     let child = cmd
         .arg("launch")
@@ -1458,7 +1472,7 @@ fn which(name: &str) -> bool {
 /// Starts a library game outside the window (tray menu): own process group, output to its log.
 pub(super) fn launch_detached(id: &str) {
     if let Ok(id) = id.parse::<GameId>() {
-        let _ = spawn_launch(&id, None);
+        let _ = spawn_launch(&id, None, Default::default());
     }
 }
 

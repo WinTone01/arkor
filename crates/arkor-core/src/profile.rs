@@ -382,6 +382,9 @@ pub struct Global {
     /// Steam's downloads are controlled through its developer port (off unless asked for:
     /// any program on the computer can use that port while it is open).
     pub steam_control: bool,
+    /// The pad's middle button brings Steam forward (Steam's own setting, set through its
+    /// port while it is controlled).
+    pub guide_opens_steam: bool,
     /// Saves of Epic and GOG games do not follow the store's cloud (they do unless turned off).
     pub no_cloud_saves: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).

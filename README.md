@@ -227,7 +227,8 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       <b>Everything a game needs</b><br>
       Launch options in Steam style (<code>VAR=1 %command%</code>), commands before and after,
       a second program next to the game, winecfg and winetricks, protonfixes found by name,
-      clear launch logs, benchmarks from MangoHud logs, backups and Discord status.
+      clear launch logs with <b>"Why did it not start?"</b> (the reason, and fixes that take one
+      press), benchmarks from MangoHud logs, backups and Discord status.
     </td>
   </tr>
   <tr>
@@ -272,6 +273,7 @@ Everything in the window is also scriptable:
 | `arkor run <id> -- <command>` | Runs any command with a game's settings |
 | `arkor tool <id> winecfg \| winetricks \| run <file>` | Prefix tools |
 | `arkor proton installed \| list \| install` | Proton builds |
+| `arkor trouble <id>` | Why a game did not start, and what helps |
 | `arkor saves sync \| list \| restore <id>` | Cloud saves of Epic and GOG games, and copies of them |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor update [--check]` | Updates Arkor to the latest release |

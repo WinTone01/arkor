@@ -51,6 +51,7 @@ usage:
   arkor saves status <id> | sync <id> [--keep here|cloud] | upload <id>
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
+  arkor trouble <id>                      why a game did not start, and what helps
   arkor backup create [--with-prefixes] | restore <file>
                                           back up / restore Arkor's data";
 
@@ -122,6 +123,20 @@ fn main() -> anyhow::Result<()> {
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
         Some("reshade") => reshade(&args[1..]),
         Some("saves") => saves(&args[1..]),
+        Some("trouble") => {
+            use arkor_launch::trouble;
+            let id: GameId = arg(&args, 1)?.parse()?;
+            for p in trouble::problems(&trouble::Facts::gather(&id)?, None) {
+                println!("{:?}", p.cause);
+                if let Some(line) = &p.line {
+                    println!("  log: {line}");
+                }
+                for fix in &p.fixes {
+                    println!("  - {fix:?}");
+                }
+            }
+            Ok(())
+        }
         Some("backup") => backup(&args[1..]),
         Some("layer") => layer(&args[1..]),
         Some("update") => self_update(args.get(1).is_some_and(|a| a == "--check")),

@@ -92,6 +92,8 @@ impl GameCat {
 /// The categories of Arkor's own settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum AppCat {
+    /// Arkor's own updates.
+    Arkor,
     General,
     Looks,
     Games,
@@ -102,7 +104,8 @@ pub(super) enum AppCat {
 }
 
 impl AppCat {
-    pub(super) const ALL: [AppCat; 7] = [
+    pub(super) const ALL: [AppCat; 8] = [
+        AppCat::Arkor,
         AppCat::General,
         AppCat::Looks,
         AppCat::Games,
@@ -612,7 +615,8 @@ impl Library {
         if self.entry().is_none_or(|e| e.id != id) {
             return Vec::new();
         }
-        self.game_cats()
+        let mut rows: Vec<Row> = self
+            .game_cats()
             .into_iter()
             .map(|c| {
                 let (icon, title) = self.game_cat_title(c);
@@ -645,7 +649,17 @@ impl Library {
                     )],
                 )
             })
-            .collect()
+            .collect();
+        rows.push(Row::new(
+            Kind::Line,
+            vec![Item::line(
+                Act::Screen(Screen::Trouble(id.to_string())),
+                "stethoscope",
+                self.tr("It does not start?", "Açılmıyor mu?"),
+                Value::None,
+            )],
+        ));
+        rows
     }
 
     /// The settings of one category.
@@ -913,6 +927,7 @@ impl Library {
 
     fn app_cat_title(&self, c: AppCat) -> (&'static str, &'static str) {
         match c {
+            AppCat::Arkor => ("sparkles", self.tr("Arkor update", "Arkor güncellemesi")),
             AppCat::General => ("settings", self.tr("General", "Genel")),
             AppCat::Looks => ("palette", self.tr("Looks", "Görünüm")),
             AppCat::Games => ("gamepad-2", self.tr("Games", "Oyunlar")),
@@ -935,7 +950,10 @@ impl Library {
                         Act::Screen(Screen::SettingsCat(c)),
                         icon,
                         title,
-                        Value::None,
+                        match c {
+                            AppCat::Arkor => Value::Text(self.console_arkor_state()),
+                            _ => Value::None,
+                        },
                     )],
                 )
             })
@@ -964,8 +982,16 @@ impl Library {
             )
         };
         match c {
+            AppCat::Arkor => {
+                let mut rows = self.console_arkor_rows();
+                rows.push(line(
+                    Opt::Updates,
+                    "refresh-cw",
+                    t("Look for updates by itself", "Kendiliğinden denetle"),
+                ));
+                rows
+            }
             AppCat::General => vec![
-                self.console_arkor_row(),
                 line(Opt::Language, "languages", t("Language", "Dil")),
                 line(
                     Opt::Autostart,
@@ -981,11 +1007,6 @@ impl Library {
                     Opt::Tray,
                     "panel-bottom",
                     t("Keep running in the tray", "Kapatınca tepside çalışsın"),
-                ),
-                line(
-                    Opt::Updates,
-                    "refresh-cw",
-                    t("Look for updates", "Güncellemeleri denetle"),
                 ),
             ],
             AppCat::Looks => vec![
@@ -1084,6 +1105,22 @@ impl Library {
                 )
                 .into();
                 rows.push(control);
+                if g.steam_control {
+                    let mut guide = line(
+                        Opt::GuideSteam,
+                        "gamepad-2",
+                        t(
+                            "The middle button opens Steam",
+                            "Orta tuş Steam'i öne getirsin",
+                        ),
+                    );
+                    guide.items[0].sub = t(
+                        "Off: it stays Arkor's, also in Steam's settings",
+                        "Kapalı: Arkor'da kalır; Steam ayarlarında da kapanır",
+                    )
+                    .into();
+                    rows.push(guide);
+                }
                 rows
             }
         }
@@ -1233,6 +1270,7 @@ impl Library {
             Opt::GlobalHud => Value::Switch(g.mangohud.enabled),
             Opt::FullScreen => Value::Switch(!g.console_windowed),
             Opt::CloudSaves => Value::Switch(!g.no_cloud_saves),
+            Opt::GuideSteam => Value::Switch(g.guide_opens_steam),
             Opt::InstallMenu => Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.menu)),
             Opt::InstallDesktop => {
                 Value::Switch(self.shops.game.as_ref().is_some_and(|g| g.desktop))
@@ -1325,6 +1363,10 @@ impl Library {
             Opt::GlobalHud => g.mangohud.enabled = !g.mangohud.enabled,
             Opt::FullScreen => g.console_windowed = !g.console_windowed,
             Opt::CloudSaves => g.no_cloud_saves = !g.no_cloud_saves,
+            Opt::GuideSteam => {
+                g.guide_opens_steam = !g.guide_opens_steam;
+                self.console.guide_told = false;
+            }
             _ => return,
         }
         let r = self.global.save();

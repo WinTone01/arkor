@@ -450,6 +450,37 @@ pub fn set_launch_options(appid: u32, options: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether the pad's middle button brings Steam forward ("Guide button focuses Steam").
+pub fn set_guide_focus(on: bool) -> anyhow::Result<()> {
+    // Steam's settings message with only this field: 14002, a yes or no.
+    let message = [0x90, 0xeb, 0x06, u8::from(on)];
+    let text = base64(&message);
+    run(&format!(
+        "SteamClient.Settings.SetSetting({}); 1",
+        quoted(&text)
+    ))?;
+    Ok(())
+}
+
+fn base64(data: &[u8]) -> String {
+    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                ABC[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
 /// `None`: Steam's own choice.
 pub fn set_tool(appid: u32, tool: Option<&str>) -> anyhow::Result<()> {
     run(&format!(
@@ -655,6 +686,16 @@ pub fn picture(url: &str) -> Option<std::path::PathBuf> {
         .rev()
         .collect();
     Some(dirs::cache_dir()?.join("arkor/steam").join(name))
+}
+
+#[cfg(test)]
+mod guide_tests {
+    #[test]
+    fn settings_message() {
+        assert_eq!(super::base64(&[0x90, 0xeb, 0x06, 0]), "kOsGAA==");
+        assert_eq!(super::base64(&[0x90, 0xeb, 0x06, 1]), "kOsGAQ==");
+        assert_eq!(super::base64(b"Man"), "TWFu");
+    }
 }
 
 #[cfg(test)]

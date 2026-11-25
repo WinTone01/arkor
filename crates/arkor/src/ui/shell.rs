@@ -603,8 +603,12 @@ impl Render for Library {
                 .track_focus(&focus)
                 .key_context(CONTEXT)
                 .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
+                .on_mouse_move(cx.listener(|this, _, _, _| this.pointer_moved()))
                 .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
                     let k = &e.keystroke;
+                    if k.key == super::console::POINTER_KEY {
+                        return;
+                    }
                     if !k.modifiers.control && !k.modifiers.alt && !k.modifiers.platform {
                         this.console_type(&k.key, k.key_char.as_deref(), cx);
                     }

@@ -1,7 +1,7 @@
 # Maintainer: WinTone01
 pkgname=arkor-git
 _pkgname=arkor
-pkgver=0.7.0
+pkgver=0.8.0
 pkgrel=1
 pkgdesc="Game launcher for Linux: Steam, Epic, GOG and your own games with Proton, MangoHud, Gamescope and upscalers per game"
 arch=('x86_64')

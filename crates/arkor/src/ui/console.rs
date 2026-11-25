@@ -82,6 +82,8 @@ pub(super) enum Screen {
     Steam(u32, SteamPage),
     /// A library game's saves.
     Saves(String),
+    /// Why a library game did not start.
+    Trouble(String),
 }
 
 impl Screen {
@@ -121,6 +123,8 @@ pub(super) enum Opt {
     Sounds,
     /// Steam's downloads are controlled through its developer port.
     SteamControl,
+    /// The pad's middle button brings Steam forward.
+    GuideSteam,
     /// Steam's library folder a game is installed in.
     SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
@@ -187,6 +191,10 @@ pub(super) enum Act {
     SavesCopy,
     SavesAskRestore(String),
     SavesRestore(String),
+    /// Why a game did not start: one of a problem's fixes, the log, the settings as before.
+    Fix(usize, usize),
+    TroubleLog,
+    TroubleUndo,
     SteamDlc(u32, u32, bool),
     WorkshopMenu(u32, String),
     SteamWorkshop(u32, String, bool),
@@ -206,6 +214,8 @@ pub(super) enum Act {
     FirstDownload(String),
     /// Arkor's own update: look, ask, install.
     CheckArkor,
+    /// What is new in it.
+    ArkorNotes,
     AskArkor,
     UpdateArkor,
     ShowSteam,
@@ -529,6 +539,30 @@ pub(super) struct Behind {
     pub(super) size: cover_art::Size,
 }
 
+/// A key no keyboard has, pressed to make the pointer go (see [`hide_pointer`]).
+pub(super) const POINTER_KEY: &str = "f35";
+
+/// Hides the mouse pointer until the mouse moves. The toolkit does that when something is
+/// typed and has no other way to ask for it.
+fn hide_pointer(window: &mut Window, cx: &mut gpui::App) {
+    if cfg!(test) || !cx.is_cursor_visible() || !window.is_window_active() {
+        return;
+    }
+    // Later: whoever calls this is being updated right now.
+    window.defer(cx, |window, cx| {
+        let key = gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke {
+                modifiers: Default::default(),
+                key: POINTER_KEY.into(),
+                key_char: Some(String::new()),
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        window.dispatch_event(gpui::PlatformInput::KeyDown(key), cx);
+    });
+}
+
 /// Starts Steam without its window, so it goes on with its downloads (not in tests).
 fn let_steam_update() -> anyhow::Result<bool> {
     if cfg!(test) {
@@ -626,6 +660,13 @@ pub(super) struct Console {
     pub(super) after_update: Option<(String, u32, Instant)>,
     /// The Steam window guard runs.
     guarding: bool,
+    /// Steam was told what the pad's middle button does, this session.
+    pub(super) guide_told: bool,
+    /// When the mouse was moved last, and whether that is being watched.
+    pointer: Option<Instant>,
+    pointer_watched: bool,
+    /// Arkor's window was opened full screen: it has no other size yet.
+    pub(super) opened_full: bool,
     /// Capitals, and the symbols page, on the keyboard.
     pub(super) shift: bool,
     pub(super) symbols: bool,
@@ -772,6 +813,7 @@ impl Library {
             Screen::SettingsCat(c) => self.app_cat_rows(c),
             Screen::Steam(app, page) => self.steam_page_rows(app, page),
             Screen::Saves(id) => self.saves_rows(&id),
+            Screen::Trouble(id) => self.trouble_rows(&id),
         }
     }
 
@@ -1824,13 +1866,12 @@ impl Library {
             Overlay::Failed(id, _, _) => vec![Row::new(
                 Kind::Pills,
                 vec![
-                    Item::main(Act::Close, "check", self.tr("OK", "Tamam")),
-                    Item::pill(
-                        Act::Screen(Screen::GameSettings(id.clone())),
-                        "sliders-horizontal",
-                        self.tr("Its settings", "Ayarlarına git"),
-                        false,
+                    Item::main(
+                        Act::Screen(Screen::Trouble(id.clone())),
+                        "stethoscope",
+                        self.tr("Why?", "Neden açılmadı?"),
                     ),
+                    Item::pill(Act::Close, "x", self.tr("Close", "Kapat"), false),
                 ],
             )],
             Overlay::Ask(_, yes, act) => vec![Row::new(
@@ -1963,6 +2004,10 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Tools),
             ],
+            Some("updates") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Arkor),
+            ],
             Some("general") => vec![
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::General),
@@ -1982,6 +2027,11 @@ impl Library {
             }
             Some(s) => match s.split_once('/') {
                 Some(("game", id)) => vec![Screen::Library, Screen::Game(id.into())],
+                Some(("trouble", id)) => vec![
+                    Screen::Library,
+                    Screen::Game(id.into()),
+                    Screen::Trouble(id.into()),
+                ],
                 Some(("saves", id)) => vec![
                     Screen::Library,
                     Screen::Game(id.into()),
@@ -2011,9 +2061,17 @@ impl Library {
     pub(super) fn console_first(&mut self, cx: &mut Context<Self>) {
         match self.console.screen() {
             s @ Screen::SettingsCat(_) => self.console_open(s, cx),
-            Screen::Game(id) | Screen::GameSettings(id) | Screen::Saves(id) => {
+            Screen::Game(id)
+            | Screen::GameSettings(id)
+            | Screen::Saves(id)
+            | Screen::Trouble(id) => {
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == id) {
                     self.select(Selection::Game(ix), cx);
+                }
+                if matches!(self.console.screen(), Screen::Trouble(_))
+                    && let Some(id) = self.selected_id()
+                {
+                    self.trouble_load(&id, cx);
                 }
             }
             Screen::ShopGame(shop, id) if self.shops.game.is_none() => {
@@ -2037,7 +2095,8 @@ impl Library {
             Screen::Game(e)
             | Screen::GameSettings(e)
             | Screen::GameCat(e, _)
-            | Screen::Saves(e) => entry.as_deref() == Some(e.as_str()),
+            | Screen::Saves(e)
+            | Screen::Trouble(e) => entry.as_deref() == Some(e.as_str()),
             _ => false,
         };
         if self.console.stack.iter().any(of_it) {
@@ -2090,6 +2149,89 @@ impl Library {
         if window.is_fullscreen() != on {
             window.toggle_fullscreen();
         }
+        if !on {
+            self.fit_window(window, cx);
+        }
+    }
+
+    /// Out of full screen: a window that was never anything else has no size to go back to
+    /// and would stay as large as the screen, partly below the panel. It is maximised then,
+    /// which leaves the panel its room.
+    fn fit_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.console.opened_full) {
+            window.zoom_window();
+            return;
+        }
+        let Some(screen) = window.display(cx).map(|d| d.bounds().size) else {
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            let _ = this.update_in(cx, |this, window, _| {
+                let size = window.viewport_size();
+                let covers =
+                    size.width >= screen.width && size.height >= screen.height - gpui::px(60.);
+                if !this.console.on && covers && !window.is_fullscreen() && !window.is_maximized() {
+                    window.zoom_window();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The mouse was moved: its pointer is there again.
+    pub(super) fn pointer_moved(&mut self) {
+        self.console.pointer = Some(Instant::now());
+    }
+
+    /// The pointer goes when the mouse rests, and at once when a gamepad is used.
+    pub(super) fn watch_pointer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.console.pointer_watched, true) {
+            return;
+        }
+        self.console.pointer = Some(Instant::now());
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let go_on = this.update_in(cx, |this, window, cx| {
+                    if !this.console.on {
+                        this.console.pointer_watched = false;
+                        return false;
+                    }
+                    let rests = this
+                        .console
+                        .pointer
+                        .is_none_or(|t| t.elapsed() > Duration::from_millis(2500));
+                    if rests {
+                        hide_pointer(window, cx);
+                    }
+                    true
+                });
+                if !go_on.unwrap_or(false) {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Whether a game of Steam's runs or starts.
+    fn steam_plays(&self) -> bool {
+        let steam = |id: &str| {
+            self.library
+                .get(id)
+                .is_some_and(|g| matches!(g.kind, GameKind::Steam { .. }))
+        };
+        self.running
+            .keys()
+            .any(|k| k.split_once(':').is_none_or(|(_, id)| steam(id)))
+            || self
+                .console
+                .launching
+                .as_ref()
+                .is_some_and(|l| l.steam.is_some() || steam(&l.id))
     }
 
     /// While console mode is on (KDE): Steam's own windows are put away whenever no game
@@ -2116,9 +2258,11 @@ impl Library {
                         .launching
                         .as_ref()
                         .is_some_and(|l| l.waits_for_steam());
+                    // Other games have no use for Steam's windows either (the pad's middle
+                    // button would put Steam over them).
                     let playing = match waits {
                         true => this.running.len() > 1,
-                        false => !this.running.is_empty() || this.console.launching.is_some(),
+                        false => this.steam_plays(),
                     };
                     let shown = this
                         .console
@@ -2133,6 +2277,25 @@ impl Library {
                         && !this.shops.logged_in(Shop::Steam);
                     (this.console.on, !playing && !login && !wanted && !shown)
                 });
+                // Steam is told once what the pad's middle button does.
+                let tell = this
+                    .update(cx, |this, _| {
+                        let due = this.console.on
+                            && !this.console.guide_told
+                            && arkor_launch::steam_control::on();
+                        this.console.guide_told |= due;
+                        due.then_some(this.global.guide_opens_steam)
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(on) = tell {
+                    let told = bg
+                        .spawn(async move { arkor_launch::steam_api::set_guide_focus(on) })
+                        .await;
+                    if told.is_err() {
+                        let _ = this.update(cx, |this, _| this.console.guide_told = false);
+                    }
+                }
                 let (console, guard) = go.unwrap_or((false, false));
                 let guard = console && guard;
                 if guard != on {
@@ -2223,6 +2386,16 @@ impl Library {
                 self.shop_open_game(*shop, id, cx);
                 if *shop == Shop::Steam {
                     self.steam_look_folders(cx);
+                }
+            }
+            Screen::Trouble(id) => {
+                self.console.focus.remove(&screen);
+                if let Some(ix) = self.games.iter().position(|g| g.id.id == *id) {
+                    if self.selected_id().is_none_or(|g| g.id != *id) {
+                        self.select(Selection::Game(ix), cx);
+                    }
+                    let id = self.games[ix].id.clone();
+                    self.trouble_load(&id, cx);
                 }
             }
             Screen::Steam(app, page) => {
@@ -2366,8 +2539,9 @@ impl Library {
             }
             return;
         }
-        if self.console.on && !self.console.pad {
+        if self.console.on {
             self.console.pad = true;
+            hide_pointer(window, cx);
         }
         self.nav(nav, window, cx);
     }
@@ -2875,7 +3049,7 @@ impl Library {
             Act::AskUninstall(..) | Act::AskRemoveTool(_) | Act::ToolMenu(_) => Cue::Open,
             Act::DiskMenu(_) | Act::FolderAt(_) | Act::SteamDownload(_) => Cue::Open,
             Act::DoNotStart | Act::CallOff(_) => Cue::Back,
-            Act::DownloadMenu(_) | Act::AskArkor => Cue::Open,
+            Act::DownloadMenu(_) | Act::AskArkor | Act::ArkorNotes => Cue::Open,
             Act::SteamMoveAsk(_) | Act::SteamMoveMenu | Act::WorkshopMenu(..) => Cue::Open,
             Act::ShotMenu(_) | Act::AskShotDelete(_) | Act::AskUnsubscribe(..) => Cue::Open,
             Act::SteamDlc(_, _, on) => {
@@ -3004,6 +3178,9 @@ impl Library {
                 self.console.overlay = None;
                 self.steam_do(move || steam_control::place(appid, place), |_| None, cx);
             }
+            Act::Fix(p, n) => self.trouble_choose(p, n, cx),
+            Act::TroubleLog => self.trouble_log(),
+            Act::TroubleUndo => self.trouble_undo(cx),
             Act::SavesToggle
             | Act::SavesSync
             | Act::SavesAsk
@@ -3063,6 +3240,18 @@ impl Library {
                 downloads::move_to_front(&key);
             }
             Act::CheckArkor => self.check_app_update(false, cx),
+            Act::ArkorNotes => {
+                if let Some(r) = &self.app_update.available {
+                    let title = format!("Arkor {}", r.version);
+                    let text = super::console_tools::plain_notes(&r.notes);
+                    let options = vec![
+                        (self.tr("Update", "Güncelle").to_string(), Act::AskArkor),
+                        (self.tr("Close", "Kapat").to_string(), Act::Close),
+                    ];
+                    self.console.read_at = 0.;
+                    self.console_overlay(Overlay::Read(title, text, options));
+                }
+            }
             Act::AskArkor => {
                 if let Some(r) = &self.app_update.available {
                     let text = format!(

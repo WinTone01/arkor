@@ -377,6 +377,21 @@ pub fn run_prefix_tool(id: &GameId, tool: &PrefixTool) -> anyhow::Result<std::pr
     cmd.status().context("running umu-run")
 }
 
+/// Lets Wine set the game's prefix up again (`wineboot -u`); what is in it stays. Blocking.
+pub fn update_prefix(id: &GameId) -> anyhow::Result<()> {
+    let (prefix, env) = game_wine_env(id)?;
+    std::fs::create_dir_all(&prefix)?;
+    let status = std::process::Command::new(umu_run()?)
+        .args(["wineboot", "-u"])
+        .envs(&env)
+        .env_remove("DISABLE_MANGOHUD")
+        .env("MANGOHUD", "0")
+        .status()
+        .context("running umu-run")?;
+    anyhow::ensure!(status.success(), "wineboot ended with {status}");
+    Ok(())
+}
+
 /// Stops everything running in a Windows game's prefix (`wineserver -k`).
 pub fn kill_prefix(id: &GameId) -> anyhow::Result<()> {
     let (prefix, env) = game_wine_env(id)?;

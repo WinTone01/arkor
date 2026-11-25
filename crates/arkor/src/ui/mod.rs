@@ -44,6 +44,7 @@ mod synth;
 mod system_page;
 mod text_input;
 mod tray;
+mod trouble;
 mod widgets;
 
 #[cfg(test)]
@@ -156,6 +157,8 @@ pub struct Library {
     steam: steam_card::SteamState,
     /// The selected game's saves and the cloud's.
     saves: saves::SavesUi,
+    /// Why a game did not start.
+    trouble: trouble::TroubleUi,
     /// Store accounts and their games.
     shops: shops::ShopsState,
     /// The window was in use when it was last drawn.
@@ -228,6 +231,7 @@ impl Library {
             downloads: Default::default(),
             steam: Default::default(),
             saves: Default::default(),
+            trouble: Default::default(),
             shops: shops::ShopsState::load(),
             window_active: true,
             sgdb: None,
@@ -725,6 +729,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
         .with_assets(icons::ArkorAssets)
         .run(move |cx: &mut App| {
             gpui::init(cx);
+            cx.set_cursor_hide_mode(gpui::CursorHideMode::OnTyping);
             style::load_fonts(cx);
             app_icon::install();
             sync_kit_theme(&global.appearance, cx);
@@ -909,15 +914,14 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
     let console = open
         .as_deref()
         .is_some_and(|o| o.starts_with("console") || o == "big");
+    let full = console && std::env::var_os("ARKOR_WINDOW_SIZE").is_none();
     let opened = gpui::open_window(
         WindowOptions {
-            window_bounds: Some(
-                if console && std::env::var_os("ARKOR_WINDOW_SIZE").is_none() {
-                    WindowBounds::Fullscreen(bounds)
-                } else {
-                    WindowBounds::Windowed(bounds)
-                },
-            ),
+            window_bounds: Some(if full {
+                WindowBounds::Fullscreen(bounds)
+            } else {
+                WindowBounds::Windowed(bounds)
+            }),
             window_min_size: Some(size(px(1000.), px(640.))),
             app_id: Some("arkor".into()),
             ..Default::default()
@@ -927,6 +931,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
             cx.new(|cx| {
                 let mut lib = Library::new();
                 lib.open(open.as_deref());
+                lib.console.opened_full = full;
                 // Only the real window installs components and runs the download queue
                 // (not the headless tests).
                 if !lib.console.on {
