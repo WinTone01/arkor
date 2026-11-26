@@ -8,15 +8,10 @@ use super::console::{Act, Item, Kind as RowKind, Opt, Row, Screen, Value};
 use super::console_settings::AppCat;
 use super::gamepad::{self, Kind};
 
-/// Below this a battery is low.
-const LOW: u8 = 15;
-
 #[derive(Default)]
 pub(super) struct PadsState {
     /// B was pressed once while trying the buttons.
     back_at: Option<Instant>,
-    /// Pads whose low battery was told (by name), until they charge.
-    told: Vec<String>,
 }
 
 impl Library {
@@ -34,25 +29,6 @@ impl Library {
     pub(super) fn pad_watch(&mut self) {
         if self.console.screen() == Screen::PadTest {
             self.console.unsettled = true;
-        }
-        for p in gamepad::pads() {
-            match p.battery {
-                Some((percent, false)) if percent <= LOW => {
-                    if !self.console.pads.told.contains(&p.name) {
-                        self.console.pads.told.push(p.name.clone());
-                        self.status = Some(
-                            format!(
-                                "{}: {}",
-                                self.tr("The gamepad's battery is low", "Kolun pili azaldı"),
-                                self.percent(f32::from(percent) / 100.)
-                            )
-                            .into(),
-                        );
-                    }
-                }
-                Some((_, true)) => self.console.pads.told.retain(|n| *n != p.name),
-                _ => {}
-            }
         }
     }
 

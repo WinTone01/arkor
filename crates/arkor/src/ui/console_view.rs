@@ -96,6 +96,10 @@ impl Library {
         }
         self.watch_pointer(window, cx);
         self.pad_watch();
+        if self.rest_moving() {
+            self.console.unsettled = true;
+        }
+
         self.sys_flush(cx);
         let still = self.global.appearance.reduce_motion;
         let now = Instant::now();
@@ -228,6 +232,7 @@ impl Library {
             .child(self.console_footer(&item, f, cx))
             .children(launching)
             .children(intro)
+            .children(self.idle_view(vw, vh, u, f.margin))
     }
 
     /// A store's login (its page is a window of its own; this is what is around it).
@@ -2265,7 +2270,7 @@ fn ease_to(at: &mut f32, target: f32, ease: f32) -> bool {
 }
 
 /// The local time, "21:05".
-fn clock() -> String {
+pub(super) fn clock() -> String {
     // SAFETY: localtime_r fills the zeroed struct from a valid time.
     unsafe {
         let now = libc::time(std::ptr::null_mut());

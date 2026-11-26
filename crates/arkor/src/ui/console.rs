@@ -152,6 +152,9 @@ pub(super) enum Opt {
     FpsLimit,
     /// Whose button marks are shown.
     PadGlyphs,
+    /// The screen darkens, the computer sleeps, after so many minutes without input.
+    DimAfter,
+    SleepAfter,
     /// Steam's library folder a game is installed in.
     SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
@@ -736,6 +739,8 @@ pub(super) struct Console {
     pub(super) quick: super::console_quick::QuickState,
     /// What console mode knows for adding and arranging games (see `console_library`).
     pub(super) lib: super::console_library::LibState,
+    /// The screen at rest, keeping the desktop awake, words about events (`console_idle`).
+    pub(super) idle: super::console_idle::IdleState,
     /// The gamepads' state as console mode knows it (see `console_pads`).
     pub(super) pads: super::console_pads::PadsState,
     /// When the mouse was moved last, and whether that is being watched.
@@ -2325,6 +2330,7 @@ impl Library {
     /// The mouse was moved: its pointer is there again.
     pub(super) fn pointer_moved(&mut self) {
         self.console.pointer = Some(Instant::now());
+        self.idle_input();
     }
 
     /// The pointer goes when the mouse rests, and at once when a gamepad is used.
@@ -2348,6 +2354,7 @@ impl Library {
                     if rests {
                         hide_pointer(window, cx);
                     }
+                    this.idle_tick(window, cx);
                     true
                 });
                 if !go_on.unwrap_or(false) {
@@ -2717,6 +2724,10 @@ impl Library {
     pub(super) fn nav(&mut self, nav: Nav, window: &mut Window, cx: &mut Context<Self>) {
         if !self.console.on {
             return;
+        }
+        // A dark screen only wakes.
+        if self.idle_input() {
+            return cx.notify();
         }
         // The start-up animation ends with the first input.
         self.skip_intro(cx);

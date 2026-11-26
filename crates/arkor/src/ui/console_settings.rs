@@ -1173,6 +1173,7 @@ impl Library {
             .sys_opt_choices(o)
             .or_else(|| self.quick_opt_choices(o))
             .or_else(|| self.pads_opt_choices(o))
+            .or_else(|| self.idle_opt_choices(o))
         {
             return Some(c);
         }
@@ -1266,6 +1267,7 @@ impl Library {
             .sys_opt_key(o)
             .or_else(|| self.quick_opt_key(o))
             .or_else(|| self.pads_opt_key(o))
+            .or_else(|| self.idle_opt_key(o))
         {
             return k;
         }
@@ -1360,7 +1362,11 @@ impl Library {
 
     /// Sets a choice of any setting.
     pub(super) fn opt_set(&mut self, o: &Opt, key: &str) {
-        if self.sys_opt_set(o, key) || self.quick_opt_set(o, key) || self.pads_opt_set(o, key) {
+        if self.sys_opt_set(o, key)
+            || self.quick_opt_set(o, key)
+            || self.pads_opt_set(o, key)
+            || self.idle_opt_set(o, key)
+        {
             return;
         }
         if *o == Opt::InstallProton {

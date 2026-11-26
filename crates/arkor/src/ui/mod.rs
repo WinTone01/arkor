@@ -7,6 +7,7 @@ mod app_update;
 mod backdrop;
 mod bench_page;
 mod console;
+mod console_idle;
 mod console_intro;
 mod console_library;
 mod console_pads;

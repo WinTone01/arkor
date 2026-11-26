@@ -1880,3 +1880,68 @@ fn the_library_is_arranged_from_the_console() {
         assert!(exe.exists());
     });
 }
+
+#[test]
+fn console_mode_rests_when_nobody_plays() {
+    use super::console::{Opt, Screen};
+    use super::console_settings::AppCat;
+    use super::gamepad::Nav;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#library"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update_in(cx, |l, w, cx| {
+        // Five minutes by default.
+        l.console.idle.pretend_idle(4 * 60);
+        l.idle_tick(w, cx);
+        assert!(!l.console.idle.dimmed);
+        l.console.idle.pretend_idle(6 * 60);
+        l.idle_tick(w, cx);
+        assert!(l.console.idle.dimmed);
+        assert!(l.idle_view(1600., 900., 1., 88.).is_some());
+        // The first press only wakes it: the focus stays.
+        let before = l.console.screen();
+        l.nav(Nav::Back, w, cx);
+        assert!(!l.console.idle.dimmed);
+        assert_eq!(l.console.screen(), before);
+        // Not while a game runs.
+        l.running.insert(l.games[0].id.to_string(), 1);
+        l.console.idle.pretend_idle(60 * 60);
+        l.idle_tick(w, cx);
+        assert!(!l.console.idle.dimmed);
+        l.running.clear();
+        // Never, when chosen so; the choices are in Power.
+        l.console_open(Screen::SettingsCat(AppCat::Power), cx);
+        l.opt_set(&Opt::DimAfter, "0");
+        assert_eq!(
+            arkor_core::Global::load_or_import()
+                .unwrap()
+                .console_dim_mins,
+            Some(0)
+        );
+        l.idle_tick(w, cx);
+        assert!(!l.console.idle.dimmed);
+        let keys: Vec<String> = l
+            .opt_choices(&Opt::SleepAfter)
+            .unwrap()
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect();
+        assert_eq!(keys, ["0", "15", "30", "60", "120"]);
+        // Tests start no inhibitor.
+        assert!(!l.console.idle.keeps_awake());
+    });
+}

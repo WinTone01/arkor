@@ -182,7 +182,8 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       animation with your games and Arkor's own updates. <b>Wi-Fi, Bluetooth, sound, screens
       and power</b> are set there, too, and the middle button brings a <b>quick menu</b> over a
       running game. Buttons are shown as your pad marks them (Xbox, PlayStation, Nintendo).
-      Games are added and arranged there, too: favourites, categories, covers.
+      Games are added and arranged there, too: favourites, categories, covers. At rest it
+      shows your games and the time, and keeps the desktop awake while the pad is used.
       Steam's windows stay behind it.
       Press the pad's middle button or <kbd>F11</kbd>, or let Arkor start in it when the
       computer does.

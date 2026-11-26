@@ -392,6 +392,11 @@ pub struct Global {
     pub no_cloud_saves: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
+    /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).
+    pub console_dim_mins: Option<u32>,
+    /// The computer sleeps after this many minutes without input in console mode, when
+    /// nothing plays or downloads (`None` or 0: never).
+    pub console_sleep_mins: Option<u32>,
     /// Environment for every game (each game's own `env` overrides it).
     pub env: BTreeMap<String, String>,
     /// Close Arkor's window after starting a game.

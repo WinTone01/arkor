@@ -528,7 +528,10 @@ impl Library {
     }
 
     fn sys_opt(&self, o: Opt, icon: &'static str, label: &str) -> Row {
-        let value = self.sys_opt_value(&o).unwrap_or(Value::None);
+        let value = self
+            .sys_opt_value(&o)
+            .or_else(|| self.idle_rows_value(&o))
+            .unwrap_or(Value::None);
         self.sys_line(Act::Opt(o), icon, label, value)
     }
 
@@ -809,6 +812,23 @@ impl Library {
                 .into();
             rows.push(row);
         }
+        rows.push(self.sys_opt(
+            Opt::DimAfter,
+            "moon",
+            self.tr("Darken the screen after", "Ekranı karartma süresi"),
+        ));
+        let mut sleep = self.sys_opt(
+            Opt::SleepAfter,
+            "bed",
+            self.tr("Sleep after", "Uyku zamanlayıcısı"),
+        );
+        sleep.items[0].sub = self
+            .tr(
+                "Without input; never while a game runs or something downloads.",
+                "Hiç tuşa basılmazsa; oyun açıkken ya da indirme sürerken asla.",
+            )
+            .into();
+        rows.push(sleep);
         if let Some((percent, charging)) = p.battery {
             let icon = match (charging, percent) {
                 (true, _) => "battery-charging",
@@ -823,16 +843,19 @@ impl Library {
                 Value::Text(self.percent(f32::from(percent) / 100.)),
             ));
         }
-        if rows.is_empty() {
-            rows.push(self.sys_line(
-                Act::Nothing,
-                "gauge",
-                self.tr(
-                    "Power profiles are not available (install power-profiles-daemon).",
-                    "Güç profilleri yok (power-profiles-daemon kurulmalı).",
+        if p.profiles.is_empty() {
+            rows.insert(
+                0,
+                self.sys_line(
+                    Act::Nothing,
+                    "gauge",
+                    self.tr(
+                        "Power profiles are not available (install power-profiles-daemon).",
+                        "Güç profilleri yok (power-profiles-daemon kurulmalı).",
+                    ),
+                    Value::None,
                 ),
-                Value::None,
-            ));
+            );
         }
         rows
     }
