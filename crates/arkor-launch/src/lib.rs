@@ -20,6 +20,7 @@ pub mod layers;
 pub mod optiscaler;
 pub mod progress;
 pub mod proton_dl;
+pub mod quick;
 pub mod reshade;
 pub mod saves;
 pub mod self_update;

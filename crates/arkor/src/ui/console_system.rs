@@ -281,6 +281,15 @@ impl Library {
         }
     }
 
+    /// Whether power profiles can be chosen here.
+    pub(super) fn sys_has_profiles(&self) -> bool {
+        self.console
+            .sys
+            .power
+            .as_ref()
+            .is_some_and(|p| !p.profiles.is_empty())
+    }
+
     fn sys_sound(&self) -> Option<&sound::State> {
         self.console
             .sys

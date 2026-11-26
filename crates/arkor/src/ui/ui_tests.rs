@@ -1661,3 +1661,67 @@ fn the_computer_is_set_from_the_console() {
         assert!(!l.console.sys.waits_to_be_kept());
     });
 }
+
+#[test]
+fn the_quick_menu_comes_over_a_game_and_goes() {
+    use super::console::{Act, Opt, Screen, Value};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#library"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update_in(cx, |l, w, cx| {
+        let id = l.games[0].id.clone();
+        // No game runs: nothing to come over.
+        assert!(!l.quick_open(w, cx));
+        // The game runs with Arkor's MangoHud config.
+        l.running.insert(id.to_string(), std::process::id());
+        let conf = arkor_core::paths::game_config_dir(&id)
+            .unwrap()
+            .join("MangoHud.conf");
+        std::fs::create_dir_all(conf.parent().unwrap()).unwrap();
+        std::fs::write(&conf, "fps\nfps_limit=0\n").unwrap();
+        assert!(l.quick_open(w, cx));
+        assert_eq!(l.console.screen(), Screen::Quick(id.id.clone()));
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert_eq!(acts[0], Act::QuickBack);
+        assert!(acts.contains(&Act::Stop(id.to_string())));
+        assert!(acts.contains(&Act::Opt(Opt::Volume)));
+        assert!(acts.contains(&Act::Opt(Opt::HudShown)));
+        assert!(acts.contains(&Act::Opt(Opt::FpsLimit)));
+        // The overlay goes away at once, and the frame limit changes, in its file.
+        assert_eq!(l.opt_value(&Opt::HudShown), Value::Switch(true));
+        l.opt_toggle(&Opt::HudShown);
+        assert_eq!(l.opt_value(&Opt::HudShown), Value::Switch(false));
+        assert!(l.opt_turn(&Opt::FpsLimit, 4));
+        let text = std::fs::read_to_string(&conf).unwrap();
+        assert!(
+            text.contains("no_display") && text.contains("fps_limit=60"),
+            "{text}"
+        );
+        // B: back to the game, the menu is gone.
+        l.nav(super::gamepad::Nav::Back, w, cx);
+        assert_eq!(l.console.screen(), Screen::Library);
+        // The game ends while the menu is open: it goes, too.
+        assert!(l.quick_open(w, cx));
+        l.running.clear();
+        l.quick_over(&id.id, cx);
+        assert_eq!(l.console.screen(), Screen::Library);
+    });
+}

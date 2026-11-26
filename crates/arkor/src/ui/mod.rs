@@ -8,6 +8,7 @@ mod backdrop;
 mod bench_page;
 mod console;
 mod console_intro;
+mod console_quick;
 mod console_settings;
 mod console_sound;
 mod console_steam;

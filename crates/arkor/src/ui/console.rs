@@ -84,6 +84,8 @@ pub(super) enum Screen {
     Saves(String),
     /// Why a library game did not start.
     Trouble(String),
+    /// The quick menu over a running game.
+    Quick(String),
 }
 
 impl Screen {
@@ -137,6 +139,9 @@ pub(super) enum Opt {
     Vrr(String),
     Primary(String),
     PowerProfile,
+    /// The quick menu's: the game's performance overlay, and its frame limit.
+    HudShown,
+    FpsLimit,
     /// Steam's library folder a game is installed in.
     SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
@@ -216,6 +221,10 @@ pub(super) enum Act {
     BtDisconnect(String),
     BtForget(String),
     DisplayKeep,
+    /// The quick menu: back to the game, to Arkor, a screenshot.
+    QuickBack,
+    QuickHome,
+    QuickShot,
     /// Why a game did not start: one of a problem's fixes, the log, the settings as before.
     Fix(usize, usize),
     TroubleLog,
@@ -694,6 +703,8 @@ pub(super) struct Console {
     pub(super) guide_told: bool,
     /// The computer's network, Bluetooth, sound, screens and power.
     pub(super) sys: super::console_system::SysState,
+    /// The game the quick menu is about.
+    pub(super) quick: super::console_quick::QuickState,
     /// When the mouse was moved last, and whether that is being watched.
     pointer: Option<Instant>,
     pointer_watched: bool,
@@ -845,6 +856,7 @@ impl Library {
             Screen::SettingsCat(c) => self.app_cat_rows(c),
             Screen::Steam(app, page) => self.steam_page_rows(app, page),
             Screen::Saves(id) => self.saves_rows(&id),
+            Screen::Quick(id) => self.quick_rows(&id),
             Screen::Trouble(id) => self.trouble_rows(&id),
         }
     }
@@ -1830,6 +1842,13 @@ impl Library {
         match overlay {
             Overlay::Menu => {
                 let mut rows = vec![line(Act::Close, "arrow-left", self.tr("Go on", "Devam et"))];
+                if self.quick_target().is_some() {
+                    rows.push(line(
+                        Act::QuickBack,
+                        "play",
+                        self.tr("Back to the game", "Oyuna dön"),
+                    ));
+                }
                 let mut running: Vec<&String> = self.running.keys().collect();
                 running.sort();
                 for id in running {
@@ -2139,6 +2158,7 @@ impl Library {
             | Screen::GameSettings(e)
             | Screen::GameCat(e, _)
             | Screen::Saves(e)
+            | Screen::Quick(e)
             | Screen::Trouble(e) => entry.as_deref() == Some(e.as_str()),
             _ => false,
         };
@@ -2460,7 +2480,7 @@ impl Library {
         cx.notify();
     }
 
-    fn console_back(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn console_back(&mut self, cx: &mut Context<Self>) {
         if self.shops.login.is_some() {
             self.close_shop_windows(cx);
             return;
@@ -2587,13 +2607,19 @@ impl Library {
         // A login that ended may leave the focus nowhere: its message still answers.
         let login = self.console.on && self.shops.login.is_some() && self.running.is_empty();
         if !window.is_window_active() && !login {
-            if nav == Nav::Toggle && self.running.is_empty() {
-                window.activate_window();
+            if nav == Nav::Toggle {
+                // Over a game: the quick menu. Else Arkor comes forward.
+                let quick = self.console.on && self.quick_open(window, cx);
+                if !quick && self.running.is_empty() {
+                    window.activate_window();
+                }
             }
             return;
         }
         if nav == Nav::Toggle {
-            if self.console.on {
+            if self.console.on && matches!(self.console.screen(), Screen::Quick(_)) {
+                self.quick_back(window, cx);
+            } else if self.console.on {
                 self.nav(Nav::Menu, window, cx);
             } else {
                 self.toggle_console(window, cx);
@@ -2616,6 +2642,13 @@ impl Library {
         self.skip_intro(cx);
         if self.skip_console_intro(cx) {
             return;
+        }
+        // B in the quick menu: back to the game.
+        if nav == Nav::Back
+            && self.console.overlay.is_none()
+            && matches!(self.console.screen(), Screen::Quick(_))
+        {
+            return self.quick_back(window, cx);
         }
         if self.shops.login.is_some() {
             let rows = self.login_rows();
@@ -3252,6 +3285,7 @@ impl Library {
             | Act::BtDisconnect(_)
             | Act::BtForget(_)
             | Act::DisplayKeep => self.sys_act(act, cx),
+            Act::QuickBack | Act::QuickHome | Act::QuickShot => self.quick_act(act, window, cx),
             Act::TroubleLog => self.trouble_log(),
             Act::TroubleUndo => self.trouble_undo(cx),
             Act::SavesToggle

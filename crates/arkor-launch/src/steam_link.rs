@@ -511,7 +511,7 @@ pub fn game_pids(appid: &str) -> Vec<u32> {
 }
 
 /// Every process below `roots` (children of children…), roots included.
-fn with_descendants(roots: &[u32]) -> Vec<u32> {
+pub fn with_descendants(roots: &[u32]) -> Vec<u32> {
     let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
         .into_iter()
         .flatten()

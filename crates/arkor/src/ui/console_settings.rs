@@ -1152,7 +1152,10 @@ impl Library {
 
     /// The choices of a setting as (label, key); `None` for switches and texts.
     pub(super) fn opt_choices(&self, o: &Opt) -> Option<Vec<(String, String)>> {
-        if let Some(c) = self.sys_opt_choices(o) {
+        if let Some(c) = self
+            .sys_opt_choices(o)
+            .or_else(|| self.quick_opt_choices(o))
+        {
             return Some(c);
         }
         let s = |v: &str| v.to_string();
@@ -1241,7 +1244,7 @@ impl Library {
     }
 
     pub(super) fn opt_key(&self, o: &Opt) -> String {
-        if let Some(k) = self.sys_opt_key(o) {
+        if let Some(k) = self.sys_opt_key(o).or_else(|| self.quick_opt_key(o)) {
             return k;
         }
         let g = &self.global;
@@ -1301,7 +1304,7 @@ impl Library {
 
     /// How a setting is shown at the end of its line.
     pub(super) fn opt_value(&self, o: &Opt) -> Value {
-        if let Some(v) = self.sys_opt_value(o) {
+        if let Some(v) = self.sys_opt_value(o).or_else(|| self.quick_opt_value(o)) {
             return v;
         }
         let g = &self.global;
@@ -1335,7 +1338,7 @@ impl Library {
 
     /// Sets a choice of any setting.
     pub(super) fn opt_set(&mut self, o: &Opt, key: &str) {
-        if self.sys_opt_set(o, key) {
+        if self.sys_opt_set(o, key) || self.quick_opt_set(o, key) {
             return;
         }
         if *o == Opt::InstallProton {
@@ -1391,7 +1394,7 @@ impl Library {
 
     /// Flips a switch of Arkor's settings.
     pub(super) fn opt_toggle(&mut self, o: &Opt) {
-        if self.sys_opt_toggle(o) {
+        if self.sys_opt_toggle(o) || self.quick_opt_toggle(o) {
             return;
         }
         if let Some(g) = self.shops.game.as_mut() {

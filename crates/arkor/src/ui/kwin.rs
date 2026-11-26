@@ -188,3 +188,70 @@ pub(super) fn show_steam() {
     run_script("arkor-steam-show", SHOW);
     unload("arkor-steam-show");
 }
+
+/// Brings a running game's window to the front: one of `pids`', else the window that was in
+/// front before Arkor (not Steam's, not the desktop's). Blocking.
+pub(super) fn show_game(pids: &[u32]) -> bool {
+    if !available() {
+        return false;
+    }
+    let list = pids
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let code = format!(
+        r#"
+var pids = [{list}];
+var all = workspace.windowList ? workspace.windowList() : workspace.clientList();
+function kind(w) {{ return String(w.resourceClass).toLowerCase(); }}
+function usable(w) {{
+    var k = kind(w);
+    return w.normalWindow && k !== "arkor" && k !== "steam" && k !== "steamwebhelper"
+        && k !== "plasmashell";
+}}
+var best = null;
+for (var i = 0; i < all.length; i++) {{
+    var w = all[i];
+    if (pids.indexOf(w.pid) >= 0 && usable(w) && (best === null || w.fullScreen)) {{ best = w; }}
+}}
+if (best === null && workspace.stackingOrder) {{
+    var order = workspace.stackingOrder;
+    for (var j = order.length - 1; j >= 0; j--) {{
+        if (usable(order[j])) {{ best = order[j]; break; }}
+    }}
+}}
+if (best !== null) {{
+    best.minimized = false;
+    if (workspace.activeWindow !== undefined) {{ workspace.activeWindow = best; }}
+    else {{ workspace.activeClient = best; }}
+}}
+"#
+    );
+    run_script("arkor-show-game", &code);
+    unload("arkor-show-game");
+    true
+}
+
+/// Brings Arkor's window to the front (a request of its own may be refused while a game is
+/// in front). Blocking.
+pub(super) fn show_arkor() {
+    if !available() {
+        return;
+    }
+    run_script(
+        "arkor-show-self",
+        r#"
+var all = workspace.windowList ? workspace.windowList() : workspace.clientList();
+for (var i = 0; i < all.length; i++) {
+    if (String(all[i].resourceClass).toLowerCase() === "arkor" && all[i].normalWindow) {
+        all[i].minimized = false;
+        if (workspace.activeWindow !== undefined) { workspace.activeWindow = all[i]; }
+        else { workspace.activeClient = all[i]; }
+        break;
+    }
+}
+"#,
+    );
+    unload("arkor-show-self");
+}

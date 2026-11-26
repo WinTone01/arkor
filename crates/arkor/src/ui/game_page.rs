@@ -137,6 +137,7 @@ impl Library {
                 this.running.remove(&id.to_string());
                 this.saves_after(&id, cx);
                 this.trouble_ended(&id, ended, cx);
+                this.quick_over(&id.id, cx);
                 // Console mode comes back to the front when the game ends.
                 this.console.come_back = this.console.on;
                 if let Some(why) = &failure
