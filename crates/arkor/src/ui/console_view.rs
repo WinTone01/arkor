@@ -435,6 +435,7 @@ impl Library {
             | Screen::GameCat(id, _)
             | Screen::Saves(id)
             | Screen::Quick(id)
+            | Screen::Covers(id)
             | Screen::Trouble(id) => Some(Art::Game(id)),
             Screen::ShopGame(shop, id) => Some(Art::Shop(shop, id)),
             Screen::Steam(app, _) => Some(Art::Shop(Shop::Steam, app.to_string())),
@@ -912,6 +913,14 @@ impl Library {
                     ],
                 )
             }
+            Screen::Covers(id) => {
+                let (title, _) = self.spotlight_game(&id)?;
+                (title, vec![self.tr("Cover", "Kapak").to_string()])
+            }
+            Screen::AddGames => (
+                self.tr("Add games", "Oyun ekle").to_string(),
+                vec![self.tr("Library", "Kütüphane").to_string()],
+            ),
             Screen::Quick(id) => {
                 let (title, _) = self.spotlight_game(&id)?;
                 (title, vec![self.tr("Playing", "Oynanıyor").to_string()])

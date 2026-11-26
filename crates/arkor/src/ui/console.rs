@@ -88,6 +88,10 @@ pub(super) enum Screen {
     Quick(String),
     /// Trying a gamepad's buttons.
     PadTest,
+    /// Adding games: found ones, from a prefix, a program, a launcher.
+    AddGames,
+    /// Choosing a game's cover.
+    Covers(String),
 }
 
 impl Screen {
@@ -107,6 +111,8 @@ pub(super) enum Filter {
     All,
     Recent,
     Category(String),
+    Favorites,
+    Hidden,
 }
 
 /// A switch or choice on the settings or a game's screen.
@@ -229,6 +235,21 @@ pub(super) enum Act {
     QuickBack,
     QuickHome,
     QuickShot,
+    /// The library: adding games, and a game's own things.
+    AddScan,
+    AddFound(usize),
+    AddCandidate(usize),
+    AddFile(PathBuf),
+    AddLauncher(&'static str),
+    EditGame(String),
+    Favorite(String),
+    HideGame(String),
+    PickCategory(String),
+    AskRemoveGame(String),
+    RemoveGame(String),
+    SetCover(usize),
+    AutoCover(String),
+    SortLibrary,
     /// Why a game did not start: one of a problem's fixes, the log, the settings as before.
     Fix(usize, usize),
     TroubleLog,
@@ -568,6 +589,10 @@ pub(super) enum FolderFor {
     Prefix,
     /// Where store games go by default.
     Games,
+    /// A game's program, to add it.
+    GameFile,
+    /// A Wine prefix whose programs are added.
+    ImportPrefix,
     /// A new library of Steam's.
     SteamLibrary,
 }
@@ -709,6 +734,8 @@ pub(super) struct Console {
     pub(super) sys: super::console_system::SysState,
     /// The game the quick menu is about.
     pub(super) quick: super::console_quick::QuickState,
+    /// What console mode knows for adding and arranging games (see `console_library`).
+    pub(super) lib: super::console_library::LibState,
     /// The gamepads' state as console mode knows it (see `console_pads`).
     pub(super) pads: super::console_pads::PadsState,
     /// When the mouse was moved last, and whether that is being watched.
@@ -799,7 +826,7 @@ impl Library {
             },
             look: Look::Cover(Art::Game(g.id.clone())),
             progress: job.and_then(|(_, f)| f),
-            mark: running.then_some("play"),
+            mark: running.then_some("play").or(g.favorite.then_some("star")),
         }
     }
 
@@ -864,6 +891,8 @@ impl Library {
             Screen::Saves(id) => self.saves_rows(&id),
             Screen::Quick(id) => self.quick_rows(&id),
             Screen::PadTest => self.pad_test_rows(),
+            Screen::AddGames => self.add_rows(),
+            Screen::Covers(id) => self.cover_rows(&id),
             Screen::Trouble(id) => self.trouble_rows(&id),
         }
     }
@@ -884,6 +913,18 @@ impl Library {
                 self.tr("Continue playing", "Oynamaya devam et"),
                 Kind::Shelf,
                 shelf(&recent[..recent.len().min(12)]),
+            ));
+        }
+        let favorites: Vec<&LibraryGame> = self
+            .console_all()
+            .into_iter()
+            .filter(|g| g.favorite)
+            .collect();
+        if !favorites.is_empty() {
+            rows.push(Row::titled(
+                self.tr("Favourites", "Favoriler"),
+                Kind::Shelf,
+                shelf(&favorites),
             ));
         }
         let all = self.console_all();
@@ -925,9 +966,9 @@ impl Library {
                         self.tr("Stores", "Mağazalar"),
                     ),
                     Item::pill(
-                        Act::Desktop,
-                        "monitor",
-                        self.tr("Add games on the desktop", "Masaüstünde oyun ekle"),
+                        Act::Screen(Screen::AddGames),
+                        "plus",
+                        self.tr("Add games", "Oyun ekle"),
                         false,
                     ),
                 ],
@@ -945,7 +986,7 @@ impl Library {
         }
     }
 
-    fn grid(&self, items: Vec<Item>) -> Vec<Row> {
+    pub(super) fn grid(&self, items: Vec<Item>) -> Vec<Row> {
         let cols = self.console.cols.max(1);
         items
             .chunks(cols)
@@ -970,6 +1011,7 @@ impl Library {
                 *f == Filter::Recent,
             ),
         ];
+        pills.extend(self.library_pills());
         for c in self.categories() {
             let filter = Filter::Category(c.clone());
             let on = *f == filter;
@@ -977,13 +1019,15 @@ impl Library {
         }
         let games = match f {
             Filter::Recent => self.console_recent(),
-            _ => self.console_all(),
+            Filter::Hidden => self.library.games.iter().filter(|g| g.hidden).collect(),
+            _ => self.console_sorted(),
         };
         let needle = self.console.query.trim().to_lowercase();
         let items = games
             .into_iter()
             .filter(|g| match f {
                 Filter::Category(c) => g.category.as_ref() == Some(c),
+                Filter::Favorites => g.favorite,
                 _ => true,
             })
             .filter(|g| needle.is_empty() || g.name.to_lowercase().contains(&needle))
@@ -1393,6 +1437,12 @@ impl Library {
             Act::Screen(Screen::GameSettings(g.id.clone())),
             "sliders-horizontal",
             self.tr("Settings", "Ayarlar"),
+            false,
+        ));
+        pills.push(Item::pill(
+            Act::EditGame(g.id.clone()),
+            "pencil",
+            self.tr("Arrange", "Düzenle"),
             false,
         ));
         pills.extend(
@@ -1897,14 +1947,19 @@ impl Library {
                 ));
                 rows
             }
-            Overlay::Folder(_, dir) => {
+            Overlay::Folder(what, dir) => {
+                let file = *what == FolderFor::GameFile;
                 let mut rows = vec![Row::new(
                     Kind::Pills,
                     vec![
                         Item::main(
-                            Act::FolderPick,
-                            "check",
-                            self.tr("Choose this folder", "Bu klasörü seç"),
+                            if file { Act::Nothing } else { Act::FolderPick },
+                            if file { "file" } else { "check" },
+                            if file {
+                                self.tr("Choose the game's program", "Oyunun programını seç")
+                            } else {
+                                self.tr("Choose this folder", "Bu klasörü seç")
+                            },
                         ),
                         Item::pill(
                             Act::FolderUp,
@@ -1918,6 +1973,11 @@ impl Library {
                 rows.extend(self.drive_rows());
                 for name in self.subfolders(dir) {
                     rows.push(line(Act::FolderOpen(dir.join(&name)), "folder", &name));
+                }
+                if file {
+                    for name in super::console_library::programs(dir) {
+                        rows.push(line(Act::AddFile(dir.join(&name)), "file-play", &name));
+                    }
                 }
                 rows
             }
@@ -2062,6 +2122,7 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Tools),
             ],
+            Some("add") => vec![Screen::Library, Screen::AddGames],
             Some("gamepads") => vec![
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Controllers),
@@ -2175,6 +2236,7 @@ impl Library {
             | Screen::GameCat(e, _)
             | Screen::Saves(e)
             | Screen::Quick(e)
+            | Screen::Covers(e)
             | Screen::Trouble(e) => entry.as_deref() == Some(e.as_str()),
             _ => false,
         };
@@ -2477,6 +2539,8 @@ impl Library {
                     self.sys_load(c, cx);
                 }
             }
+            Screen::AddGames => self.add_opened(cx),
+            Screen::Covers(id) => self.covers_opened(id, cx),
             Screen::Trouble(id) => {
                 self.console.focus.remove(&screen);
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == *id) {
@@ -3309,6 +3373,20 @@ impl Library {
             | Act::BtForget(_)
             | Act::DisplayKeep => self.sys_act(act, cx),
             Act::QuickBack | Act::QuickHome | Act::QuickShot => self.quick_act(act, window, cx),
+            Act::AddScan
+            | Act::AddFound(_)
+            | Act::AddCandidate(_)
+            | Act::AddFile(_)
+            | Act::AddLauncher(_)
+            | Act::EditGame(_)
+            | Act::Favorite(_)
+            | Act::HideGame(_)
+            | Act::PickCategory(_)
+            | Act::AskRemoveGame(_)
+            | Act::RemoveGame(_)
+            | Act::SetCover(_)
+            | Act::AutoCover(_)
+            | Act::SortLibrary => self.library_act(act, cx),
             Act::TroubleLog => self.trouble_log(),
             Act::TroubleUndo => self.trouble_undo(cx),
             Act::SavesToggle
@@ -3422,6 +3500,8 @@ impl Library {
                         .and_then(|g| g.prefix.clone())
                         .or_else(|| Some(self.global.prefixes_dir())),
                     FolderFor::Games => Some(self.global.games_dir()),
+                    FolderFor::GameFile => dirs::home_dir(),
+                    FolderFor::ImportPrefix => Some(self.global.prefixes_dir()),
                     // Other disks are mounted there.
                     FolderFor::SteamLibrary => self
                         .shops
@@ -3473,6 +3553,8 @@ impl Library {
                             let r = self.global.save();
                             self.report(r);
                         }
+                        FolderFor::GameFile => {}
+                        FolderFor::ImportPrefix => self.import_prefix(dir, cx),
                         FolderFor::SteamLibrary => {
                             if let Some(g) = self.shops.game.as_mut() {
                                 g.steam_new = Some(dir);

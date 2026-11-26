@@ -54,6 +54,9 @@ pub struct LibraryGame {
     pub category: Option<String>,
     #[serde(default)]
     pub hidden: bool,
+    /// Shown first, and on the home screen.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub favorite: bool,
     /// Cover image shown in the library.
     #[serde(default)]
     pub cover: Option<PathBuf>,
@@ -196,6 +199,7 @@ impl Library {
                     origin: None,
                     category: None,
                     hidden: false,
+                    favorite: false,
                     cover: None,
                 })
                 .collect(),
@@ -266,6 +270,7 @@ impl Library {
             origin: new.origin,
             category: None,
             hidden: false,
+            favorite: false,
             cover: None,
         });
         id

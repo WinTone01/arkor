@@ -1783,3 +1783,100 @@ fn gamepads_have_their_own_marks_and_a_test() {
         assert_eq!(l.console.screen(), Screen::SettingsCat(AppCat::Controllers));
     });
 }
+
+#[test]
+fn the_library_is_arranged_from_the_console() {
+    use super::console::{Act, Filter, Opt, Overlay, Screen};
+    use super::console_settings::GameOpt;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#library"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update_in(cx, |l, w, cx| {
+        // A program chosen on the disk becomes a game.
+        let exe = home.path().join("Other Game.exe");
+        std::fs::write(&exe, "").unwrap();
+        l.console_open(Screen::AddGames, cx);
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert!(acts.contains(&Act::Folder(super::console::FolderFor::GameFile)));
+        assert!(acts.iter().any(|a| matches!(a, Act::AddLauncher(_))));
+        l.console_do(Act::AddFile(exe.clone()), w, cx);
+        assert_eq!(l.library.games.len(), 2);
+        let entry = l
+            .library
+            .games
+            .iter()
+            .find(|g| g.exe == exe)
+            .unwrap()
+            .id
+            .clone();
+
+        // Its menu: a favourite, renamed, a new category.
+        l.console_open(Screen::Game(entry.clone()), cx);
+        l.console_do(Act::EditGame(entry.clone()), w, cx);
+        assert!(matches!(l.console.overlay, Some(Overlay::Pick(..))));
+        l.console_do(Act::Favorite(entry.clone()), w, cx);
+        assert!(l.library.get(&entry).unwrap().favorite);
+        l.console_do(Act::Opt(Opt::Game(GameOpt::Name)), w, cx);
+        assert_eq!(l.console.overlay, Some(Overlay::Keyboard));
+        // Its name as it is, to change.
+        let name = l.library.get(&entry).unwrap().name.clone();
+        assert_eq!(l.console.edit, Some((GameOpt::Name, name)));
+        l.console.edit = Some((GameOpt::Name, "Fox Tale".into()));
+        l.console_do(Act::Done, w, cx);
+        assert_eq!(l.library.get(&entry).unwrap().name, "Fox Tale");
+        l.console.edit = Some((GameOpt::NewCategory, "Puzzles".into()));
+        l.console.overlay = Some(Overlay::Keyboard);
+        l.console_do(Act::Done, w, cx);
+        assert_eq!(
+            l.library.get(&entry).unwrap().category.as_deref(),
+            Some("Puzzles")
+        );
+        // Saved.
+        let saved = arkor_core::library::Library::load().unwrap();
+        assert!(saved.get(&entry).unwrap().favorite);
+
+        // Favourites first, and a filter of their own; hidden ones apart.
+        l.console_open(Screen::Library, cx);
+        assert_eq!(l.console_sorted()[0].id, entry);
+        l.console_do(Act::Filter(Filter::Favorites), w, cx);
+        let shown: Vec<String> = l
+            .console_rows()
+            .iter()
+            .filter(|r| r.kind == super::console::Kind::Grid)
+            .flat_map(|r| r.items.iter().map(|i| i.label.clone()))
+            .collect();
+        assert_eq!(shown, ["Fox Tale"]);
+        l.console_do(Act::HideGame(entry.clone()), w, cx);
+        assert!(l.library.get(&entry).unwrap().hidden);
+        assert!(l.console_sorted().iter().all(|g| g.id != entry));
+        l.console_do(Act::SortLibrary, w, cx);
+
+        // Removed: its files stay.
+        l.console_do(Act::AskRemoveGame(entry.clone()), w, cx);
+        assert!(matches!(
+            &l.console.overlay,
+            Some(Overlay::Ask(_, _, Act::RemoveGame(e))) if *e == entry
+        ));
+        l.console_do(Act::RemoveGame(entry.clone()), w, cx);
+        assert!(l.library.get(&entry).is_none());
+        assert!(exe.exists());
+    });
+}

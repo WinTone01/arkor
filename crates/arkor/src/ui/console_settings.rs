@@ -50,6 +50,9 @@ pub(super) enum GameOpt {
     PostLaunch,
     Hidden,
     Category,
+    /// Typed on the keyboard: the game's name, a category of its own.
+    Name,
+    NewCategory,
 }
 
 impl GameOpt {
@@ -57,7 +60,11 @@ impl GameOpt {
     pub(super) fn is_text(self) -> bool {
         matches!(
             self,
-            GameOpt::LaunchOptions | GameOpt::PreLaunch | GameOpt::PostLaunch
+            GameOpt::LaunchOptions
+                | GameOpt::PreLaunch
+                | GameOpt::PostLaunch
+                | GameOpt::Name
+                | GameOpt::NewCategory
         )
     }
 }
@@ -582,6 +589,9 @@ impl Library {
 
     /// The text a text setting holds.
     pub(super) fn game_opt_text(&self, o: GameOpt) -> String {
+        if let Some(text) = self.library_text_of(o) {
+            return text;
+        }
         let p = &self.profile;
         match o {
             GameOpt::LaunchOptions => p.launch_options.clone(),
@@ -599,6 +609,7 @@ impl Library {
             GameOpt::LaunchOptions => p.launch_options = text,
             GameOpt::PreLaunch => p.pre_launch = text,
             GameOpt::PostLaunch => p.post_launch = text,
+            GameOpt::Name | GameOpt::NewCategory => return self.library_text(o, &text),
             _ => return,
         }
         self.save();

@@ -175,7 +175,7 @@ impl Library {
         .detach();
     }
 
-    fn install_launcher(&mut self, id: &'static str, cx: &mut Context<Self>) {
+    pub(super) fn install_launcher(&mut self, id: &'static str, cx: &mut Context<Self>) {
         let Some(launcher) = launchers::find(id) else {
             return;
         };
