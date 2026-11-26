@@ -125,6 +125,18 @@ pub(super) enum Opt {
     SteamControl,
     /// The pad's middle button brings Steam forward.
     GuideSteam,
+    /// The computer's own settings (see `console_system`).
+    Wifi,
+    Bluetooth,
+    Volume,
+    Muted,
+    SoundOutput,
+    DisplayMode(String),
+    DisplayScale(String),
+    Hdr(String),
+    Vrr(String),
+    Primary(String),
+    PowerProfile,
     /// Steam's library folder a game is installed in.
     SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
@@ -191,6 +203,19 @@ pub(super) enum Act {
     SavesCopy,
     SavesAskRestore(String),
     SavesRestore(String),
+    /// Networks and Bluetooth devices: look for them, and one of them; a screen setting is kept.
+    WifiScan,
+    WifiNet(String),
+    WifiConnect(String),
+    WifiDisconnect(String),
+    WifiForget(String),
+    BtScan,
+    BtDevice(String),
+    BtPair(String),
+    BtConnect(String),
+    BtDisconnect(String),
+    BtForget(String),
+    DisplayKeep,
     /// Why a game did not start: one of a problem's fixes, the log, the settings as before.
     Fix(usize, usize),
     TroubleLog,
@@ -667,6 +692,8 @@ pub(super) struct Console {
     guarding: bool,
     /// Steam was told what the pad's middle button does, this session.
     pub(super) guide_told: bool,
+    /// The computer's network, Bluetooth, sound, screens and power.
+    pub(super) sys: super::console_system::SysState,
     /// When the mouse was moved last, and whether that is being watched.
     pointer: Option<Instant>,
     pointer_watched: bool,
@@ -2009,6 +2036,17 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Tools),
             ],
+            Some(c @ ("network" | "bluetooth" | "sound" | "screen" | "power")) => {
+                use super::console_settings::AppCat;
+                let cat = match c {
+                    "network" => AppCat::Network,
+                    "bluetooth" => AppCat::Bluetooth,
+                    "sound" => AppCat::Sound,
+                    "screen" => AppCat::Display,
+                    _ => AppCat::Power,
+                };
+                vec![Screen::Settings, Screen::SettingsCat(cat)]
+            }
             Some("updates") => vec![
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Arkor),
@@ -2065,7 +2103,7 @@ impl Library {
     /// What a screen that was opened at the start still needs.
     pub(super) fn console_first(&mut self, cx: &mut Context<Self>) {
         match self.console.screen() {
-            s @ Screen::SettingsCat(_) => self.console_open(s, cx),
+            s @ (Screen::SettingsCat(_) | Screen::Settings) => self.console_open(s, cx),
             Screen::Game(id)
             | Screen::GameSettings(id)
             | Screen::Saves(id)
@@ -2393,6 +2431,16 @@ impl Library {
                     self.steam_look_folders(cx);
                 }
             }
+            Screen::SettingsCat(c) if super::console_system::sys_cat(*c) => {
+                self.sys_opened(*c, cx);
+            }
+            // Its list says how they stand.
+            Screen::Settings => {
+                use super::console_settings::AppCat;
+                for c in [AppCat::Network, AppCat::Sound, AppCat::Power] {
+                    self.sys_load(c, cx);
+                }
+            }
             Screen::Trouble(id) => {
                 self.console.focus.remove(&screen);
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == *id) {
@@ -2422,6 +2470,14 @@ impl Library {
         {
             l.dismissed = true;
             cx.notify();
+            return;
+        }
+        // A screen setting that is not kept goes back at once.
+        if matches!(
+            &self.console.overlay,
+            Some(Overlay::Ask(_, _, Act::DisplayKeep))
+        ) {
+            self.sys_revert(cx);
             return;
         }
         if let Some(Overlay::Folder(what, dir)) = self.console.overlay.clone()
@@ -3184,6 +3240,18 @@ impl Library {
                 self.steam_do(move || steam_control::place(appid, place), |_| None, cx);
             }
             Act::Fix(p, n) => self.trouble_choose(p, n, cx),
+            Act::WifiScan
+            | Act::WifiNet(_)
+            | Act::WifiConnect(_)
+            | Act::WifiDisconnect(_)
+            | Act::WifiForget(_)
+            | Act::BtScan
+            | Act::BtDevice(_)
+            | Act::BtPair(_)
+            | Act::BtConnect(_)
+            | Act::BtDisconnect(_)
+            | Act::BtForget(_)
+            | Act::DisplayKeep => self.sys_act(act, cx),
             Act::TroubleLog => self.trouble_log(),
             Act::TroubleUndo => self.trouble_undo(cx),
             Act::SavesToggle

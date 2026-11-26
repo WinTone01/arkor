@@ -95,6 +95,12 @@ pub(super) enum AppCat {
     /// Arkor's own updates.
     Arkor,
     General,
+    /// The computer: its network, Bluetooth, sound, screens and power.
+    Network,
+    Bluetooth,
+    Sound,
+    Display,
+    Power,
     Looks,
     Games,
     Stores,
@@ -104,9 +110,14 @@ pub(super) enum AppCat {
 }
 
 impl AppCat {
-    pub(super) const ALL: [AppCat; 8] = [
+    pub(super) const ALL: [AppCat; 13] = [
         AppCat::Arkor,
         AppCat::General,
+        AppCat::Network,
+        AppCat::Bluetooth,
+        AppCat::Sound,
+        AppCat::Display,
+        AppCat::Power,
         AppCat::Looks,
         AppCat::Games,
         AppCat::Proton,
@@ -929,6 +940,11 @@ impl Library {
         match c {
             AppCat::Arkor => ("sparkles", self.tr("Arkor update", "Arkor güncellemesi")),
             AppCat::General => ("settings", self.tr("General", "Genel")),
+            AppCat::Network => ("wifi", self.tr("Network", "Ağ")),
+            AppCat::Bluetooth => ("bluetooth", "Bluetooth"),
+            AppCat::Sound => ("volume-2", self.tr("Sound", "Ses")),
+            AppCat::Display => ("monitor", self.tr("Screen", "Ekran")),
+            AppCat::Power => ("gauge", self.tr("Power", "Güç")),
             AppCat::Looks => ("palette", self.tr("Looks", "Görünüm")),
             AppCat::Games => ("gamepad-2", self.tr("Games", "Oyunlar")),
             AppCat::Stores => ("store", self.tr("Stores", "Mağazalar")),
@@ -952,6 +968,7 @@ impl Library {
                         title,
                         match c {
                             AppCat::Arkor => Value::Text(self.console_arkor_state()),
+                            c if super::console_system::sys_cat(c) => self.sys_summary(c),
                             _ => Value::None,
                         },
                     )],
@@ -1065,6 +1082,11 @@ impl Library {
             AppCat::Proton => self.console_proton_rows(),
             AppCat::Tools => self.console_program_rows(),
             AppCat::System => self.console_system_rows(),
+            AppCat::Network
+            | AppCat::Bluetooth
+            | AppCat::Sound
+            | AppCat::Display
+            | AppCat::Power => self.sys_rows(c),
             AppCat::Stores => {
                 let mut rows: Vec<Row> = Shop::ALL
                     .into_iter()
@@ -1130,6 +1152,9 @@ impl Library {
 
     /// The choices of a setting as (label, key); `None` for switches and texts.
     pub(super) fn opt_choices(&self, o: &Opt) -> Option<Vec<(String, String)>> {
+        if let Some(c) = self.sys_opt_choices(o) {
+            return Some(c);
+        }
         let s = |v: &str| v.to_string();
         Some(match o {
             Opt::Game(g) => return self.game_opt_choices(*g),
@@ -1216,6 +1241,9 @@ impl Library {
     }
 
     pub(super) fn opt_key(&self, o: &Opt) -> String {
+        if let Some(k) = self.sys_opt_key(o) {
+            return k;
+        }
         let g = &self.global;
         match o {
             Opt::Game(x) => self.game_opt_key(*x),
@@ -1273,6 +1301,9 @@ impl Library {
 
     /// How a setting is shown at the end of its line.
     pub(super) fn opt_value(&self, o: &Opt) -> Value {
+        if let Some(v) = self.sys_opt_value(o) {
+            return v;
+        }
         let g = &self.global;
         match o {
             Opt::Game(x) => self.game_opt_value(*x),
@@ -1304,6 +1335,9 @@ impl Library {
 
     /// Sets a choice of any setting.
     pub(super) fn opt_set(&mut self, o: &Opt, key: &str) {
+        if self.sys_opt_set(o, key) {
+            return;
+        }
         if *o == Opt::InstallProton {
             if let Some(g) = self.shops.game.as_mut() {
                 g.proton = Some(key.to_string()).filter(|k| !k.is_empty());
@@ -1357,6 +1391,9 @@ impl Library {
 
     /// Flips a switch of Arkor's settings.
     pub(super) fn opt_toggle(&mut self, o: &Opt) {
+        if self.sys_opt_toggle(o) {
+            return;
+        }
         if let Some(g) = self.shops.game.as_mut() {
             match o {
                 Opt::InstallMenu => return g.menu = !g.menu,
@@ -1394,6 +1431,9 @@ impl Library {
 
     /// Turns a choice one step; `false` when it is no choice.
     pub(super) fn opt_turn(&mut self, o: &Opt, delta: i32) -> bool {
+        if !Self::sys_turns(o) {
+            return false;
+        }
         let Some(choices) = self.opt_choices(o) else {
             return false;
         };

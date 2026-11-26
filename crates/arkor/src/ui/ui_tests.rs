@@ -1576,3 +1576,88 @@ fn steam_games_go_where_they_are_told() {
         assert_eq!((g.steam_new.clone(), g.steam_folder), (None, Some(0)));
     });
 }
+
+#[test]
+fn the_computer_is_set_from_the_console() {
+    use super::console::{Act, Opt, Overlay, Screen};
+    use super::console_settings::AppCat;
+    use super::console_system::{Change, SysState};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#settings"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update_in(cx, |l, w, cx| {
+        l.console.sys = SysState::fake();
+        l.console_open(Screen::SettingsCat(AppCat::Network), cx);
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert_eq!(
+            acts,
+            [
+                Act::Opt(Opt::Wifi),
+                Act::WifiScan,
+                Act::WifiNet("Home".into()),
+                Act::WifiNet("Cafe".into())
+            ]
+        );
+        // A network with a password asks for it on the keyboard.
+        l.console_do(Act::WifiNet("Home".into()), w, cx);
+        assert_eq!(l.console.overlay, Some(Overlay::Keyboard));
+        assert!(matches!(
+            &l.console.secret,
+            Some((super::console_tools::NeedsPassword::Wifi(s), _)) if s == "Home"
+        ));
+        l.console.overlay = None;
+        l.console.secret = None;
+
+        // Louder, step by step; the switch at once.
+        l.console_open(Screen::SettingsCat(AppCat::Sound), cx);
+        assert!(l.opt_turn(&Opt::Volume, 1));
+        assert_eq!(l.console.sys.queued(), [Change::Volume(45)]);
+        assert_eq!(
+            l.opt_value(&Opt::Volume),
+            super::console::Value::Choice("45%".into())
+        );
+        l.opt_toggle(&Opt::Muted);
+        assert_eq!(
+            l.opt_value(&Opt::Muted),
+            super::console::Value::Switch(true)
+        );
+        // Where it comes out is chosen from a list, not turned.
+        assert!(!l.opt_turn(&Opt::SoundOutput, 1));
+
+        // A screen's mode is asked to be kept, and goes back when it is not.
+        l.console.sys = SysState::fake();
+        l.console_open(Screen::SettingsCat(AppCat::Display), cx);
+        assert!(!l.opt_turn(&Opt::DisplayMode("DP-1".into()), 1));
+        l.opt_set(&Opt::DisplayMode("DP-1".into()), "25");
+        assert_eq!(
+            l.console.sys.queued(),
+            [Change::Mode("DP-1".into(), "25".into())]
+        );
+        assert!(matches!(
+            &l.console.overlay,
+            Some(Overlay::Ask(_, _, Act::DisplayKeep))
+        ));
+        // B: back as it was, and the question is gone.
+        l.nav(super::gamepad::Nav::Back, w, cx);
+        assert_eq!(l.console.overlay, None);
+        assert!(!l.console.sys.waits_to_be_kept());
+    });
+}

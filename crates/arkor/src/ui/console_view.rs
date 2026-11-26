@@ -95,6 +95,7 @@ impl Library {
             window.activate_window();
         }
         self.watch_pointer(window, cx);
+        self.sys_flush(cx);
         let still = self.global.appearance.reduce_motion;
         let now = Instant::now();
         // After a rest the time since the last frame says nothing: a move begins with one
@@ -2000,6 +2001,10 @@ impl Library {
             .unwrap_or_else(|| self.console.query.clone());
         // A password shows as dots.
         let secret = self.console.secret.is_some();
+        let wifi = matches!(
+            &self.console.secret,
+            Some((super::console_tools::NeedsPassword::Wifi(_), _))
+        );
         let typed = match &self.console.secret {
             Some((_, pw)) => "•".repeat(pw.chars().count()),
             None => typed,
@@ -2031,7 +2036,9 @@ impl Library {
                         pal::muted(),
                     ))
                     .child(if empty {
-                        div().text_color(pal::muted()).child(if secret {
+                        div().text_color(pal::muted()).child(if wifi {
+                            self.tr("The network's password", "Ağın şifresi")
+                        } else if secret {
                             self.tr("Administrator password", "Yönetici şifresi")
                         } else {
                             self.tr("Search", "Ara")

@@ -179,7 +179,8 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
       From boot to game with only a <b>gamepad</b>: your games, the stores and their logins,
       downloads, Proton builds, disks, settings and the power menu, full screen, with an
       on-screen keyboard wherever something is typed, sounds of its own, a start-up
-      animation with your games and Arkor's own updates. Steam's windows stay behind it.
+      animation with your games and Arkor's own updates. <b>Wi-Fi, Bluetooth, sound, screens
+      and power</b> are set there, too. Steam's windows stay behind it.
       Press the pad's middle button or <kbd>F11</kbd>, or let Arkor start in it when the
       computer does.
     </td>

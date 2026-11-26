@@ -24,6 +24,8 @@ pub(super) enum NeedsPassword {
     Mount(Disk, AfterDisk),
     /// A disk to take out of use, by where it is mounted.
     Unmount(String),
+    /// A wireless network's password (no administrator's).
+    Wifi(String),
 }
 
 /// What a disk was mounted for.
@@ -699,6 +701,7 @@ impl Library {
                 })
                 .detach();
             }
+            NeedsPassword::Wifi(ssid) => self.wifi_with_password(ssid, password, cx),
             NeedsPassword::Unmount(point) => {
                 cx.spawn(async move |this, cx| {
                     let result = bg

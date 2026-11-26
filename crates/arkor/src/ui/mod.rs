@@ -11,6 +11,7 @@ mod console_intro;
 mod console_settings;
 mod console_sound;
 mod console_steam;
+mod console_system;
 mod console_tools;
 mod console_view;
 mod cover_art;
