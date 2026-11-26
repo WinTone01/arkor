@@ -101,6 +101,8 @@ pub(super) enum AppCat {
     Sound,
     Display,
     Power,
+    /// Gamepads: which are there, their buttons.
+    Controllers,
     Looks,
     Games,
     Stores,
@@ -110,11 +112,12 @@ pub(super) enum AppCat {
 }
 
 impl AppCat {
-    pub(super) const ALL: [AppCat; 13] = [
+    pub(super) const ALL: [AppCat; 14] = [
         AppCat::Arkor,
         AppCat::General,
         AppCat::Network,
         AppCat::Bluetooth,
+        AppCat::Controllers,
         AppCat::Sound,
         AppCat::Display,
         AppCat::Power,
@@ -942,6 +945,7 @@ impl Library {
             AppCat::General => ("settings", self.tr("General", "Genel")),
             AppCat::Network => ("wifi", self.tr("Network", "Ağ")),
             AppCat::Bluetooth => ("bluetooth", "Bluetooth"),
+            AppCat::Controllers => ("gamepad-2", self.tr("Gamepads", "Kollar")),
             AppCat::Sound => ("volume-2", self.tr("Sound", "Ses")),
             AppCat::Display => ("monitor", self.tr("Screen", "Ekran")),
             AppCat::Power => ("gauge", self.tr("Power", "Güç")),
@@ -969,6 +973,7 @@ impl Library {
                         match c {
                             AppCat::Arkor => Value::Text(self.console_arkor_state()),
                             c if super::console_system::sys_cat(c) => self.sys_summary(c),
+                            AppCat::Controllers => self.pads_summary(),
                             _ => Value::None,
                         },
                     )],
@@ -1087,6 +1092,7 @@ impl Library {
             | AppCat::Sound
             | AppCat::Display
             | AppCat::Power => self.sys_rows(c),
+            AppCat::Controllers => self.pads_rows(),
             AppCat::Stores => {
                 let mut rows: Vec<Row> = Shop::ALL
                     .into_iter()
@@ -1155,6 +1161,7 @@ impl Library {
         if let Some(c) = self
             .sys_opt_choices(o)
             .or_else(|| self.quick_opt_choices(o))
+            .or_else(|| self.pads_opt_choices(o))
         {
             return Some(c);
         }
@@ -1244,7 +1251,11 @@ impl Library {
     }
 
     pub(super) fn opt_key(&self, o: &Opt) -> String {
-        if let Some(k) = self.sys_opt_key(o).or_else(|| self.quick_opt_key(o)) {
+        if let Some(k) = self
+            .sys_opt_key(o)
+            .or_else(|| self.quick_opt_key(o))
+            .or_else(|| self.pads_opt_key(o))
+        {
             return k;
         }
         let g = &self.global;
@@ -1338,7 +1349,7 @@ impl Library {
 
     /// Sets a choice of any setting.
     pub(super) fn opt_set(&mut self, o: &Opt, key: &str) {
-        if self.sys_opt_set(o, key) || self.quick_opt_set(o, key) {
+        if self.sys_opt_set(o, key) || self.quick_opt_set(o, key) || self.pads_opt_set(o, key) {
             return;
         }
         if *o == Opt::InstallProton {

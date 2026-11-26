@@ -385,6 +385,9 @@ pub struct Global {
     /// The pad's middle button brings Steam forward (Steam's own setting, set through its
     /// port while it is controlled).
     pub guide_opens_steam: bool,
+    /// Whose button marks console mode shows: `xbox`, `playstation`, `nintendo`
+    /// (`None`: as the gamepad in use is).
+    pub pad_glyphs: Option<String>,
     /// Saves of Epic and GOG games do not follow the store's cloud (they do unless turned off).
     pub no_cloud_saves: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).

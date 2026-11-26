@@ -86,6 +86,8 @@ pub(super) enum Screen {
     Trouble(String),
     /// The quick menu over a running game.
     Quick(String),
+    /// Trying a gamepad's buttons.
+    PadTest,
 }
 
 impl Screen {
@@ -142,6 +144,8 @@ pub(super) enum Opt {
     /// The quick menu's: the game's performance overlay, and its frame limit.
     HudShown,
     FpsLimit,
+    /// Whose button marks are shown.
+    PadGlyphs,
     /// Steam's library folder a game is installed in.
     SteamFolder,
     /// Console mode's own sounds, and its start-up animation.
@@ -705,6 +709,8 @@ pub(super) struct Console {
     pub(super) sys: super::console_system::SysState,
     /// The game the quick menu is about.
     pub(super) quick: super::console_quick::QuickState,
+    /// The gamepads' state as console mode knows it (see `console_pads`).
+    pub(super) pads: super::console_pads::PadsState,
     /// When the mouse was moved last, and whether that is being watched.
     pointer: Option<Instant>,
     pointer_watched: bool,
@@ -857,6 +863,7 @@ impl Library {
             Screen::Steam(app, page) => self.steam_page_rows(app, page),
             Screen::Saves(id) => self.saves_rows(&id),
             Screen::Quick(id) => self.quick_rows(&id),
+            Screen::PadTest => self.pad_test_rows(),
             Screen::Trouble(id) => self.trouble_rows(&id),
         }
     }
@@ -2055,6 +2062,15 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Tools),
             ],
+            Some("gamepads") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Controllers),
+            ],
+            Some("padtest") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Controllers),
+                Screen::PadTest,
+            ],
             Some(c @ ("network" | "bluetooth" | "sound" | "screen" | "power")) => {
                 use super::console_settings::AppCat;
                 let cat = match c {
@@ -2641,6 +2657,13 @@ impl Library {
         // The start-up animation ends with the first input.
         self.skip_intro(cx);
         if self.skip_console_intro(cx) {
+            return;
+        }
+        // Trying the buttons: they do nothing else; B twice leaves.
+        if self.console.screen() == Screen::PadTest && self.console.overlay.is_none() {
+            if nav == Nav::Back && self.pad_test_leave() {
+                self.console_back(cx);
+            }
             return;
         }
         // B in the quick menu: back to the game.

@@ -1725,3 +1725,61 @@ fn the_quick_menu_comes_over_a_game_and_goes() {
         assert_eq!(l.console.screen(), Screen::Library);
     });
 }
+
+#[test]
+fn gamepads_have_their_own_marks_and_a_test() {
+    use super::console::{Act, Opt, Screen};
+    use super::console_settings::AppCat;
+    use super::gamepad::{Kind, Nav};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console#gamepads"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update_in(cx, |l, w, cx| {
+        l.console_open(Screen::SettingsCat(AppCat::Controllers), cx);
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert!(acts.contains(&Act::Opt(Opt::PadGlyphs)));
+        assert!(acts.contains(&Act::Screen(Screen::PadTest)));
+        // No pad here: Xbox's marks, unless chosen.
+        assert_eq!(l.pad_kind(), Kind::Xbox);
+        l.opt_set(&Opt::PadGlyphs, "playstation");
+        assert_eq!(l.pad_kind(), Kind::PlayStation);
+        assert_eq!(
+            arkor_core::Global::load_or_import()
+                .unwrap()
+                .pad_glyphs
+                .as_deref(),
+            Some("playstation")
+        );
+        // Trying the buttons: they move nothing, and B has to be pressed twice.
+        l.console_open(Screen::PadTest, cx);
+        let labels: Vec<String> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.label.clone()))
+            .collect();
+        assert!(labels.iter().any(|t| t == "✕") && labels.iter().any(|t| t == "L2"));
+        l.nav(Nav::Down, w, cx);
+        l.nav(Nav::Back, w, cx);
+        assert_eq!(l.console.screen(), Screen::PadTest);
+        l.nav(Nav::Back, w, cx);
+        assert_eq!(l.console.screen(), Screen::SettingsCat(AppCat::Controllers));
+    });
+}

@@ -95,6 +95,7 @@ impl Library {
             window.activate_window();
         }
         self.watch_pointer(window, cx);
+        self.pad_watch();
         self.sys_flush(cx);
         let still = self.global.appearance.reduce_motion;
         let now = Instant::now();
@@ -758,7 +759,11 @@ impl Library {
             .text_size(px(17. * u))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(pal::text_soft())
-            .child(text)
+            .child(if self.console.pad {
+                self.pad_kind().glyph(text)
+            } else {
+                text
+            })
     }
 
     fn console_footer(&self, item: &Option<Item>, f: Frame, cx: &mut Context<Self>) -> Div {
@@ -828,7 +833,7 @@ impl Library {
         ));
         if !login {
             hints.push((
-                if pad { "☰" } else { "F10" },
+                if pad { "Menu" } else { "F10" },
                 if keyboard {
                     self.tr("Done", "Tamam")
                 } else if folder {
