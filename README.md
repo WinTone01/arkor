@@ -137,7 +137,7 @@ stay, so installing again picks up where you left off. Installed as a package? U
     <td valign="top">
       <img src="docs/icons/saves.svg" width="44"><br>
       <b>Saves kept safe</b><br>
-      <sub>Epic and GOG cloud saves synced around every session, with a copy kept before anything is replaced.</sub>
+      <sub>A copy of any game's saves after every session, found through Ludusavi, plus Epic and GOG cloud saves synced around it.</sub>
     </td>
   </tr>
   <tr>
@@ -262,7 +262,7 @@ running game, which every desktop allows in its own way:
 | `arkor tool <id> winecfg \| winetricks \| run <file>` | Prefix tools |
 | `arkor proton installed \| list \| install` | Proton builds |
 | `arkor trouble <id>` | Why a game did not start, and what helps |
-| `arkor saves sync \| list \| restore <id>` | Cloud saves and their copies |
+| `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
 | `arkor nxm <link>` | Installs a mod from Nexus Mods' "Mod Manager Download" |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor system` | A report of the computer, the desktop and Arkor's tools |
@@ -294,7 +294,8 @@ Arkor stands on the shoulders of great Linux gaming projects:
 [Faugus Launcher](https://github.com/Faugus/faugus-launcher) (whose umu build and anti-cheat
 packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher)
 (whose way of working with the stores Arkor follows), the mod manager [Amethyst](https://github.com/ChrisDKN/Amethyst-Mod-Manager) (which installs
-and places mods for Arkor), and the store helpers
+and places mods for Arkor), [Ludusavi's manifest](https://github.com/mtkennerly/ludusavi-manifest)
+(which tells where games keep their saves, from [PCGamingWiki](https://www.pcgamingwiki.com)), and the store helpers
 [legendary](https://github.com/legendary-gl/legendary), [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
 and [nile](https://github.com/imLinguin/nile),
 [GOverlay](https://github.com/benjamimgois/goverlay), [MangoHud](https://github.com/flightlessmango/MangoHud),
