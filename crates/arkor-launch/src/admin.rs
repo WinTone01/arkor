@@ -71,7 +71,7 @@ pub fn install_packages(packages: &[&str], password: &str) -> anyhow::Result<()>
             .collect::<Vec<_>>()
             .join("; ")
     );
-    Ok(())
+    crate::pkg::not_installed(m, &names)
 }
 
 /// A partition that can be mounted.

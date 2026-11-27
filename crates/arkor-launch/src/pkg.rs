@@ -168,7 +168,10 @@ impl Manager {
             Manager::Pacman => run(&["pacman", "-Si", "--", package]).is_some(),
             Manager::Apt => run(&["apt-cache", "policy", "--", package])
                 .is_some_and(|o| o.contains("Candidate:") && !o.contains("Candidate: (none)")),
-            Manager::Dnf => run(&["dnf", "-q", "info", "--", package]).is_some(),
+            Manager::Dnf => {
+                // dnf5 takes no `--`; the names come from Arkor's own list.
+                run(&["dnf", "-q", "info", package]).is_some()
+            }
             Manager::Zypper => run(&[
                 "zypper",
                 "--non-interactive",
@@ -218,6 +221,18 @@ pub fn install_line(arch: &[&str]) -> Option<String> {
     let m = manager()?;
     let (names, _) = translate(arch);
     (!names.is_empty()).then(|| format!("sudo {}", m.install_command(&names).join(" ")))
+}
+
+/// After an install said it worked: the packages (this distribution's names) that are still
+/// not installed (dnf, for one, succeeds without installing a package it cannot find).
+pub fn not_installed(m: Manager, names: &[String]) -> anyhow::Result<()> {
+    let missing: Vec<&str> = names
+        .iter()
+        .filter(|n| m.version(n).is_none())
+        .map(String::as_str)
+        .collect();
+    anyhow::ensure!(missing.is_empty(), "not installed: {}", missing.join(", "));
+    Ok(())
 }
 
 /// The installed version of a package, by its Arch name.

@@ -779,7 +779,7 @@ fn install_with(m: crate::pkg::Manager, packages: &[&str]) -> anyhow::Result<()>
         "{}",
         pacman_failure(out.status.code(), &log).replace("pacman", m.program())
     );
-    Ok(())
+    crate::pkg::not_installed(m, &names)
 }
 
 /// Why a `pkexec pacman` run failed, in a line.
@@ -1016,6 +1016,50 @@ mod terminal_tests {
         // Whatever is installed here: the script is its last word, run by bash.
         if let Some(argv) = terminal_command("echo hi") {
             assert_eq!(argv[argv.len() - 3..], ["bash", "-c", "echo hi"]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod package_tests {
+    use super::*;
+
+    /// Installs packages with this distribution's package manager, for real: run it only in a
+    /// throwaway container. `ARKOR_TEST_PKG` is the user's password (the console's sudo way)
+    /// or `pkexec` (the desktop's way); `ARKOR_TEST_PKG_LIST` the packages, by Arch's names.
+    #[test]
+    #[ignore = "installs packages; for a throwaway container"]
+    fn installs_with_the_distribution() {
+        let how = std::env::var("ARKOR_TEST_PKG").expect("ARKOR_TEST_PKG");
+        let list = std::env::var("ARKOR_TEST_PKG_LIST").expect("ARKOR_TEST_PKG_LIST");
+        let list: Vec<&str> = list.split(',').collect();
+        let m = crate::pkg::manager().expect("a package manager");
+        let (repo, other) = split_repo_packages(&list);
+        eprintln!("{m:?}: in the repositories {repo:?}, not packaged {other:?}");
+        eprintln!("line: {:?}", crate::pkg::install_line(&repo));
+        for p in &repo {
+            assert_eq!(crate::pkg::version(p), None, "{p} is installed already");
+        }
+        let result = if how == "pkexec" {
+            install_packages(&repo)
+        } else {
+            crate::admin::install_packages(&repo, &how)
+        };
+        result.unwrap();
+        for p in &repo {
+            let v = crate::pkg::version(p);
+            eprintln!("{p} → {:?} {v:?}", m.name(p));
+            assert!(v.is_some(), "{p} was not installed");
+        }
+        // Not packaged here: said so, not tried.
+        if let Some(p) = other.first() {
+            let e = if how == "pkexec" {
+                install_packages(&[p])
+            } else {
+                crate::admin::install_packages(&[p], &how)
+            };
+            eprintln!("{p}: {e:?}");
+            assert!(e.is_err());
         }
     }
 }
