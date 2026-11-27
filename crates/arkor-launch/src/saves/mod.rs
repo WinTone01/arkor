@@ -5,6 +5,7 @@
 //! known which side changed. When both did, nothing is touched until the user chose a side.
 //! Before anything is put over saves a copy is kept ([`snapshots`]).
 
+pub mod ludusavi;
 mod places;
 mod remote;
 pub mod snapshots;
