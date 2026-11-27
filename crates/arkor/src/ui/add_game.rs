@@ -101,6 +101,10 @@ impl Library {
     /// Adds `new` to the library with the defaults for new games, and saves.
     pub(super) fn add_entry(&mut self, new: NewGame, cx: &mut Context<Self>) -> Option<GameId> {
         let id = self.library.add(new);
+        // Favourite, category and play time the other launcher knew.
+        if !cfg!(test) {
+            arkor_stores::carry::carry_over(&mut self.library, &id);
+        }
         let result = self.library.save();
         if let Err(e) = result {
             self.add.error = Some(format!("{e:#}"));

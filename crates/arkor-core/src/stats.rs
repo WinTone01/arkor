@@ -50,6 +50,18 @@ impl Stats {
         self.games.get(&id.to_string()).copied().unwrap_or_default()
     }
 
+    /// Play time another launcher counted, for a game Arkor has none for yet.
+    pub fn seed(id: &GameId, playtime_secs: u64, last_played: Option<u64>) -> anyhow::Result<()> {
+        let mut stats = Self::load();
+        let entry = stats.games.entry(id.to_string()).or_default();
+        if entry.playtime_secs > 0 || playtime_secs == 0 {
+            return Ok(());
+        }
+        entry.playtime_secs = playtime_secs;
+        entry.last_played = entry.last_played.or(last_played);
+        crate::profile::write_toml(&Self::path()?, &stats)
+    }
+
     /// Adds one session (re-reading the file first, so parallel games don't lose time).
     pub fn record(id: &GameId, started: u64, ended: u64) -> anyhow::Result<()> {
         // Every session also goes to the history (for statistics and the play journal).

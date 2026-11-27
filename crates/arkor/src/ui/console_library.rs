@@ -295,6 +295,7 @@ impl Library {
             Store::Heroic => "Heroic",
             Store::Lutris => "Lutris",
             Store::Faugus => "Faugus",
+            Store::Bottles => "Bottles",
             _ => "",
         }
         .to_string()

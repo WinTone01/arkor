@@ -484,6 +484,7 @@ fn detect() -> anyhow::Result<()> {
 fn added(new: NewGame) -> anyhow::Result<()> {
     let mut library = Library::load()?;
     let id = library.add(new);
+    arkor_stores::carry::carry_over(&mut library, &id);
     library.save()?;
     println!("added local:{id}");
     Ok(())

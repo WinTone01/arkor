@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::target::{ExeTarget, proton_by_name};
 
 /// Lutris data dirs (native, then Flatpak); each may hold `pga.db` and `games/`.
-fn data_dirs() -> Vec<PathBuf> {
+pub(crate) fn data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(data) = dirs::data_dir() {
         dirs.push(data.join("lutris"));

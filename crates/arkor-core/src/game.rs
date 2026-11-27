@@ -19,10 +19,12 @@ pub enum Store {
     Lutris,
     /// Games imported into Arkor from a Wine prefix.
     Local,
+    /// Programs added to a bottle of Bottles.
+    Bottles,
 }
 
 impl Store {
-    pub const ALL: [Store; 8] = [
+    pub const ALL: [Store; 9] = [
         Store::Steam,
         Store::Epic,
         Store::Gog,
@@ -31,6 +33,7 @@ impl Store {
         Store::Faugus,
         Store::Lutris,
         Store::Local,
+        Store::Bottles,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,6 +46,7 @@ impl Store {
             Store::Faugus => "faugus",
             Store::Lutris => "lutris",
             Store::Local => "local",
+            Store::Bottles => "bottles",
         }
     }
 }
