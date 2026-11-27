@@ -17,6 +17,7 @@
 //! - [`bios`]: the user's BIOS files; [`scan`], [`rom_sources`]: finding games;
 //! - [`launch`]: the command that plays a game.
 
+pub mod art;
 pub mod bios;
 pub mod discovery;
 pub mod games;
@@ -24,6 +25,7 @@ pub mod host;
 pub mod install;
 pub mod iso9660;
 pub mod launch;
+pub mod launchbox;
 pub mod libs;
 pub mod manifest;
 pub mod names;

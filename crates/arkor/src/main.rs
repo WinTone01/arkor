@@ -56,7 +56,8 @@ usage:
   arkor clip                              save a clip of the running game (bind it to a key)
   arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
                                           folder); --add puts them in the library
-  arkor emulators [install <id> | remove <id> | open <id> | core <core> | bios]
+  arkor emulators [install <id> | remove <id> | open <id> | core <core> | bios
+                  | launchbox [<system> <rom name>]]
                                           emulators: what is installed, getting them, BIOS
   arkor trouble <id>                      why a game did not start, and what helps
   arkor backup create [--with-prefixes] | restore <file>
@@ -104,6 +105,19 @@ fn roms(args: &[String]) -> anyhow::Result<()> {
             }
         }
         global.save()?;
+        if !global.emulators.no_covers {
+            let mut covers = 0;
+            for g in library
+                .games
+                .iter()
+                .filter(|g| found.iter().any(|f| f.path == g.exe))
+            {
+                if let Ok(Some(_)) = arkor_launch::emu::art::cover(g, global.emulators.launchbox) {
+                    covers += 1;
+                }
+            }
+            println!("{covers} covers found");
+        }
         println!("added {added} games");
     } else {
         println!("{} games (--add puts them in the library)", found.len());
@@ -165,6 +179,17 @@ fn emulators(args: &[String]) -> anyhow::Result<()> {
         Some("open") => {
             let global = arkor_core::Global::load_or_import()?;
             emu::open::start(arg(args, 1)?, &global.emulators)
+        }
+        // LaunchBox's games database for box art: download it, or look a game up in it.
+        Some("launchbox") => {
+            match (args.get(1), args.get(2)) {
+                (Some(system), Some(stem)) => println!(
+                    "{}",
+                    emu::launchbox::cover_url(system, stem).unwrap_or_else(|| "not found".into())
+                ),
+                _ => println!("{}", arkor_launch::downloads::run("launchbox")?),
+            }
+            Ok(())
         }
         Some("bios") => {
             let global = arkor_core::Global::load_or_import()?;

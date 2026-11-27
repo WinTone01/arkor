@@ -28,6 +28,8 @@ pub(super) struct EmuUi {
     tried: Vec<&'static str>,
     /// The emulator whose options and versions are shown on the Emulators page.
     detail: Option<String>,
+    /// Covers are being looked up.
+    covering: bool,
     /// The versions an emulator offers, once asked for (an error as text).
     offered: std::collections::HashMap<String, Result<Vec<String>, String>>,
 }
@@ -228,6 +230,14 @@ impl Library {
                     })
                     .ok();
                 let Some(folders) = folders else { break };
+                let _ = this.update(cx, |this, cx| {
+                    let lb = this.global.emulators.launchbox;
+                    if lb && !arkor_launch::downloads::pending("launchbox") && emu::launchbox::due()
+                    {
+                        arkor_launch::downloads::enqueue("launchbox");
+                    }
+                    this.emu_fill_covers(cx);
+                });
                 if let Some(folders) = folders.filter(|f| !f.is_empty()) {
                     // Folders on a disk that is not there are left alone (their games stay).
                     let here: Vec<PathBuf> = folders.into_iter().filter(|f| f.is_dir()).collect();
@@ -239,6 +249,7 @@ impl Library {
                             let r = this.library.save();
                             this.report(r);
                             this.reload_games();
+                            this.emu_fill_covers(cx);
                             this.status = Some(
                                 format!(
                                     "{added} {}",
@@ -257,6 +268,74 @@ impl Library {
             }
         })
         .detach();
+    }
+
+    /// Looks up covers for emulator games that have none (libretro's, or LaunchBox's when
+    /// on), one after another in the background.
+    pub(super) fn emu_fill_covers(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) || self.emu.covering || self.global.emulators.no_covers {
+            return;
+        }
+        let games: Vec<LibraryGame> = self
+            .library
+            .games
+            .iter()
+            .filter(|g| matches!(g.kind, GameKind::Emulated { .. }))
+            .filter(|g| arkor_launch::covers::cover_for(g).is_none())
+            .cloned()
+            .collect();
+        if games.is_empty() {
+            return;
+        }
+        self.emu.covering = true;
+        let launchbox = self.global.emulators.launchbox;
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            for game in games {
+                let found = bg
+                    .spawn(async move {
+                        let got = emu::art::cover(&game, launchbox);
+                        (game.id, got)
+                    })
+                    .await;
+                if let (id, Ok(Some(_))) = found {
+                    let _ = this.update(cx, |this, cx| {
+                        this.refresh_cover(&id);
+                        cx.notify();
+                    });
+                }
+            }
+            let _ = this.update(cx, |this, _| this.emu.covering = false);
+        })
+        .detach();
+    }
+
+    /// Switches libretro's covers, or LaunchBox's (which downloads its database first).
+    fn emu_set_covers(
+        &mut self,
+        libretro: Option<bool>,
+        launchbox: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
+        let e = &mut self.global.emulators;
+        if let Some(on) = libretro {
+            e.no_covers = !on;
+        }
+        if let Some(on) = launchbox {
+            e.launchbox = on;
+            if on {
+                emu::art::forget_tried();
+                if emu::launchbox::due() {
+                    self.enqueue_download("launchbox", cx);
+                }
+            } else {
+                emu::launchbox::remove();
+            }
+        }
+        let r = self.global.save();
+        self.report(r);
+        self.emu_fill_covers(cx);
+        cx.notify();
     }
 
     /// Stops reading a ROM folder (its games stay in the library).
@@ -302,6 +381,7 @@ impl Library {
                     this.status = Some(format!("{e:#}").into());
                 } else {
                     this.reload_games();
+                    this.emu_fill_covers(cx);
                     let had = found.len() - added;
                     this.status = Some(
                         match (added, had) {
@@ -599,6 +679,7 @@ impl Library {
                     .flex_col()
                     .gap_4()
                     .child(self.render_rom_folders(cx))
+                    .child(self.render_emu_covers(cx))
                     .child(self.render_emulators(cx))
                     .child(
                         div().flex().child(
@@ -614,6 +695,51 @@ impl Library {
                         ),
                     ),
             )
+    }
+
+    /// Box art for emulator games, on the Emulators page.
+    fn render_emu_covers(&mut self, cx: &mut Context<Self>) -> Div {
+        let e = &self.global.emulators;
+        let (libretro, launchbox) = (!e.no_covers, e.launchbox);
+        let lb_state = if !launchbox {
+            self.tr(
+                "Off. On: about 100 MB once a week, for the box of each game's region.",
+                "Kapalı. Açılınca: her oyunun kendi bölgesinin kutusu için haftada bir ~100 MB.",
+            )
+            .to_string()
+        } else if arkor_launch::downloads::pending("launchbox") {
+            self.tr("Downloading the database…", "Veritabanı indiriliyor…")
+                .into()
+        } else if emu::launchbox::built_at().is_some() {
+            self.tr("Ready", "Hazır").into()
+        } else {
+            self.tr("Not downloaded yet", "Henüz indirilmedi").into()
+        };
+        widgets::section(self.tr("Covers", "Kapaklar"))
+            .child(widgets::setting_row(
+                self.tr("Box art from libretro", "libretro'dan kutu kapakları"),
+                self.tr(
+                    "By each ROM's name; no account.",
+                    "ROM'un adına göre; hesap gerekmez.",
+                ),
+                widgets::switch(libretro)
+                    .id("emu-covers")
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.emu_set_covers(Some(!libretro), None, cx)
+                    })),
+            ))
+            .child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("LaunchBox Games Database", "LaunchBox oyun veritabanı"),
+                lb_state,
+                widgets::switch(launchbox)
+                    .id("emu-launchbox")
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.emu_set_covers(None, Some(!launchbox), cx)
+                    })),
+            ))
     }
 
     /// The ROM folders Arkor reads, on the Emulators page.

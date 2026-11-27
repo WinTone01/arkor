@@ -42,6 +42,43 @@ fn inside(dest: &Path, name: &str) -> anyhow::Result<PathBuf> {
     Ok(dest.join(rel))
 }
 
+/// Reads one file of the zip at `path` (by its name in the archive) as a stream, without
+/// unpacking the rest.
+pub fn open_entry(path: &Path, wanted: &str) -> anyhow::Result<Box<dyn Read>> {
+    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let (mut at, entries) = end_record(&mut file)?;
+    for _ in 0..entries {
+        file.seek(SeekFrom::Start(at))?;
+        let mut h = [0u8; 46];
+        file.read_exact(&mut h)?;
+        anyhow::ensure!(h[..4] == [0x50, 0x4b, 0x01, 0x02], "damaged zip file");
+        let u16_at = |i: usize| u16::from_le_bytes([h[i], h[i + 1]]) as u64;
+        let u32_at = |i: usize| u32::from_le_bytes([h[i], h[i + 1], h[i + 2], h[i + 3]]) as u64;
+        let (method, packed, local) = (u16_at(10), u32_at(20), u32_at(42));
+        let (name_len, extra_len, comment_len) = (u16_at(28), u16_at(30), u16_at(32));
+        let mut name = vec![0; name_len as usize];
+        file.read_exact(&mut name)?;
+        at += 46 + name_len + extra_len + comment_len;
+        if name != wanted.as_bytes() {
+            continue;
+        }
+        file.seek(SeekFrom::Start(local))?;
+        let mut lh = [0u8; 30];
+        file.read_exact(&mut lh)?;
+        anyhow::ensure!(lh[..4] == [0x50, 0x4b, 0x03, 0x04], "damaged zip file");
+        let skip = u16::from_le_bytes([lh[26], lh[27]]) as i64
+            + u16::from_le_bytes([lh[28], lh[29]]) as i64;
+        file.seek(SeekFrom::Current(skip))?;
+        let data = std::io::BufReader::new(file).take(packed);
+        return Ok(match method {
+            0 => Box::new(data),
+            8 => Box::new(flate2::read::DeflateDecoder::new(data)),
+            m => bail!("{wanted}: compression {m} is not supported"),
+        });
+    }
+    bail!("the archive holds no {wanted}")
+}
+
 /// Unpacks the zip at `path` into `dest`. Blocking.
 pub fn unpack(path: &Path, dest: &Path) -> anyhow::Result<()> {
     let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;

@@ -53,6 +53,7 @@ pub fn label(key: &str) -> String {
     match key {
         "optiscaler" => "OptiScaler",
         "amethyst" => "Amethyst Mod Manager",
+        "launchbox" => "LaunchBox Games Database",
         "dlss-enabler" => "DLSS Enabler",
         "reshade" => "ReShade",
         "streamline" => "Streamline SDK",
@@ -82,6 +83,11 @@ pub fn run(key: &str) -> anyhow::Result<String> {
     }
     if let Some(id) = key.strip_prefix("emu:") {
         return crate::emu::install::install(id);
+    }
+    if key == "launchbox" {
+        let games = crate::emu::launchbox::refresh()?;
+        crate::emu::art::forget_tried();
+        return Ok(format!("LaunchBox: {games} games"));
     }
     if let Some(core) = key.strip_prefix("core:") {
         let date = crate::emu::retroarch::install_core(core)?;
