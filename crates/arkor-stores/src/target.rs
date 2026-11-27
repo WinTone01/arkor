@@ -50,6 +50,13 @@ pub fn compat_tool_roots() -> Vec<PathBuf> {
         home.join(".local/share/Steam/compatibilitytools.d"),
         home.join(".steam/root/compatibilitytools.d"),
         home.join(".config/heroic/tools/proton"),
+        // Proton builds other launchers keep: Bottles (as a package and as a Flatpak),
+        // Lutris and Heroic's Flatpak. Their Wine builds have no `proton` and are skipped.
+        home.join(".local/share/bottles/runners"),
+        home.join(".var/app/com.usebottles.bottles/data/bottles/runners"),
+        home.join(".local/share/lutris/runners/proton"),
+        home.join(".var/app/com.heroicgameslauncher.hgl/config/heroic/tools/proton"),
+        home.join(".var/app/com.valvesoftware.Steam/data/Steam/compatibilitytools.d"),
     ]
 }
 

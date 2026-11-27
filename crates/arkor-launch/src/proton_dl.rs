@@ -13,14 +13,22 @@ pub enum Variant {
     CachyOs,
     Dw,
     Wineland,
+    /// Valve's Proton with umu's fixes, as umu downloads it.
+    Umu,
+    /// Proton-EM: Proton with HDR, FSR 4 and Wayland work.
+    Em,
+    Sarek,
 }
 
 impl Variant {
-    pub const ALL: [Variant; 4] = [
+    pub const ALL: [Variant; 7] = [
         Variant::Ge,
         Variant::CachyOs,
         Variant::Dw,
         Variant::Wineland,
+        Variant::Umu,
+        Variant::Em,
+        Variant::Sarek,
     ];
 
     pub fn label(self) -> &'static str {
@@ -29,6 +37,9 @@ impl Variant {
             Variant::CachyOs => "Proton-CachyOS",
             Variant::Dw => "DW-Proton",
             Variant::Wineland => "Proton-Wineland",
+            Variant::Umu => "UMU-Proton",
+            Variant::Em => "Proton-EM",
+            Variant::Sarek => "Proton-Sarek",
         }
     }
 
@@ -43,6 +54,14 @@ impl Variant {
             Variant::Dw => "https://dawn.wine/api/v1/repos/dawn-winery/dwproton/releases?limit=15",
             Variant::Wineland => {
                 "https://api.github.com/repos/nanomatters/proton-cachyos/releases?per_page=15"
+            }
+            Variant::Umu => {
+                "https://api.github.com/repos/Open-Wine-Components/umu-proton/releases?per_page=15"
+            }
+            // The project moved; GitHub's id keeps working.
+            Variant::Em => "https://api.github.com/repositories/973932085/releases?per_page=15",
+            Variant::Sarek => {
+                "https://api.github.com/repos/pythonlover02/Proton-Sarek/releases?per_page=15"
             }
         }
     }
@@ -93,7 +112,12 @@ fn parse(variant: Variant, json: &str, x86_64_v3: bool) -> anyhow::Result<Vec<Re
                     || a.name.ends_with(".tar.xz")
                     || a.name.ends_with(".tar.zst")
             };
-            let x86 = |a: &&ApiAsset| !a.name.contains("aarch64") && !a.name.contains("arm64");
+            // Sarek's `-async` builds are the variant for few games; the plain one is the build.
+            let x86 = |a: &&ApiAsset| {
+                !a.name.contains("aarch64")
+                    && !a.name.contains("arm64")
+                    && !a.name.contains("-async")
+            };
             let v3 = |a: &&ApiAsset| a.name.contains("x86_64_v3");
             let candidates: Vec<&ApiAsset> = r.assets.iter().filter(archive).filter(x86).collect();
             // Prefer the x86-64-v3 optimized build when the CPU supports it.

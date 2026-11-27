@@ -332,6 +332,20 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| Some(l.render_protonfix(cx)),
     },
     Feature {
+        id: "dxvk",
+        tab: GameTab::Runtime,
+        icon: "layers",
+        name: ("DXVK & VKD3D-Proton version", "DXVK ve VKD3D-Proton sürümü"),
+        desc: (
+            "Another DirectX translation version than Proton's, for this game only.",
+            "Yalnızca bu oyun için Proton'unkinden farklı bir DirectX çeviri sürümü.",
+        ),
+        keywords: "dxvk vkd3d directx d3d11 d3d12 dx11 dx12 version sürüm",
+        applies: proton_choice,
+        active: Some(|l| l.profile.dxvk.is_some() || l.profile.vkd3d.is_some()),
+        render: |l, cx| Some(l.render_dxvk(cx)),
+    },
+    Feature {
         id: "gpu",
         tab: GameTab::Runtime,
         icon: "cpu",

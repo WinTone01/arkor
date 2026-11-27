@@ -56,6 +56,13 @@ pub struct Profile {
     /// computers with more than one. `None` = the system's choice.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu: Option<String>,
+    /// Windows games: a DXVK version of the user's choice instead of Proton's (see
+    /// `arkor_launch::dxvk`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dxvk: Option<String>,
+    /// Windows games: a VKD3D-Proton version of the user's choice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vkd3d: Option<String>,
 }
 
 /// What Arkor writes into Steam's own settings for a Steam game (Steam starts it).

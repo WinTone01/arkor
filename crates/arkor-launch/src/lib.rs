@@ -15,6 +15,7 @@ pub mod covers;
 pub mod discord;
 pub mod dlss_enabler;
 pub mod downloads;
+pub mod dxvk;
 pub mod ea_fix;
 pub mod emu;
 pub mod gpu;
@@ -349,7 +350,28 @@ pub fn run(
         mods::play::before(id, folder.as_deref())
     };
     let game_dir = paths::game_config_dir(id)?;
-    let plan = plan(&profile, &global, &Host::detect(id), &game_dir, command)?;
+    let mut host = Host::detect(id);
+    // DXVK / VKD3D-Proton versions of the user's choice, beside the game while it runs.
+    let choices: Vec<(dxvk::Kind, String)> = [
+        (dxvk::Kind::Dxvk, profile.dxvk.clone()),
+        (dxvk::Kind::Vkd3d, profile.vkd3d.clone()),
+    ]
+    .into_iter()
+    .filter_map(|(k, v)| Some((k, v?)))
+    .collect();
+    let dxvk_placed = if trial.plain {
+        None
+    } else {
+        dxvk::exe_of(command).and_then(|exe| dxvk::before(id, &exe, &choices))
+    };
+    if let Some((_, overrides)) = &dxvk_placed {
+        host.proxy_dlls.extend(
+            overrides
+                .iter()
+                .filter_map(|o| o.split_once('=').map(|(d, _)| d.to_string())),
+        );
+    }
+    let plan = plan(&profile, &global, &host, &game_dir, command)?;
 
     for (path, contents) in &plan.files {
         if let Some(dir) = path.parent() {
@@ -426,6 +448,7 @@ pub fn run(
         let _ = extra.kill();
     }
     drop(mods_placed);
+    drop(dxvk_placed);
     upload_saves(id);
     if !profile.post_launch.trim().is_empty() {
         shell(&profile.post_launch, &shell_env, working_dir)?;

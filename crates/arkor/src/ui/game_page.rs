@@ -1036,6 +1036,62 @@ impl Library {
         card
     }
 
+    /// DXVK and VKD3D-Proton versions of this game.
+    pub(super) fn render_dxvk(&mut self, cx: &mut Context<Self>) -> Div {
+        use arkor_launch::dxvk::Kind;
+        let mut card =
+            widgets::section(self.tr("DXVK & VKD3D-Proton version", "DXVK ve VKD3D-Proton sürümü"));
+        card = card.child(widgets::label(self.tr(
+            "The chosen version's DLLs are put beside the game's program while it runs, and taken out again afterwards; a game that ships its own keeps them.",
+            "Seçilen sürümün DLL'leri oyun çalışırken programının yanına konur, sonra geri alınır; kendi DLL'lerini getiren oyunda onlar kalır.",
+        )));
+        for (kx, kind) in Kind::ALL.into_iter().enumerate() {
+            let current = match kind {
+                Kind::Dxvk => self.profile.dxvk.clone(),
+                Kind::Vkd3d => self.profile.vkd3d.clone(),
+            };
+            let set = move |this: &mut Self, v: Option<String>| match kind {
+                Kind::Dxvk => this.profile.dxvk = v,
+                Kind::Vkd3d => this.profile.vkd3d = v,
+            };
+            let mut row = div().flex().flex_wrap().gap_1().child(
+                widgets::chip(
+                    ("dxvk-own", kx),
+                    self.tr("Proton's own", "Proton'unki"),
+                    current.is_none(),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    set(this, None);
+                    this.save();
+                    cx.notify();
+                })),
+            );
+            for (vx, v) in arkor_launch::dxvk::installed(kind).into_iter().enumerate() {
+                let on = current.as_deref() == Some(v.as_str());
+                row = row.child(
+                    widgets::chip(("dxvk-v", kx * 100 + vx), v.clone(), on).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            set(this, Some(v.clone()));
+                            this.save();
+                            cx.notify();
+                        },
+                    )),
+                );
+            }
+            let key = format!("{}:", kind.key());
+            row = row.child(
+                super::style::button(
+                    ("dxvk-get", kx),
+                    self.tr("Download the newest", "En yenisini indir"),
+                    false,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.enqueue_download(&key, cx))),
+            );
+            card = card.child(widgets::setting_row(kind.name(), "", row));
+        }
+        card
+    }
+
     /// The graphics card the game renders on.
     pub(super) fn render_gpu_choice(&mut self, cx: &mut Context<Self>) -> Div {
         let current = self.profile.gpu.clone();

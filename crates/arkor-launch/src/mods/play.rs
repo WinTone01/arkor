@@ -91,7 +91,7 @@ impl Drop for Placed {
 const MARK: &str = "mods.placed";
 
 /// This boot of the computer.
-fn boot_id() -> String {
+pub(crate) fn boot_id() -> String {
     std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
@@ -99,7 +99,7 @@ fn boot_id() -> String {
 
 /// When a process started (clock ticks after boot), which tells it from a later process
 /// given the same number.
-fn started(pid: u32) -> Option<u64> {
+pub(crate) fn started(pid: u32) -> Option<u64> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // After the name in brackets (which may hold spaces): state is field 3, start time 22.
     stat.rsplit_once(')')?
@@ -111,7 +111,7 @@ fn started(pid: u32) -> Option<u64> {
 }
 
 /// Whether a mark's launch is still going: the same boot, and its process alive.
-fn still_placed(mark: &str, boot: &str) -> bool {
+pub(crate) fn still_placed(mark: &str, boot: &str) -> bool {
     let mut words = mark.split_whitespace();
     let (Some(at), Some(pid), Some(start)) = (words.next(), words.next(), words.next()) else {
         return false;

@@ -29,7 +29,7 @@ usage:
   arkor tool <id> winecfg | winetricks [VERBS] | run <file>
                                           prefix tools
   arkor kill <id>                         stop everything in a game's prefix
-  arkor proton installed | list <ge|cachyos|dw|wineland> | install <variant> <tag>
+  arkor proton installed | list <ge|cachyos|dw|wineland|umu|em|sarek> | install <variant> <tag>
                                           Proton versions
   arkor optiscaler download [--edge] | install <id> <dir> [proxy] | remove <id>
                   | optipatcher <id> [remove] | fsr4 <id> <dll|remove>
@@ -53,6 +53,8 @@ usage:
               | places <id> | backup <id>
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
+  arkor dxvk [install|remove <dxvk|vkd3d> [version]]
+                                          DXVK / VKD3D-Proton versions for games
   arkor info <id>                         what is known about a game (Steam, VNDB, IGDB)
   arkor clip                              save a clip of the running game (bind it to a key)
   arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
@@ -375,6 +377,28 @@ fn main() -> anyhow::Result<()> {
         Some("roms") => roms(&args[1..]),
         Some("emulators") => emulators(&args[1..]),
         Some("achievements") => achievements(&args[1..]),
+        // DXVK / VKD3D-Proton versions games can choose.
+        Some("dxvk") => {
+            use arkor_launch::dxvk::{self, Kind};
+            let kind = match args.get(2).map(String::as_str) {
+                Some("vkd3d") => Kind::Vkd3d,
+                _ => Kind::Dxvk,
+            };
+            match args.get(1).map(String::as_str) {
+                Some("install") => println!(
+                    "{} {}",
+                    kind.name(),
+                    dxvk::install(kind, args.get(3).map(String::as_str))?
+                ),
+                Some("remove") => dxvk::remove(kind, arg(&args, 3)?)?,
+                _ => {
+                    for k in Kind::ALL {
+                        println!("{}: {}", k.name(), dxvk::installed(k).join(", "));
+                    }
+                }
+            }
+            Ok(())
+        }
         // What the game page shows about a game (Steam, VNDB, IGDB).
         Some("info") => {
             let id: GameId = arg(&args, 1)?.parse()?;
@@ -536,7 +560,12 @@ fn proton(args: &[String]) -> anyhow::Result<()> {
             "cachyos" => Variant::CachyOs,
             "dw" => Variant::Dw,
             "wineland" => Variant::Wineland,
-            other => anyhow::bail!("unknown variant `{other}` (ge, cachyos, dw, wineland)"),
+            "umu" => Variant::Umu,
+            "em" => Variant::Em,
+            "sarek" => Variant::Sarek,
+            other => anyhow::bail!(
+                "unknown variant `{other}` (ge, cachyos, dw, wineland, umu, em, sarek)"
+            ),
         })
     };
     match arg(args, 0)?.as_str() {

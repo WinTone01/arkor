@@ -1023,7 +1023,10 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 // Mods a launch left in a game folder (the computer went off while it ran).
                 if !cfg!(test) {
                     cx.background_executor()
-                        .spawn(async { arkor_launch::mods::play::leftovers() })
+                        .spawn(async {
+                            arkor_launch::dxvk::leftovers();
+                            arkor_launch::mods::play::leftovers()
+                        })
                         .detach();
                 }
                 if lib.console.on {

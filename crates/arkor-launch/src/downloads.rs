@@ -38,6 +38,11 @@ pub fn label(key: &str) -> String {
             format!("{name} {version}")
         };
     }
+    for kind in crate::dxvk::Kind::ALL {
+        if let Some(v) = key.strip_prefix(&format!("{}:", kind.key())) {
+            return format!("{} {v}", kind.name()).trim().to_string();
+        }
+    }
     if let Some(core) = key.strip_prefix("core:") {
         let name = crate::emu::engine("retroarch")
             .and_then(|m| m.core(core).map(|c| c.name.clone()))
@@ -83,6 +88,12 @@ pub fn run(key: &str) -> anyhow::Result<String> {
     }
     if let Some(id) = key.strip_prefix("emu:") {
         return crate::emu::install::install(id);
+    }
+    for kind in crate::dxvk::Kind::ALL {
+        if let Some(rest) = key.strip_prefix(&format!("{}:", kind.key())) {
+            let v = crate::dxvk::install(kind, (!rest.is_empty()).then_some(rest))?;
+            return Ok(format!("{} {v}", kind.name()));
+        }
     }
     if key == "launchbox" {
         let games = crate::emu::launchbox::refresh()?;
