@@ -434,6 +434,9 @@ pub struct Global {
     /// set, so older Arkor versions still read the file).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_save_backups: bool,
+    /// Also a copy every this many minutes while a game runs (0 = only after it ends).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub save_every_min: u32,
     /// Clips of games (GPU Screen Recorder keeps the last moments while a game runs). Written
     /// only when changed, so older Arkor versions still read the file.
     #[serde(skip_serializing_if = "Clips::is_default")]
@@ -1309,4 +1312,8 @@ mod preset_tests {
         assert_eq!(other.launch_options, "-dx11");
         assert!(other.no_sleep && !other.proton_log);
     }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }

@@ -25,6 +25,8 @@ pub enum Why {
     Manual,
     /// After the game was played (saves of any game, found through Ludusavi's manifest).
     AfterPlay,
+    /// While the game ran (every few minutes, when chosen).
+    WhilePlaying,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

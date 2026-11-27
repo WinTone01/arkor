@@ -171,6 +171,33 @@ impl Library {
                         cx.notify();
                     })),
             ))
+            .child(widgets::setting_row(
+                self.tr("Also while playing", "Oynarken de"),
+                self.tr(
+                    "A copy every so often while the game runs, so a crash or a power cut loses little. Only when the saves changed.",
+                    "Oyun sürerken belli aralıklarla da kopya alınır; bir çökme ya da elektrik kesintisinde az şey kaybolur. Yalnızca kayıtlar değiştiyse.",
+                ),
+                {
+                    let mut row = div().flex().flex_wrap().gap_1();
+                    for (ix, m) in [0u32, 15, 30, 60, 120].into_iter().enumerate() {
+                        let label = match m {
+                            0 => self.tr("Off", "Kapalı").to_string(),
+                            m if m < 60 => format!("{m} {}", self.tr("min", "dk")),
+                            m => format!("{} {}", m / 60, self.tr("h", "sa")),
+                        };
+                        row = row.child(
+                            widgets::chip(("save-every", ix), label, self.global.save_every_min == m)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.global.save_every_min = m;
+                                    let r = this.global.save();
+                                    this.report(r);
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                    row
+                },
+            ))
             .child(
                 div()
                     .flex()

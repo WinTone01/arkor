@@ -478,6 +478,7 @@ impl Library {
             Why::BeforeRestore => self.tr("before putting back", "geri yüklemeden önce"),
             Why::Manual => self.tr("kept by you", "sen sakladın"),
             Why::AfterPlay => self.tr("after playing", "oynadıktan sonra"),
+            Why::WhilePlaying => self.tr("while playing", "oynarken"),
         }
     }
 

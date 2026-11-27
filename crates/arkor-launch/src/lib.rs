@@ -469,7 +469,31 @@ pub fn run(
         extra_child = spawn_extra(path, &shell_env)?;
     }
 
+    // A copy of the saves every few minutes while it runs, when chosen.
+    let playing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    if global.save_every_min > 0 && !global.no_save_backups && !trial.plain {
+        let (playing, id, every) = (playing.clone(), id.clone(), global.save_every_min);
+        std::thread::spawn(move || {
+            let step = std::time::Duration::from_secs(15);
+            let mut waited = std::time::Duration::ZERO;
+            while playing.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(step);
+                waited += step;
+                if waited.as_secs() >= u64::from(every) * 60 {
+                    waited = std::time::Duration::ZERO;
+                    match saves::backup(&id, saves::Why::WhilePlaying) {
+                        Ok(n) if n > 0 => {
+                            eprintln!("arkor: kept a copy of the saves while playing")
+                        }
+                        Ok(_) => {}
+                        Err(e) => eprintln!("arkor: no copy of the saves: {e:#}"),
+                    }
+                }
+            }
+        });
+    }
     let status = child.wait()?;
+    playing.store(false, std::sync::atomic::Ordering::Relaxed);
     drop(recorder);
     drop(presence);
     if let Err(e) = arkor_core::stats::Stats::record(id, started, arkor_core::stats::now()) {
