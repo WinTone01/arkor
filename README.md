@@ -152,12 +152,14 @@ stay, so installing again picks up where you left off. Installed as a package? U
       <sub>Steam-style launch options, commands before and after, winecfg, winetricks, logs, benchmarks, backups, Discord status.</sub>
     </td>
     <td valign="top">
-      <img src="docs/icons/looks.svg" width="44"><br>
-      <b>Looks the way you like</b><br>
-      <sub>Dark or light, any accent colour, glass styles, animated backgrounds or your own picture. English and Turkish.</sub>
+      <img src="docs/icons/mods.svg" width="44"><br>
+      <b>Mods <sup>experimental</sup></b><br>
+      <sub>Install, switch and order mods, FOMOD choices and Nexus Mods downloads, through <a href="https://github.com/ChrisDKN/Amethyst-Mod-Manager">Amethyst Mod Manager</a>.</sub>
     </td>
   </tr>
 </table>
+
+<p align="center"><sub>Dark or light, any accent colour, glass styles, animated backgrounds or your own picture · English and Turkish · Arkor updates itself.</sub></p>
 
 <a id="console-mode"></a>
 
@@ -261,6 +263,7 @@ running game, which every desktop allows in its own way:
 | `arkor proton installed \| list \| install` | Proton builds |
 | `arkor trouble <id>` | Why a game did not start, and what helps |
 | `arkor saves sync \| list \| restore <id>` | Cloud saves and their copies |
+| `arkor nxm <link>` | Installs a mod from Nexus Mods' "Mod Manager Download" |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor system` | A report of the computer, the desktop and Arkor's tools |
 | `arkor update [--check]` | Updates Arkor |
@@ -278,6 +281,7 @@ running game, which every desktop allows in its own way:
 | Launch logs, download queue | `~/.local/state/arkor/` |
 | Runtimes, downloaded tools, store logins (encrypted) | `~/.local/share/arkor/` |
 | Copies of saves | `~/.local/share/arkor/saves/` |
+| Mods (Amethyst's) | `~/Games/Amethyst/`, its settings in `~/.config/AmethystModManager/` |
 | Games from stores · Wine prefixes | `~/Games/Arkor/Games/` · `~/Games/Arkor/Prefixes/` (changeable) |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam) |
 
@@ -289,7 +293,8 @@ Arkor stands on the shoulders of great Linux gaming projects:
 [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) and
 [Faugus Launcher](https://github.com/Faugus/faugus-launcher) (whose umu build and anti-cheat
 packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher)
-(whose way of working with the stores Arkor follows) and the store helpers
+(whose way of working with the stores Arkor follows), the mod manager [Amethyst](https://github.com/ChrisDKN/Amethyst-Mod-Manager) (which installs
+and places mods for Arkor), and the store helpers
 [legendary](https://github.com/legendary-gl/legendary), [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
 and [nile](https://github.com/imLinguin/nile),
 [GOverlay](https://github.com/benjamimgois/goverlay), [MangoHud](https://github.com/flightlessmango/MangoHud),
