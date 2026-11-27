@@ -17,6 +17,7 @@ pub mod downloads;
 pub mod ea_fix;
 pub mod launchers;
 pub mod layers;
+pub mod mods;
 pub mod optiscaler;
 pub mod progress;
 pub mod proton_dl;

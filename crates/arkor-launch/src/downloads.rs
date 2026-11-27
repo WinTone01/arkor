@@ -2,7 +2,7 @@
 //!
 //! Each downloadable thing has a key: a layer id (`mako`, `afmf`, `vknemu`, `vksumi`),
 //! a mod (`optiscaler`, `dlss-enabler`, `reshade`, `streamline`, a bundle key), a "Latest"
-//! Proton (`latest:<name>`), a component (`umu`, `runtime`, `anticheat`) or a store game
+//! Proton (`latest:<name>`), a component (`umu`, `runtime`, `anticheat`, `amethyst`) or a store game
 //! (`game:<store>:<id>`, `repair:<store>:<id>`). `run` installs
 //! or updates one; the queue runs them one after another (store games on a worker of their
 //! own, so small downloads do not wait behind them), survives restarts
@@ -37,6 +37,7 @@ pub fn label(key: &str) -> String {
     }
     match key {
         "optiscaler" => "OptiScaler",
+        "amethyst" => "Amethyst Mod Manager",
         "dlss-enabler" => "DLSS Enabler",
         "reshade" => "ReShade",
         "streamline" => "Streamline SDK",
@@ -99,6 +100,12 @@ pub fn run(key: &str) -> anyhow::Result<String> {
             let v = streamline::latest_version()?;
             let dir = streamline::download(&v)?;
             ("Streamline SDK", v, dir, streamline::downloaded())
+        }
+        "amethyst" => {
+            return Ok(format!(
+                "Amethyst Mod Manager {}",
+                crate::mods::amethyst::ensure(true)?
+            ));
         }
         "umu" => {
             components::ensure_umu(true)?;
@@ -221,6 +228,12 @@ pub fn check_updates() -> Vec<Update> {
         "umu".into(),
         components::umu_version(),
         components::umu_latest(),
+        &exact,
+    );
+    add(
+        "amethyst".into(),
+        crate::mods::amethyst::installed_version(),
+        crate::mods::amethyst::latest_version(),
         &exact,
     );
     add(
