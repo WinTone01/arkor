@@ -166,7 +166,7 @@ stay, so installing again picks up where you left off. Installed as a package? U
     <td valign="top">
       <img src="docs/icons/emulators.svg" width="44"><br>
       <b>Emulators</b><br>
-      <sub>Your ROMs from 29 consoles and computers in the same library. RetroArch, DuckStation, PCSX2, Dolphin and more are installed when a game first starts.</sub>
+      <sub>Your ROMs from 30 consoles and computers in the same library, with box art and RetroAchievements. RetroArch, DuckStation, PCSX2, Dolphin and more are installed when a game first starts.</sub>
     </td>
     <td valign="top">
       <img src="docs/icons/screenshots.svg" width="44"><br>
@@ -214,9 +214,26 @@ Gamescope, play time, clips and console mode's quick menu all work.
 The first start of a game gets its emulator: Arkor downloads the project's own Linux build
 (AppImages are unpacked, so FUSE is not needed), else installs it from Flathub for you only,
 else from your distribution; a system library it lacks is installed first. An emulator you
-already have is used as it is. RetroArch's
-cores come from the libretro buildbot, checked before use. Each game can pick another
-emulator; **Tools → Emulators** in the sidebar lists them all, and installs or removes them.
+already have is used as it is. RetroArch's cores come from the libretro buildbot, checked
+before use. Each game can pick another emulator.
+
+**Tools → Emulators** in the sidebar holds the rest:
+
+- **Open** an emulator without a game, to set its controls and graphics up (in console mode:
+  A on its line).
+- **Options** per emulator: full screen, vertical sync, FPS, graphics driver…; the **version**
+  games use (the three newest stay side by side) and installing an older one.
+- **ROM folders** you added are read again at start and every few minutes: new games join
+  the library by themselves, a game you removed stays out.
+- **Covers**: libretro's box art by each ROM's name, or LaunchBox's box of the game's region
+  (its games database, about 100 MB once a week, when you switch it on).
+- **RetroAchievements**: sign in with your username and Web API key (kept encrypted) to see
+  each game's achievements on its page (the count in console mode); type your password once
+  to sign RetroArch, PCSX2, PPSSPP and Dolphin in (it is not kept).
+- **An emulator of your own**: any program, its arguments (`{rom}` for the game) and the
+  systems it plays.
+- PlayStation 5 games through **AnyPS5** (experimental): it converts a decrypted
+  `eboot.bin` once into a program of this computer.
 
 Arkor does not download games or BIOS files. Systems that need a BIOS (PlayStation 1 and 2,
 Sega CD, Dreamcast…) find yours in **Tools → Emulators → BIOS folder**, recognised by
@@ -248,13 +265,14 @@ their contents whatever their names.
 | PlayStation 2 | PCSX2 | yes |
 | Nintendo 3DS | Azahar |  |
 | Arcade | MAME |  |
-| Wii U | Cemu |  |
-| PlayStation 3 | RPCS3 |  |
-| Xbox | xemu |  |
-| PlayStation 4 | shadPS4 |  |
+| Wii U | Cemu (experimental) |  |
+| PlayStation 3 | RPCS3 (experimental) |  |
+| Xbox | xemu (experimental) |  |
+| PlayStation 4 | shadPS4 (experimental) |  |
+| PlayStation 5 | AnyPS5 (experimental) |  |
 | Dreamcast | Flycast, RetroArch (Flycast) |  |
-| PlayStation Vita | Vita3K |  |
-| Nintendo Switch | Ryujinx |  |
+| PlayStation Vita | Vita3K (experimental) |  |
+| Nintendo Switch | Ryujinx (experimental) |  |
 | DOOM | UZDoom, GZDoom |  |
 
 </details>
@@ -363,7 +381,8 @@ running game, which every desktop allows in its own way:
 | `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
 | `arkor clip` | Saves a clip of the running game (bind it to a key) |
 | `arkor roms [--add] [folder…]` | Games in ROM folders (the usual ones without a folder); `--add` adds them |
-| `arkor emulators [install \| remove <id> \| core <core> \| bios]` | Emulators: what is installed, getting them, BIOS status |
+| `arkor emulators [install \| remove \| open <id> \| core <core> \| bios \| launchbox]` | Emulators: what is installed, getting and opening them, BIOS status, LaunchBox |
+| `arkor achievements [login <user> \| logout \| sign-in-emulators \| <id>]` | RetroAchievements of emulator games |
 | `arkor nxm <link>` | Installs a mod from Nexus Mods' "Mod Manager Download" |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor system` | A report of the computer, the desktop and Arkor's tools |
@@ -399,7 +418,9 @@ packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-La
 and places mods for Arkor), [Ludusavi's manifest](https://github.com/mtkennerly/ludusavi-manifest)
 (which tells where games keep their saves, from [PCGamingWiki](https://www.pcgamingwiki.com)),
 [Irori](https://github.com/irori-app/irori) (whose systems catalog, emulator definitions, BIOS
-index and ROM scanning Arkor's emulator support is built on), [RetroArch](https://www.retroarch.com)
+index, ROM scanning, LaunchBox and RetroAchievements code Arkor's emulator support is built on),
+[LaunchBox Games Database](https://gamesdb.launchbox-app.com), [libretro-thumbnails](https://github.com/libretro-thumbnails),
+[RetroAchievements](https://retroachievements.org), [AnyPS5](https://github.com/boykopovar/AnyPS5), [RetroArch](https://www.retroarch.com)
 and the libretro buildbot, the emulators themselves, and the store helpers
 [legendary](https://github.com/legendary-gl/legendary), [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
 and [nile](https://github.com/imLinguin/nile),
