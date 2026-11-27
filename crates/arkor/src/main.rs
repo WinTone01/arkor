@@ -13,6 +13,7 @@ usage:
   arkor --console                         open in console mode (full screen, gamepad)
   arkor open <global|add|stores|protons|id>
                                           open the window on a page
+  arkor nxm <nxm://link>                  install a mod from Nexus Mods (Mod Manager Download)
   arkor list                              print the library
   arkor system                            machine, desktop and tool report (for bug reports)
   arkor detect                            print games found in other launchers
@@ -66,6 +67,14 @@ fn main() -> anyhow::Result<()> {
         Some("--tray") => ui::run(None, true),
         Some("--console") => ui::run(Some("console".into()), false),
         Some("open") => ui::run(Some(arg(&args, 1)?.clone()), false),
+        // The browser's "Mod Manager Download" on Nexus Mods: the running Arkor takes it.
+        Some("nxm") => {
+            arkor_launch::mods::nexus::hand_over(arg(&args, 1)?)?;
+            if arkor_launch::mods::nexus::window_running() {
+                return Ok(());
+            }
+            ui::run(None, false)
+        }
         Some("list") => list(),
         Some("system") => {
             print!("{}", arkor_launch::tools::diagnostics());

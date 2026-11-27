@@ -236,6 +236,49 @@ fn take_from(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Whether links wait to be taken.
+pub fn has_handed() -> bool {
+    inbox()
+        .ok()
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .is_some_and(|mut r| {
+            r.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "nxm")))
+        })
+}
+
+fn lock_path() -> Option<PathBuf> {
+    Some(
+        dirs::runtime_dir()
+            .or_else(dirs::cache_dir)?
+            .join("arkor-ui.lock"),
+    )
+}
+
+/// Held by the Arkor that has the window (or the tray icon) for as long as it runs, so
+/// `arkor nxm` knows a link will be taken. `None` when another one holds it.
+pub fn hold_window_lock() -> Option<std::fs::File> {
+    let path = lock_path()?;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .ok()?;
+    f.try_lock().ok()?;
+    Some(f)
+}
+
+/// Whether an Arkor with a window (or the tray icon) runs now.
+pub fn window_running() -> bool {
+    let Some(path) = lock_path() else {
+        return false;
+    };
+    let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) else {
+        return false;
+    };
+    matches!(f.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
 /// The desktop entry that hands `nxm://` links to Arkor.
 const HANDLER: &str = "arkor-nxm.desktop";
 

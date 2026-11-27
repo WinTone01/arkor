@@ -734,6 +734,8 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
     // Logins an older Arkor kept as plain files.
     std::thread::spawn(arkor_launch::shops::vault::settle_all);
     let global = Global::load_or_import().unwrap_or_default();
+    // Tells `arkor nxm` that this Arkor takes Nexus links (held until it quits).
+    let _window_lock = arkor_launch::mods::nexus::hold_window_lock();
     gpui::application()
         .with_assets(icons::ArkorAssets)
         .run(move |cx: &mut App| {
@@ -832,6 +834,14 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
                 cx.spawn(async move |cx| {
                     loop {
                         executor.timer(std::time::Duration::from_millis(250)).await;
+                        // A Nexus link while only the tray icon is there: the window takes it.
+                        if arkor_launch::mods::nexus::has_handed() {
+                            cx.update(|cx| {
+                                if cx.windows().is_empty() {
+                                    *main.borrow_mut() = open_main(None, cx);
+                                }
+                            });
+                        }
                         while let Ok(cmd) = rx.try_recv() {
                             cx.update(|cx| match cmd {
                                 tray::TrayCmd::Show => match cx.windows().into_iter().next() {
@@ -961,6 +971,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                     lib.start_console_intro();
                 }
                 lib.watch_progress(cx);
+                lib.watch_nxm(cx);
                 lib.startup_updates(cx);
                 lib
             })

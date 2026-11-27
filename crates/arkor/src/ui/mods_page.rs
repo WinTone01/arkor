@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use arkor_core::GameId;
+use arkor_launch::mods::nexus::{self, Account, Login};
 use arkor_launch::mods::{self, Answer, Choices, Installed, Link, Mod, amethyst, link};
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, PathPromptOptions, div, prelude::*, px};
@@ -28,6 +29,8 @@ pub(super) enum Known {
     Linked {
         link: Link,
         mods: Vec<Mod>,
+        /// The game's name on Nexus Mods, when its mods come from there.
+        domain: Option<String>,
     },
     Failed(String),
 }
@@ -51,6 +54,12 @@ pub(super) struct ModsUi {
     asking: Option<Asking>,
     /// The mod asked about before it is removed.
     removing: Option<String>,
+    /// The Nexus Mods account (`None` until asked; `Some(None)`: nobody signed in).
+    account: Option<Option<Account>>,
+    /// Whether the browser hands Nexus links to Arkor (asked once).
+    handler: Option<bool>,
+    /// A login waits in the browser.
+    signing_in: bool,
 }
 
 impl Library {
@@ -71,16 +80,26 @@ impl Library {
         self.mods.game = Some(id.to_string());
         self.mods.known = Known::Reading;
         let prefixes = self.global.prefixes_dir();
+        let ask_account = self.mods.account.is_none();
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let key = id.to_string();
-            let known = bg
+            let (known, account, handler) = bg
                 .spawn(async move {
-                    amethyst::with(|c| {
+                    let mut account = None;
+                    let known = amethyst::with(|c| {
                         if let Some(link) = link::load(&id) {
+                            let domain = link::games(c)?
+                                .into_iter()
+                                .find(|g| g.id == link.game)
+                                .and_then(|g| g.nexus.into_iter().next());
+                            if ask_account && domain.is_some() {
+                                account = nexus::account(c).ok();
+                            }
                             return Ok(Known::Linked {
                                 mods: mods::list(c, &link)?,
                                 link,
+                                domain,
                             });
                         }
                         let place = link::place(&game, &prefixes);
@@ -93,10 +112,18 @@ impl Library {
                         .cloned();
                         Ok(Known::Unlinked { fits, place })
                     })
-                    .unwrap_or_else(|e| Known::Failed(format!("{e:#}")))
+                    .unwrap_or_else(|e| Known::Failed(format!("{e:#}")));
+                    let handler = ask_account.then(nexus::is_handler);
+                    (known, account, handler)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if account.is_some() {
+                    this.mods.account = account;
+                }
+                if handler.is_some() {
+                    this.mods.handler = handler;
+                }
                 if this.mods.game.as_deref() == Some(key.as_str()) {
                     this.mods.known = known;
                     cx.notify();
@@ -210,6 +237,358 @@ impl Library {
         .detach();
     }
 
+    /// Signs in to Nexus Mods in the browser; waits (up to the five minutes Nexus allows)
+    /// until the login there ends.
+    fn mods_sign_in(&mut self, cx: &mut Context<Self>) {
+        if self.mods.signing_in {
+            return;
+        }
+        self.mods.signing_in = true;
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let started = bg.spawn(async { amethyst::with(nexus::login_start) }).await;
+            let mut outcome = match started {
+                Ok(page) => {
+                    let _ = std::process::Command::new("xdg-open").arg(&page).spawn();
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            };
+            for _ in 0..330 {
+                if outcome.is_some() {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_secs(1)).await;
+                let stopped = this
+                    .update(cx, |this, _| !this.mods.signing_in)
+                    .unwrap_or(true);
+                if stopped {
+                    let _ = bg
+                        .spawn(async { amethyst::with(nexus::login_cancel) })
+                        .await;
+                    return;
+                }
+                match bg.spawn(async { amethyst::with(nexus::login_state) }).await {
+                    Ok(Login::Done) => outcome = Some(Ok(())),
+                    Ok(Login::Failed(why)) => outcome = Some(Err(anyhow::anyhow!(why))),
+                    Ok(_) => {}
+                    Err(e) => outcome = Some(Err(e)),
+                }
+            }
+            let account = bg.spawn(async { amethyst::with(nexus::account) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.mods.signing_in = false;
+                match outcome {
+                    Some(Err(e)) => this.status = Some(format!("{e:#}").into()),
+                    None => {
+                        this.status = Some(
+                            this.tr("The login was not finished.", "Giriş tamamlanmadı.")
+                                .into(),
+                        )
+                    }
+                    Some(Ok(())) => {}
+                }
+                this.mods.account = Some(account.ok().flatten());
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn mods_sign_out(&mut self, cx: &mut Context<Self>) {
+        self.mods.account = Some(None);
+        self.mods_do(
+            self.tr("Signing out…", "Çıkış yapılıyor…"),
+            cx,
+            nexus::logout,
+        );
+    }
+
+    fn mods_check_updates(&mut self, link: Link, cx: &mut Context<Self>) {
+        if self.mods.busy.is_some() {
+            return;
+        }
+        self.mods.busy = Some(self.tr("Checking…", "Denetleniyor…"));
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move { amethyst::with(|c| nexus::check_updates(c, &link)) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.mods.busy = None;
+                this.status = Some(match result {
+                    Ok(0) => this
+                        .tr("Every mod is up to date.", "Bütün modlar güncel.")
+                        .into(),
+                    Ok(n) => format!(
+                        "{n} {}",
+                        this.tr("mods have a newer version.", "modun yeni sürümü var.")
+                    )
+                    .into(),
+                    Err(e) => format!("{e:#}").into(),
+                });
+                this.mods_load(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Takes the Nexus links `arkor nxm` left, every second, for as long as the window is open.
+    pub(super) fn watch_nxm(&mut self, cx: &mut Context<Self>) {
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let links = bg.spawn(async { nexus::take_handed() }).await;
+                for url in links {
+                    if this.update(cx, |this, cx| this.mods_nxm(url, cx)).is_err() {
+                        return;
+                    }
+                }
+                bg.timer(std::time::Duration::from_secs(1)).await;
+            }
+        })
+        .detach();
+    }
+
+    /// A mod from Nexus Mods' "Mod Manager Download": downloaded and installed for the
+    /// linked game it belongs to (the one on screen first), whose Mods tab then shows it.
+    fn mods_nxm(&mut self, url: String, cx: &mut Context<Self>) {
+        let Some(nx) = nexus::parse_nxm(&url) else {
+            return;
+        };
+        let selected = self.selected_id();
+        let mut linked: Vec<(GameId, Link)> = self
+            .games
+            .iter()
+            .filter_map(|g| link::load(&g.id).map(|l| (g.id.clone(), l)))
+            .collect();
+        linked.sort_by_key(|(id, _)| Some(id) != selected.as_ref());
+        self.status = Some(
+            format!(
+                "{} {}…",
+                self.tr(
+                    "Downloading from Nexus Mods:",
+                    "Nexus Mods'tan indiriliyor:"
+                ),
+                nx.domain
+            )
+            .into(),
+        );
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move {
+                    amethyst::with(|c| {
+                        let games = link::games(c)?;
+                        let Some((id, link)) = linked.into_iter().find(|(_, l)| {
+                            games
+                                .iter()
+                                .any(|g| g.id == l.game && g.nexus.contains(&nx.domain))
+                        }) else {
+                            anyhow::bail!(
+                                "no game in Arkor uses mods from {} yet: open its Mods tab first",
+                                nx.domain
+                            );
+                        };
+                        let archive = nexus::download(c, &link, &url)?;
+                        let installed = mods::install(c, &link, &archive, None)?;
+                        Ok((id, link, archive, installed))
+                    })
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok((id, _link, archive, installed)) => {
+                        if !this.console.on {
+                            this.select_game(&id, cx);
+                            this.game_tab = super::features::GameTab::Mods;
+                        }
+                        this.mods.game = None;
+                        match installed {
+                            Installed::Done(name) => {
+                                this.status = Some(
+                                    format!("{} {name}", this.tr("Installed:", "Kuruldu:")).into(),
+                                );
+                            }
+                            Installed::Asks(choices) => {
+                                this.mods.asking = Some(Asking {
+                                    archive,
+                                    picked: choices.defaults(),
+                                    choices,
+                                });
+                                this.status = None;
+                            }
+                        }
+                    }
+                    Err(e) => this.status = Some(this.nexus_error(&e).into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// What went wrong with Nexus Mods, in the user's words where Amethyst's are known.
+    fn nexus_error(&self, e: &anyhow::Error) -> String {
+        let name = e
+            .downcast_ref::<mods::rpc::RpcError>()
+            .map(|r| r.name.as_str())
+            .unwrap_or_default();
+        match name {
+            "nexus_not_authenticated" | "nexus_auth_expired" => self
+                .tr(
+                    "Sign in to Nexus Mods first: the game's Mods tab has the button.",
+                    "Önce Nexus Mods'a giriş yap: düğmesi oyunun Modlar sekmesinde.",
+                )
+                .into(),
+            "nexus_download_link_expired" => self
+                .tr(
+                    "That download link has expired: press \"Mod Manager Download\" again.",
+                    "İndirme bağlantısının süresi dolmuş: \"Mod Manager Download\" düğmesine yeniden bas.",
+                )
+                .into(),
+            "nexus_premium_required" => self
+                .tr(
+                    "Nexus Mods only lets Premium accounts download this way.",
+                    "Nexus Mods bu yoldan indirmeye yalnızca Premium hesaplarda izin veriyor.",
+                )
+                .into(),
+            "nexus_rate_limited" => self
+                .tr(
+                    "Nexus Mods asks to wait a little before the next request.",
+                    "Nexus Mods bir sonraki istekten önce biraz beklemeyi istiyor.",
+                )
+                .into(),
+            _ => format!("{e:#}"),
+        }
+    }
+
+    fn render_nexus(&self, domain: &str, link: &Link, cx: &mut Context<Self>) -> Div {
+        let account = self.mods.account.clone().flatten();
+        let who = match (&account, self.mods.signing_in) {
+            (_, true) => self
+                .tr(
+                    "Finish the login in your browser…",
+                    "Girişi tarayıcında tamamla…",
+                )
+                .to_string(),
+            (Some(a), _) => format!(
+                "{} · {}",
+                a.name,
+                if a.premium {
+                    "Premium"
+                } else {
+                    self.tr("free account", "ücretsiz hesap")
+                }
+            ),
+            (None, _) => self.tr("not signed in", "giriş yapılmadı").to_string(),
+        };
+        let hint = match &account {
+            Some(a) if !a.premium => self.tr(
+                "On a mod's page, press \"Mod Manager Download\": Arkor downloads and installs it here.",
+                "Bir modun sayfasında \"Mod Manager Download\" düğmesine bas: Arkor indirip buraya kurar.",
+            ),
+            Some(_) => self.tr(
+                "\"Mod Manager Download\" on a mod's page installs it here.",
+                "Bir modun sayfasındaki \"Mod Manager Download\" onu buraya kurar.",
+            ),
+            None => self.tr(
+                "Sign in to download mods from Nexus Mods and to see their updates.",
+                "Nexus Mods'tan mod indirmek ve güncellemelerini görmek için giriş yap.",
+            ),
+        };
+        let page = nexus::mods_page(domain);
+        let mut buttons = div().flex().flex_wrap().gap_2();
+        buttons = match (&account, self.mods.signing_in) {
+            (_, true) => buttons.child(
+                style::button("nexus-cancel", self.tr("Cancel", "Vazgeç"), false).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.mods.signing_in = false;
+                        cx.notify();
+                    }),
+                ),
+            ),
+            (None, _) => buttons.child(
+                style::button("nexus-login", self.tr("Sign in", "Giriş yap"), true).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.mods_sign_in(cx);
+                        cx.notify();
+                    }),
+                ),
+            ),
+            (Some(_), _) => {
+                let link = link.clone();
+                buttons
+                    .child(
+                        style::button("nexus-find", self.tr("Find mods", "Mod bul"), true)
+                            .child(style::icon("external-link", 13., pal::on_accent()))
+                            .on_click(move |_, _, _| {
+                                let _ = std::process::Command::new("xdg-open").arg(&page).spawn();
+                            }),
+                    )
+                    .child(
+                        style::button(
+                            "nexus-updates",
+                            self.tr("Check for updates", "Güncellemeleri denetle"),
+                            false,
+                        )
+                        .child(style::icon("refresh-cw", 13., pal::muted()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.mods_check_updates(link.clone(), cx);
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        style::button("nexus-logout", self.tr("Sign out", "Çıkış"), false)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mods_sign_out(cx);
+                                cx.notify();
+                            })),
+                    )
+            }
+        };
+        let mut out = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(pal::border())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(style::icon("globe", 14., pal::muted()))
+                    .child(div().text_sm().child("Nexus Mods"))
+                    .child(div().text_sm().text_color(pal::muted()).child(who)),
+            )
+            .child(widgets::label(hint))
+            .child(buttons);
+        if account.is_some() && self.mods.handler == Some(false) {
+            out = out.child(widgets::setting_row(
+                self.tr("Open Nexus links in Arkor", "Nexus bağlantılarını Arkor açsın"),
+                self.tr(
+                    "Your browser then hands \"Mod Manager Download\" to Arkor instead of another mod manager.",
+                    "Tarayıcın \"Mod Manager Download\" bağlantılarını başka bir mod yöneticisi yerine Arkor'a verir.",
+                ),
+                style::button("nexus-handler", self.tr("Set", "Ayarla"), false).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        match nexus::become_handler() {
+                            Ok(()) => this.mods.handler = Some(true),
+                            Err(e) => this.status = Some(format!("{e:#}").into()),
+                        }
+                        cx.notify();
+                    }),
+                ),
+            ));
+        }
+        out
+    }
+
     pub(super) fn render_mods(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let id = self.selected_id()?;
         if self.mods.game.as_deref() != Some(id.to_string().as_str()) {
@@ -243,7 +622,10 @@ impl Library {
             Known::Unlinked { fits, place } => {
                 card = card.child(self.render_mods_unlinked(fits, place, cx));
             }
-            Known::Linked { link, mods } => {
+            Known::Linked { link, mods, domain } => {
+                if let Some(domain) = &domain {
+                    card = card.child(self.render_nexus(domain, &link, cx));
+                }
                 card = card.child(self.render_mods_list(link, mods, running, cx));
             }
         }
