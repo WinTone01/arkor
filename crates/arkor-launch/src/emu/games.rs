@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_games_and_skips_systems_without_an_emulator() {
+    fn finds_games_of_every_system() {
         let root = super::super::test_root("games-find");
         let roms = root.join("roms");
         for (dir, file) in [
@@ -154,7 +154,12 @@ mod tests {
             .collect();
         assert_eq!(
             titles,
-            [("snes", "Chrono Trigger"), ("gba", "Metroid Fusion")]
+            [
+                ("snes", "Chrono Trigger"),
+                ("gba", "Metroid Fusion"),
+                // AnyPS5 (experimental) converts PlayStation 5 games.
+                ("ps5", "PPSA00001")
+            ]
         );
         assert!(found.iter().all(|f| !f.in_library));
         assert_eq!(

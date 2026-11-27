@@ -146,6 +146,22 @@ pub fn command(
         }
         .into());
     }
+    // A converter turns the game into a program of this computer, which then runs as it is.
+    if m.kind == EngineKind::Relinker {
+        let out = super::relink::prepare(&m, installation, game)?;
+        if super::relink::udmabuf_denied() {
+            eprintln!(
+                "arkor: /dev/udmabuf is closed to this user; {} games may run slowly",
+                m.name
+            );
+        }
+        return Ok(Command {
+            argv: vec![out.program.display().to_string()],
+            env: BTreeMap::new(),
+            cwd: out.dir,
+            emulator: m.name.clone(),
+        });
+    }
     let values = option_values(&m, settings);
     build(&Input {
         manifest: &m,

@@ -32,6 +32,7 @@ pub mod manifest;
 pub mod names;
 pub mod open;
 pub mod ra;
+pub mod relink;
 pub mod retroarch;
 pub mod rom_sources;
 pub mod scan;
@@ -82,6 +83,7 @@ pub const BUILT_IN: &[(&str, &str)] = &[
     ("flycast", include_str!("../../assets/emu/flycast.json")),
     ("vita3k", include_str!("../../assets/emu/vita3k.json")),
     ("ryujinx", include_str!("../../assets/emu/ryujinx.json")),
+    ("anyps5", include_str!("../../assets/emu/anyps5.json")),
 ];
 
 /// An emulator choice as stored in settings: `duckstation`, or `retroarch:<core>` for a
@@ -426,11 +428,6 @@ mod tests {
     #[test]
     fn every_system_engine_exists() {
         for system in systems::all() {
-            // PlayStation 5 games need AnyPS5's converter, which Arkor does not offer.
-            if system.id == "ps5" {
-                assert!(choices_for("ps5").is_empty());
-                continue;
-            }
             for e in &system.engines {
                 let r = EngineRef::parse(e).unwrap();
                 let m = engine(&r.engine).unwrap_or_else(|| panic!("{}: no {e}", system.id));

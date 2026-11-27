@@ -1258,7 +1258,10 @@ impl Library {
             let id = m.id.clone();
             let installed = !discovery::find(m).is_empty();
             let ours = install::arkor_installed(&m.id);
-            let title = format!("{} · {}", m.name, self.emu_systems_short(m));
+            let mut title = format!("{} · {}", m.name, self.emu_systems_short(m));
+            if m.experimental {
+                title.push_str(self.tr(" · experimental", " · deneysel"));
+            }
             let hint = state_of(self, m);
             let mut actions = div().flex().gap_1();
             if installed && emu::open::can_open(&m.id) {

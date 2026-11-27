@@ -235,6 +235,29 @@ pub fn locate_program(dir: &Path, names: &[String]) -> Option<PathBuf> {
     None
 }
 
+/// The folder named `name` in `dir` or up to two levels down.
+pub fn locate_dir(dir: &Path, name: &str) -> Option<PathBuf> {
+    let mut level = vec![dir.to_path_buf()];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for d in &level {
+            if d.join(name).is_dir() {
+                return Some(d.join(name));
+            }
+            next.extend(
+                std::fs::read_dir(d)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    .map(|e| e.path()),
+            );
+        }
+        level = next;
+    }
+    None
+}
+
 /// Compares versions by their numeric parts (`1.21.0` < `1.22`, `2025-01-02` <
 /// `2025-10-01`), then as text.
 pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
