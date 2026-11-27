@@ -2382,16 +2382,17 @@ impl Library {
                 .is_some_and(|l| l.steam.is_some() || steam(&l.id))
     }
 
-    /// While console mode is on (KDE): Steam's own windows are put away whenever no game
-    /// runs, so nothing of Steam stays over the console.
+    /// While console mode is on: Steam is told what the pad's middle button does, and (KDE)
+    /// its own windows are put away whenever no game runs, so nothing of Steam stays over
+    /// the console.
     fn guard_steam(&mut self, cx: &mut Context<Self>) {
-        if cfg!(test) || self.console.guarding || !super::kwin::available() {
+        if cfg!(test) || self.console.guarding {
             return;
         }
         self.console.guarding = true;
         cx.on_app_quit(|_, cx| {
             cx.background_executor()
-                .spawn(async { super::kwin::unguard() })
+                .spawn(async { super::desk::unguard() })
         })
         .detach();
         let bg = cx.background_executor().clone();
@@ -2445,14 +2446,14 @@ impl Library {
                     }
                 }
                 let (console, guard) = go.unwrap_or((false, false));
-                let guard = console && guard;
+                let guard = console && guard && super::desk::guards_steam();
                 if guard != on {
                     on = guard;
                     bg.spawn(async move {
                         if on {
-                            super::kwin::guard()
+                            super::desk::guard()
                         } else {
-                            super::kwin::unguard()
+                            super::desk::unguard()
                         }
                     })
                     .await;
@@ -3180,7 +3181,7 @@ impl Library {
         let bg = cx.background_executor().clone();
         bg.spawn(async move {
             if !cfg!(test) {
-                super::kwin::show_steam();
+                super::desk::show_steam();
                 if let Some(page) = page {
                     let _ = arkor_launch::steam_link::open_url(page);
                 }

@@ -973,6 +973,10 @@ impl Library {
     pub(super) fn setting_rows(&self) -> Vec<Row> {
         let mut rows: Vec<Row> = AppCat::ALL
             .into_iter()
+            // Screens are set through KDE's tool; on other desktops their own settings do it.
+            .filter(|c| {
+                *c != AppCat::Display || cfg!(test) || arkor_launch::system::has("kscreen-doctor")
+            })
             .map(|c| {
                 let (icon, title) = self.app_cat_title(c);
                 Row::new(

@@ -196,41 +196,28 @@ pub fn download(b: Bundle) -> anyhow::Result<(String, PathBuf)> {
     Ok((version, dir))
 }
 
-/// The first terminal emulator found, with the flag that runs a command after it.
-fn terminal() -> Option<(&'static str, &'static [&'static str])> {
-    const TERMINALS: [(&str, &[&str]); 8] = [
-        ("konsole", &["-e"]),
-        ("gnome-terminal", &["--"]),
-        ("kgx", &["--"]),
-        ("ptyxis", &["--"]),
-        ("alacritty", &["-e"]),
-        ("kitty", &[]),
-        ("foot", &[]),
-        ("xterm", &["-e"]),
-    ];
-    let path = std::env::var_os("PATH")?;
-    TERMINALS
-        .into_iter()
-        .find(|(bin, _)| std::env::split_paths(&path).any(|d| d.join(bin).is_file()))
-}
-
 /// Runs `script args…` with bash in a terminal window (kept open until Enter is pressed), so
 /// the user can read and answer what it asks.
 fn run_in_terminal(script: &Path, args: &[&Path]) -> anyhow::Result<()> {
-    let (term, flag) = terminal()
-        .context("no terminal emulator found (install konsole, gnome-terminal or xterm)")?;
-    let mut line = format!("bash {}", quote(&script.display().to_string()));
+    let dir = quote(
+        &script
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .display()
+            .to_string(),
+    );
+    let mut line = format!("cd {dir} && bash {}", quote(&script.display().to_string()));
     for a in args {
         line.push(' ');
         line.push_str(&quote(&a.display().to_string()));
     }
     line.push_str("; echo; read -r -p 'Press Enter to close this window… ' _");
-    Command::new(term)
-        .args(flag)
-        .args(["bash", "-c", &line])
-        .current_dir(script.parent().unwrap_or(Path::new("/")))
+    let argv = crate::tools::terminal_command(&line)
+        .context("no terminal emulator found (install konsole, ptyxis or xterm)")?;
+    Command::new(&argv[0])
+        .args(&argv[1..])
         .spawn()
-        .with_context(|| format!("starting {term}"))?;
+        .with_context(|| format!("starting {}", argv[0]))?;
     Ok(())
 }
 

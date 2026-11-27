@@ -706,15 +706,15 @@ impl Library {
         };
         let pid = child.id();
         l.mode = LoginMode::Window(pid);
-        // KWin may keep a window that asked for nothing behind the one in front (a game):
+        // The desktop may keep a window that asked for nothing behind the one in front (a game):
         // it is brought forward, a few times while it appears.
-        if console && !cfg!(test) && super::kwin::available() {
+        if console && !cfg!(test) && super::desk::available() {
             let bg = cx.background_executor().clone();
             cx.background_executor()
                 .spawn(async move {
                     for wait in [250, 700, 1500] {
                         bg.timer(Duration::from_millis(wait)).await;
-                        super::kwin::show_process(pid);
+                        super::desk::show_process(pid);
                     }
                 })
                 .detach();

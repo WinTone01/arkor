@@ -74,8 +74,45 @@ pub fn in_gamescope(pids: &[u32]) -> bool {
     })
 }
 
-/// Saves what is on the screen into `~/Pictures/Arkor` (KDE's Spectacle). Blocking.
+/// The program that saves the screen here, and how it is told where (the file comes last).
+fn shot_tool() -> Option<(&'static str, &'static [&'static str])> {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_uppercase();
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    // The desktop's own one first; then what works on the session's kind of screen.
+    let mut tools: Vec<(&'static str, &'static [&'static str])> = Vec::new();
+    if desktop.contains("KDE") {
+        tools.push(("spectacle", &["-b", "-n", "-f", "-o"]));
+    }
+    if desktop.contains("GNOME") {
+        tools.push(("gnome-screenshot", &["-f"]));
+    }
+    if wayland {
+        // wlroots desktops (Sway, Hyprland, niri, labwc…) and others with screencopy.
+        tools.push(("grim", &[]));
+    } else {
+        tools.extend([
+            ("maim", &[][..]),
+            ("scrot", &["-o"][..]),
+            ("import", &["-window", "root"][..]),
+        ]);
+    }
+    tools.extend([
+        ("spectacle", &["-b", "-n", "-f", "-o"][..]),
+        ("gnome-screenshot", &["-f"][..]),
+    ]);
+    tools.into_iter().find(|(bin, _)| crate::system::has(bin))
+}
+
+/// Whether the screen can be saved here.
+pub fn can_screenshot() -> bool {
+    shot_tool().is_some()
+}
+
+/// Saves what is on the screen into `~/Pictures/Arkor` (with the desktop's tool). Blocking.
 pub fn screenshot(name: &str) -> anyhow::Result<PathBuf> {
+    let (tool, args) = shot_tool().context("no screenshot program is installed")?;
     let dir = dirs::picture_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
         .context("no pictures folder")?
@@ -92,14 +129,14 @@ pub fn screenshot(name: &str) -> anyhow::Result<PathBuf> {
         })
         .collect();
     let file = dir.join(format!("{} {}.png", safe.trim(), arkor_core::stats::now()));
-    let status = std::process::Command::new("spectacle")
-        .args(["-b", "-n", "-f", "-o"])
+    let status = std::process::Command::new(tool)
+        .args(args)
         .arg(&file)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .context("Spectacle is not installed")?;
+        .with_context(|| format!("{tool} could not be started"))?;
     anyhow::ensure!(
         status.success() && file.is_file(),
         "the screen could not be saved"

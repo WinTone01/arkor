@@ -618,11 +618,29 @@ impl Render for Library {
                 NavAccept => Accept, NavBack => Back, NavExtra => Extra, NavSearch => Search,
                 NavPrevTab => PrevTab, NavNextTab => NextTab, NavPageUp => PageUp,
                 NavPageDown => PageDown, NavMenu => Menu);
-            return base.child(console).children(intro);
+            return base.child(console).children(intro).into_any_element();
         }
         let detail = self.render_detail(window, cx);
         let sidebar = self.render_sidebar(cx);
-        base.track_focus(&focus)
+        // Where the desktop draws no frame (GNOME): a title bar of Arkor's own, to move, size
+        // and close the window with.
+        let framed = matches!(window.window_decorations(), Decorations::Client { .. })
+            && !window.is_fullscreen();
+        let bar = framed.then(|| {
+            div().absolute().top_0().left_0().right_0().child(
+                gpui::component::TitleBar::new()
+                    .bg(gpui::transparent_black())
+                    .border_b_0()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(pal::muted())
+                            .child("Arkor"),
+                    ),
+            )
+        });
+        let page = base
+            .track_focus(&focus)
             .key_context("Arkor")
             .on_action(cx.listener(|this, _: &super::ToggleHidden, _, cx| this.toggle_hidden(cx)))
             .on_action(
@@ -650,6 +668,7 @@ impl Render for Library {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
+            .children(bar)
             .child(
                 div()
                     .absolute()
@@ -657,6 +676,7 @@ impl Render for Library {
                     .flex()
                     .p_4()
                     .gap_4()
+                    .when(framed, |d| d.top(gpui::component::TITLE_BAR_HEIGHT).pt_1())
                     .child(
                         div()
                             .h_full()
@@ -692,6 +712,14 @@ impl Render for Library {
             )
             .children(self.render_sgdb_picker(cx))
             .children(self.render_shop_windows(cx))
-            .children(intro)
+            .children(intro);
+        if framed {
+            // Its edges size the window; no shadow (a see-through window is black on NVIDIA).
+            return gpui::component::window_border()
+                .shadow_size(px(0.))
+                .child(page)
+                .into_any_element();
+        }
+        page.into_any_element()
     }
 }

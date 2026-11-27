@@ -229,6 +229,7 @@ dependencies = [
  "image",
  "ksni",
  "libc",
+ "serde_json",
  "tempfile",
  "unicode-segmentation",
 ]

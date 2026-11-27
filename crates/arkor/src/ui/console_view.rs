@@ -93,10 +93,10 @@ impl Library {
         self.console.screen_px = ((vw * scale).round() as u32, (vh * scale).round() as u32);
         if std::mem::take(&mut self.console.come_back) && !window.is_window_active() {
             window.activate_window();
-            // Over a game KWin may not let Arkor ask for itself.
-            if !self.running.is_empty() && !cfg!(test) && super::kwin::available() {
+            // Over a game the desktop may not let Arkor ask for itself.
+            if !self.running.is_empty() && !cfg!(test) && super::desk::available() {
                 cx.background_executor()
-                    .spawn(async { super::kwin::show_arkor() })
+                    .spawn(async { super::desk::show_arkor() })
                     .detach();
             }
         }
@@ -397,18 +397,20 @@ impl Library {
         } else {
             (1. - entered) * 56. * u
         };
-        let frame = self.console.quick.frame.clone();
+        // The game's own picture, soft, beside the panel: it is at hand at once.
+        let art = self.console.behind.as_ref().map(|b| b.path.clone());
         div()
             .id("quick")
             .absolute()
             .inset_0()
             .text_size(px(22. * u))
             .bg(pal::bg())
-            .children(frame.map(|p| {
+            .children(art.map(|p| {
                 div()
                     .absolute()
                     .inset_0()
-                    .child(cover_art::backdrop(p, Size::Wide, 0.).size_full())
+                    .opacity(0.55)
+                    .child(cover_art::backdrop(p, Size::Blur, 0.).size_full())
             }))
             .child(div().absolute().inset_0().bg(linear_gradient(
                 90.,

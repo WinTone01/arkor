@@ -10,7 +10,7 @@ license=('GPL-3.0-or-later')
 depends=(
   'gcc-libs' 'glibc' 'systemd-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11'
   'vulkan-icd-loader' 'wayland' 'fontconfig' 'freetype2'
-  'curl' 'tar' 'xz' 'python'
+  'curl' 'tar' 'xz' 'python' 'xdg-desktop-portal'
 )
 makedepends=('cargo' 'git' 'webkit2gtk-4.1')
 optdepends=(
@@ -21,6 +21,9 @@ optdepends=(
   'steam: Steam games'
   'vkbasalt: post-processing effects'
   'webkit2gtk-4.1: log in to Epic, GOG and Amazon inside Arkor'
+  'xdg-desktop-portal-gtk: file picker on desktops without one of their own (Hyprland, Sway…)'
+  'grim: screenshots on Sway, Hyprland, niri and other wlroots desktops'
+  'polkit: install missing packages from Arkor (needs a polkit agent on the desktop)'
 )
 # GCC LTO objects from bundled C code (SQLite, Wayland) can't be linked by Rust's linker.
 options=('!lto')

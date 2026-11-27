@@ -9,6 +9,7 @@ arkor-core.workspace = true
 arkor-stores.workspace = true
 arkor-launch.workspace = true
 anyhow.workspace = true
+serde_json.workspace = true
 dirs.workspace = true
 gpui.workspace = true
 unicode-segmentation.workspace = true

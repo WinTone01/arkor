@@ -20,6 +20,7 @@ mod console_tools;
 mod console_view;
 mod cover_art;
 mod defaults_page;
+mod desk;
 mod downloads_page;
 mod downloads_queue;
 mod enhance;

@@ -610,15 +610,29 @@ pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
     drop(transfer);
     let text = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_file(&log);
-    anyhow::ensure!(
-        status.success(),
-        "pacman failed: {}",
-        text.lines()
-            .filter(|l| l.contains("error"))
-            .collect::<Vec<_>>()
-            .join("; ")
-    );
+    anyhow::ensure!(status.success(), "{}", pacman_failure(status.code(), &text));
     Ok(())
+}
+
+/// Why a `pkexec pacman` run failed, in a line.
+fn pacman_failure(code: Option<i32>, log: &str) -> String {
+    let errors: Vec<&str> = log
+        .lines()
+        .filter(|l| l.to_lowercase().contains("error"))
+        .collect();
+    // pkexec's own answers: 126 the password was not given, 127 nothing could ask for it
+    // (no polkit agent runs on this desktop) or it was refused.
+    match code {
+        Some(126) => "the password was not given".into(),
+        Some(127) if log.contains("authentication agent") => {
+            "no password prompt is running on this desktop (start a polkit agent, e.g. \
+             polkit-gnome or hyprpolkitagent)"
+                .into()
+        }
+        Some(127) => "not allowed to install packages".into(),
+        _ if errors.is_empty() => format!("pacman failed: {}", log.trim()),
+        _ => format!("pacman failed: {}", errors.join("; ")),
+    }
 }
 
 /// An AUR helper that is installed (`paru`, `yay`…).
@@ -636,8 +650,41 @@ fn which(name: &str) -> Option<std::path::PathBuf> {
     })
 }
 
-/// A terminal that runs `bash -c script` and stays in the foreground until it ends.
-fn terminal_command(script: &str) -> Option<Vec<String>> {
+/// Terminals and how each is told to run a program: (program, desktop it belongs to, what
+/// comes before the program).
+const TERMINALS: [(&str, &str, &[&str]); 15] = [
+    ("konsole", "KDE", &["konsole", "--nofork", "-e"]),
+    ("ptyxis", "GNOME", &["ptyxis", "--new-window", "--"]),
+    ("kgx", "GNOME", &["kgx", "--"]),
+    (
+        "gnome-terminal",
+        "GNOME",
+        &["gnome-terminal", "--wait", "--"],
+    ),
+    (
+        "xfce4-terminal",
+        "XFCE",
+        &["xfce4-terminal", "--disable-server", "-x"],
+    ),
+    (
+        "mate-terminal",
+        "MATE",
+        &["mate-terminal", "--disable-factory", "-x"],
+    ),
+    ("terminator", "", &["terminator", "-x"]),
+    ("xdg-terminal-exec", "", &["xdg-terminal-exec"]),
+    ("kitty", "", &["kitty"]),
+    ("alacritty", "", &["alacritty", "-e"]),
+    ("foot", "", &["foot"]),
+    ("ghostty", "", &["ghostty", "-e"]),
+    ("wezterm", "", &["wezterm", "start", "--"]),
+    ("tilix", "", &["tilix", "-e"]),
+    ("xterm", "", &["xterm", "-e"]),
+];
+
+/// A terminal window that runs `bash -c script`: `$TERMINAL`, else the desktop's own, else
+/// the first one installed.
+pub(crate) fn terminal_command(script: &str) -> Option<Vec<String>> {
     let run = |prefix: &[&str]| -> Vec<String> {
         prefix
             .iter()
@@ -651,24 +698,53 @@ fn terminal_command(script: &str) -> Option<Vec<String>> {
     {
         return Some(run(&[t.as_str(), "-e"]));
     }
-    let known: [(&str, &[&str]); 9] = [
-        ("konsole", &["konsole", "--nofork", "-e"]),
-        ("kitty", &["kitty"]),
-        ("alacritty", &["alacritty", "-e"]),
-        ("foot", &["foot"]),
-        ("ghostty", &["ghostty", "-e"]),
-        ("wezterm", &["wezterm", "start", "--"]),
-        ("gnome-terminal", &["gnome-terminal", "--wait", "--"]),
-        (
-            "xfce4-terminal",
-            &["xfce4-terminal", "--disable-server", "-x"],
-        ),
-        ("xterm", &["xterm", "-e"]),
-    ];
-    known
-        .iter()
-        .find(|(bin, _)| which(bin).is_some())
-        .map(|(_, prefix)| run(prefix))
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_uppercase();
+    let installed = || TERMINALS.iter().filter(|(bin, ..)| which(bin).is_some());
+    installed()
+        .find(|(_, de, _)| !de.is_empty() && desktop.contains(de))
+        .or_else(|| installed().next())
+        .map(|(.., prefix)| run(prefix))
+}
+
+/// Runs `script` in a terminal window and waits until it ends, whether or not the terminal
+/// program itself waits (GNOME's do not): the script's shell is watched. Blocking.
+pub(crate) fn run_in_terminal_and_wait(script: &str) -> anyhow::Result<()> {
+    let marker = std::env::temp_dir().join(format!(
+        "arkor-term-{}-{}",
+        std::process::id(),
+        arkor_core::stats::now()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    let quoted = format!("'{}'", marker.display().to_string().replace('\'', r"'\''"));
+    let wrapped = format!("echo $$ > {quoted}; {script}");
+    let argv = terminal_command(&wrapped).ok_or_else(|| anyhow::anyhow!("no terminal found"))?;
+    let _ = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .status();
+    // The shell may only now be starting (a terminal that went on by itself).
+    let began = std::time::Instant::now();
+    let pid = loop {
+        if let Some(pid) = std::fs::read_to_string(&marker)
+            .ok()
+            .and_then(|t| t.trim().parse::<u32>().ok())
+        {
+            break Some(pid);
+        }
+        if began.elapsed() > std::time::Duration::from_secs(15) {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let _ = std::fs::remove_file(&marker);
+    if let Some(pid) = pid {
+        while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    Ok(())
 }
 
 /// The command that installs AUR `packages` with the helper (shown when no terminal is found).
@@ -689,12 +765,8 @@ pub fn install_aur(packages: &[&str]) -> anyhow::Result<()> {
     let script = format!(
         "echo 'Arkor: {command}'; echo; {command}; echo; read -n 1 -s -r -p 'Press any key to close…'"
     );
-    let argv = terminal_command(&script)
-        .ok_or_else(|| anyhow::anyhow!("no terminal found; run: {command}"))?;
-    let _ = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .stdin(std::process::Stdio::null())
-        .status();
+    run_in_terminal_and_wait(&script)
+        .map_err(|_| anyhow::anyhow!("no terminal found; run: {command}"))?;
     let missing: Vec<&str> = packages
         .iter()
         .copied()
@@ -750,5 +822,29 @@ mod download_tests {
         super::download(&format!("file://{}", src.display()), &dest).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         assert!(!dest.with_extension("part").exists());
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::*;
+
+    #[test]
+    fn says_why_pkexec_failed() {
+        let no_agent = "Error executing command as another user: No authentication agent found.";
+        assert!(pacman_failure(Some(127), no_agent).contains("polkit agent"));
+        assert_eq!(pacman_failure(Some(126), ""), "the password was not given");
+        assert_eq!(
+            pacman_failure(Some(1), "ok\nerror: target not found: x\n"),
+            "pacman failed: error: target not found: x"
+        );
+    }
+
+    #[test]
+    fn a_terminal_runs_the_script_with_bash() {
+        // Whatever is installed here: the script is its last word, run by bash.
+        if let Some(argv) = terminal_command("echo hi") {
+            assert_eq!(argv[argv.len() - 3..], ["bash", "-c", "echo hi"]);
+        }
     }
 }
