@@ -277,6 +277,7 @@ impl Library {
                             }),
                         )),
                 )
+                .child(self.render_clips(cx))
                                 .child(
                     widgets::section("Steam").child(widgets::setting_row(
                         self.tr("Control Steam", "Steam'i yönet"),

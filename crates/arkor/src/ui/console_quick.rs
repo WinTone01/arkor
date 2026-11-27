@@ -166,6 +166,7 @@ impl Library {
             Act::QuickBack => self.quick_back(window, cx),
             Act::QuickHome => self.console_open(Screen::Home, cx),
             Act::QuickShot => self.quick_shot(window, cx),
+            Act::QuickClip => self.quick_clip(window, cx),
             _ => {}
         }
         cx.notify();
@@ -298,6 +299,18 @@ impl Library {
                 Opt::PowerProfile,
                 "zap",
                 self.tr("Power profile", "Güç profili"),
+            ));
+        }
+        if arkor_launch::clips::recording() {
+            rows.push(line(
+                Act::QuickClip,
+                "clapperboard",
+                self.tr("Save a clip", "Klip kaydet"),
+                Value::Text(format!(
+                    "{} {}",
+                    self.global.clips.seconds(),
+                    self.tr("s", "sn")
+                )),
             ));
         }
         if quick::can_screenshot() {

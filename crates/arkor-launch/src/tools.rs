@@ -359,6 +359,11 @@ pub fn tool_status() -> Vec<ToolStatus> {
             layer_installed("obs_vkcapture") || layer_installed("obs-vkcapture"),
             "obs-vkcapture",
         ),
+        check(
+            "GPU Screen Recorder (clips)",
+            in_path("gpu-screen-recorder"),
+            "gpu-screen-recorder",
+        ),
         check("winetricks", in_path("winetricks"), "winetricks"),
         check("protontricks", in_path("protontricks"), "protontricks"),
         check(

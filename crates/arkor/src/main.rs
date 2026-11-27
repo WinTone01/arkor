@@ -53,6 +53,7 @@ usage:
               | places <id> | backup <id>
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
+  arkor clip                              save a clip of the running game (bind it to a key)
   arkor trouble <id>                      why a game did not start, and what helps
   arkor backup create [--with-prefixes] | restore <file>
                                           back up / restore Arkor's data";
@@ -124,6 +125,26 @@ fn main() -> anyhow::Result<()> {
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
         Some("reshade") => reshade(&args[1..]),
         Some("saves") => saves(&args[1..]),
+        // Saves the running game's last moments; said in a notification, as a key started it.
+        Some("clip") => {
+            let tr = arkor_core::Global::load_or_import()
+                .is_ok_and(|g| g.language == arkor_core::Language::Tr);
+            let (title, body) = match arkor_launch::clips::save() {
+                Ok(file) => (
+                    if tr { "Klip kaydedildi" } else { "Clip saved" },
+                    file.display().to_string(),
+                ),
+                Err(e) => (
+                    if tr { "Klip kaydedilemedi" } else { "No clip" },
+                    format!("{e:#}"),
+                ),
+            };
+            println!("{title}: {body}");
+            let _ = std::process::Command::new("notify-send")
+                .args(["-a", "Arkor", "-i", "arkor", title, &body])
+                .status();
+            Ok(())
+        }
         Some("trouble") => {
             use arkor_launch::trouble;
             let id: GameId = arg(&args, 1)?.parse()?;

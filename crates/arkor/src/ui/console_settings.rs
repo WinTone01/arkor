@@ -1062,43 +1062,47 @@ impl Library {
                     t("Start-up animation", "Giriş animasyonu"),
                 ),
             ],
-            AppCat::Games => vec![
-                line(
-                    Opt::GlobalHud,
-                    "gauge",
-                    t("MangoHud in every game", "Her oyunda MangoHud"),
-                ),
-                line(
-                    Opt::FullScreen,
-                    "maximize",
-                    t(
-                        "Keep games full screen (gamescope)",
-                        "Oyunları tam ekranda tut (gamescope)",
+            AppCat::Games => {
+                let mut rows = vec![
+                    line(
+                        Opt::GlobalHud,
+                        "gauge",
+                        t("MangoHud in every game", "Her oyunda MangoHud"),
                     ),
-                ),
-                line(
-                    Opt::CloudSaves,
-                    "cloud",
-                    t(
-                        "Saves follow the stores' clouds",
-                        "Kayıtlar mağaza bulutuyla eşitlensin",
+                    line(
+                        Opt::FullScreen,
+                        "maximize",
+                        t(
+                            "Keep games full screen (gamescope)",
+                            "Oyunları tam ekranda tut (gamescope)",
+                        ),
                     ),
-                ),
-                line(
-                    Opt::DefaultProton,
-                    "wine",
-                    t("Proton for new games", "Yeni oyunlar için Proton"),
-                ),
-                Row::new(
-                    Kind::Line,
-                    vec![Item::line(
-                        Act::Folder(super::console::FolderFor::Games),
-                        "folder",
-                        t("Games folder", "Oyun klasörü"),
-                        Value::Text(g.games_dir().display().to_string()),
-                    )],
-                ),
-            ],
+                    line(
+                        Opt::CloudSaves,
+                        "cloud",
+                        t(
+                            "Saves follow the stores' clouds",
+                            "Kayıtlar mağaza bulutuyla eşitlensin",
+                        ),
+                    ),
+                    line(
+                        Opt::DefaultProton,
+                        "wine",
+                        t("Proton for new games", "Yeni oyunlar için Proton"),
+                    ),
+                    Row::new(
+                        Kind::Line,
+                        vec![Item::line(
+                            Act::Folder(super::console::FolderFor::Games),
+                            "folder",
+                            t("Games folder", "Oyun klasörü"),
+                            Value::Text(g.games_dir().display().to_string()),
+                        )],
+                    ),
+                ];
+                rows.extend(self.clip_rows());
+                rows
+            }
             AppCat::Proton => self.console_proton_rows(),
             AppCat::Tools => self.console_program_rows(),
             AppCat::System => self.console_system_rows(),
@@ -1178,6 +1182,7 @@ impl Library {
             .or_else(|| self.quick_opt_choices(o))
             .or_else(|| self.pads_opt_choices(o))
             .or_else(|| self.idle_opt_choices(o))
+            .or_else(|| self.clips_opt_choices(o))
         {
             return Some(c);
         }
@@ -1272,6 +1277,7 @@ impl Library {
             .or_else(|| self.quick_opt_key(o))
             .or_else(|| self.pads_opt_key(o))
             .or_else(|| self.idle_opt_key(o))
+            .or_else(|| self.clips_opt_key(o))
         {
             return k;
         }
@@ -1332,7 +1338,11 @@ impl Library {
 
     /// How a setting is shown at the end of its line.
     pub(super) fn opt_value(&self, o: &Opt) -> Value {
-        if let Some(v) = self.sys_opt_value(o).or_else(|| self.quick_opt_value(o)) {
+        if let Some(v) = self
+            .sys_opt_value(o)
+            .or_else(|| self.quick_opt_value(o))
+            .or_else(|| self.clips_opt_value(o))
+        {
             return v;
         }
         let g = &self.global;
@@ -1370,6 +1380,7 @@ impl Library {
             || self.quick_opt_set(o, key)
             || self.pads_opt_set(o, key)
             || self.idle_opt_set(o, key)
+            || self.clips_opt_set(o, key)
         {
             return;
         }
@@ -1426,7 +1437,7 @@ impl Library {
 
     /// Flips a switch of Arkor's settings.
     pub(super) fn opt_toggle(&mut self, o: &Opt) {
-        if self.sys_opt_toggle(o) || self.quick_opt_toggle(o) {
+        if self.sys_opt_toggle(o) || self.quick_opt_toggle(o) || self.clips_opt_toggle(o) {
             return;
         }
         if let Some(g) = self.shops.game.as_mut() {

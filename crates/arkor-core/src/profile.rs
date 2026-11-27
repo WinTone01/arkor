@@ -394,6 +394,10 @@ pub struct Global {
     /// set, so older Arkor versions still read the file).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_save_backups: bool,
+    /// Clips of games (GPU Screen Recorder keeps the last moments while a game runs). Written
+    /// only when changed, so older Arkor versions still read the file.
+    #[serde(skip_serializing_if = "Clips::is_default")]
+    pub clips: Clips,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).
@@ -657,6 +661,30 @@ pub enum Language {
     #[default]
     En,
     Tr,
+}
+
+/// Clips of games: while a game Arkor starts runs, its last moments are kept in memory, and
+/// saved to a file (`~/Videos/Arkor/<game>/`) when asked.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clips {
+    pub enabled: bool,
+    /// How many seconds a clip holds (`None`: 60).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<u32>,
+    /// The game's sound is left out.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_sound: bool,
+}
+
+impl Clips {
+    pub fn is_default(&self) -> bool {
+        *self == Clips::default()
+    }
+
+    pub fn seconds(&self) -> u32 {
+        self.seconds.unwrap_or(60).clamp(5, 1800)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

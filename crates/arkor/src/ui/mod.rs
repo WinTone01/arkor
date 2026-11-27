@@ -6,6 +6,7 @@ mod app_icon;
 mod app_update;
 mod backdrop;
 mod bench_page;
+mod clips;
 mod console;
 mod console_idle;
 mod console_intro;

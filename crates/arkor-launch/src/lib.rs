@@ -8,6 +8,7 @@
 
 pub mod admin;
 pub mod bundles;
+pub mod clips;
 pub mod compat;
 pub mod components;
 pub mod covers;
@@ -391,6 +392,10 @@ pub fn run(
         .with_context(|| format!("failed to start `{}`", plan.argv[0]))?;
     let presence = discord
         .then(|| discord::Presence::start(&global.discord.app_id, &game_name(id), child.id()));
+    // The game's last moments, kept while it runs (`arkor clip` saves them).
+    let recorder = (global.clips.enabled && !trial.plain)
+        .then(|| clips::Recorder::start(&game_name(id), &global.clips))
+        .flatten();
 
     if let Some((path, cfg)) = &extra
         && !cfg.before_game
@@ -400,6 +405,7 @@ pub fn run(
     }
 
     let status = child.wait()?;
+    drop(recorder);
     drop(presence);
     if let Err(e) = arkor_core::stats::Stats::record(id, started, arkor_core::stats::now()) {
         eprintln!("arkor: could not save play time: {e:#}");

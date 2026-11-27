@@ -168,6 +168,10 @@ pub(super) enum Opt {
     FullScreen,
     /// Saves follow the stores' clouds.
     CloudSaves,
+    /// Clips of games: on, how long, with sound.
+    Clips,
+    ClipLength,
+    ClipSound,
     GlobalHud,
     /// One of a game's settings.
     Game(super::console_settings::GameOpt),
@@ -265,6 +269,8 @@ pub(super) enum Act {
     QuickBack,
     QuickHome,
     QuickShot,
+    /// Saves a clip of the game.
+    QuickClip,
     /// The library: adding games, and a game's own things.
     AddScan,
     AddFound(usize),
@@ -2190,6 +2196,10 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::General),
             ],
+            Some("games") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Games),
+            ],
             Some("folder") => {
                 let home = dirs::home_dir().unwrap_or_default();
                 self.console_overlay(Overlay::Folder(FolderFor::Games, home));
@@ -3466,7 +3476,9 @@ impl Library {
             | Act::BtDisconnect(_)
             | Act::BtForget(_)
             | Act::DisplayKeep => self.sys_act(act, cx),
-            Act::QuickBack | Act::QuickHome | Act::QuickShot => self.quick_act(act, window, cx),
+            Act::QuickBack | Act::QuickHome | Act::QuickShot | Act::QuickClip => {
+                self.quick_act(act, window, cx)
+            }
             Act::AddScan
             | Act::AddFound(_)
             | Act::AddCandidate(_)
