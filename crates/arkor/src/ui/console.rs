@@ -240,6 +240,9 @@ pub(super) enum Act {
     ModsUpdates,
     ModsPick(String, String, String),
     ModsAnswer(bool),
+    /// Arkor's mod browser at a page; the game's mod loader fetched.
+    ModsBrowse(String),
+    ModsGetLoader,
     /// Networks and Bluetooth devices: look for them, and one of them; a screen setting is kept.
     WifiScan,
     WifiNet(String),
@@ -2713,6 +2716,28 @@ impl Library {
     /// Input from a gamepad. It only counts while Arkor's window is in use: a game that
     /// runs must not be steering Arkor, too.
     pub(super) fn pad(&mut self, nav: Nav, window: &mut Window, cx: &mut Context<Self>) {
+        // The mod browser, like the login window below, is the console's while it is open.
+        if self.console.on
+            && let Some(pad) = self.mods.browser.as_ref().and_then(|b| b.pad.clone())
+        {
+            let word = match nav {
+                Nav::Up => "up",
+                Nav::Down => "down",
+                Nav::Left => "left",
+                Nav::Right => "right",
+                Nav::Accept => "accept",
+                Nav::Back => "back",
+                Nav::Extra => "extra",
+                Nav::Search => "search",
+                Nav::Menu | Nav::Toggle => "menu",
+                _ => return,
+            };
+            if let Ok(mut stdin) = pad.lock() {
+                use std::io::Write;
+                let _ = writeln!(stdin, "{word}");
+            }
+            return;
+        }
         // The login window is the console's for now: its buttons go there.
         if self.console.on
             && let Some(l) = &self.shops.login
@@ -3467,7 +3492,9 @@ impl Library {
             | Act::ModsSignOut
             | Act::ModsUpdates
             | Act::ModsPick(..)
-            | Act::ModsAnswer(_) => self.mods_act(act, cx),
+            | Act::ModsAnswer(_)
+            | Act::ModsBrowse(_)
+            | Act::ModsGetLoader => self.mods_act(act, cx),
             Act::SteamMoveAsk(app) => self.steam_move_ask(app, cx),
             Act::SteamMove(app, folder) => self.steam_move(app, folder, cx),
             Act::SteamMoveMenu => self.steam_move_menu(),

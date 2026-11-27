@@ -143,6 +143,8 @@ pub struct Candidate {
     /// or Thunderstore.
     pub nexus: Vec<String>,
     pub thunderstore: bool,
+    /// Its community on Thunderstore (`repo`, `valheim`…).
+    pub thunderstore_community: Option<String>,
 }
 
 /// Amethyst's games (`games.list`).
@@ -184,6 +186,7 @@ fn candidate(v: &Value) -> Option<Candidate> {
             })
             .unwrap_or_default(),
         thunderstore: v["features"]["thunderstore"].as_bool().unwrap_or(false),
+        thunderstore_community: v["thunderstore_community"].as_str().map(str::to_string),
     })
 }
 
@@ -342,6 +345,7 @@ mod tests {
             steam_app_ids: appids.iter().map(|s| s.to_string()).collect(),
             nexus: vec!["x".into()],
             thunderstore: false,
+            thunderstore_community: None,
         }
     }
 

@@ -107,7 +107,7 @@ pub(super) enum LoginMode {
 pub(super) const WEBKIT: &str = "webkit2gtk-4.1";
 
 /// Arkor's login window program, next to Arkor (or on the PATH).
-fn login_helper() -> Option<PathBuf> {
+pub(super) fn login_helper() -> Option<PathBuf> {
     let next = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(|d| d.join("arkor-login")))

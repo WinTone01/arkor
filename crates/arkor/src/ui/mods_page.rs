@@ -34,6 +34,8 @@ pub(super) enum Known {
         domain: Option<String>,
         /// The mod loader the mods need but the game folder lacks.
         loader: Option<&'static str>,
+        /// Its community on Thunderstore, when its mods come from there.
+        thunderstore: Option<String>,
     },
     Failed(String),
 }
@@ -63,6 +65,19 @@ pub(super) struct ModsUi {
     handler: Option<bool>,
     /// A login waits in the browser.
     signing_in: bool,
+    /// Arkor's mod browser, while it is open.
+    pub(super) browser: Option<Browser>,
+}
+
+/// Arkor's mod browser (`arkor-login browse`): Nexus Mods or Thunderstore in a window of
+/// Arkor's, whose downloads come to the game it was opened for.
+#[derive(Debug)]
+pub(super) struct Browser {
+    pid: u32,
+    /// Its input, for the gamepad's buttons in console mode.
+    pub(super) pad: Option<std::sync::Arc<std::sync::Mutex<std::process::ChildStdin>>>,
+    /// The game whose mods it brings.
+    game: GameId,
 }
 
 impl Library {
@@ -94,10 +109,11 @@ impl Library {
                         if let Some(mut link) = link::load(&id) {
                             // What its loaders need from Wine, kept for the next launch.
                             let _ = link::refresh(c, &id, &mut link);
-                            let domain = link::games(c)?
-                                .into_iter()
-                                .find(|g| g.id == link.game)
-                                .and_then(|g| g.nexus.into_iter().next());
+                            let found = link::games(c)?.into_iter().find(|g| g.id == link.game);
+                            let thunderstore = found
+                                .as_ref()
+                                .and_then(|g| g.thunderstore_community.clone());
+                            let domain = found.and_then(|g| g.nexus.into_iter().next());
                             if ask_account && domain.is_some() {
                                 account = nexus::account(c).ok();
                             }
@@ -108,6 +124,7 @@ impl Library {
                                 link,
                                 domain,
                                 loader,
+                                thunderstore,
                             });
                         }
                         let place = link::place(&game, &prefixes);
@@ -257,7 +274,8 @@ impl Library {
             let started = bg.spawn(async { amethyst::with(nexus::login_start) }).await;
             let mut outcome = match started {
                 Ok(page) => {
-                    let _ = std::process::Command::new("xdg-open").arg(&page).spawn();
+                    // In Arkor's own browser, whose login then stays for finding mods.
+                    let _ = this.update(cx, |this, cx| this.mods_browse(page, cx));
                     None
                 }
                 Err(e) => Some(Err(e)),
@@ -297,6 +315,186 @@ impl Library {
                     Some(Ok(())) => {}
                 }
                 this.mods.account = Some(account.ok().flatten());
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Opens Arkor's mod browser at `url` for the selected game; the user's browser when
+    /// Arkor's cannot open.
+    pub(super) fn mods_browse(&mut self, url: String, cx: &mut Context<Self>) {
+        let Some(game) = self.selected_id() else {
+            return;
+        };
+        if let Some(b) = self.mods.browser.take() {
+            // SAFETY: plain syscall on the browser's own process.
+            unsafe { libc::kill(b.pid as i32, libc::SIGTERM) };
+        }
+        let console = self.console.on;
+        let child = super::shops::login_helper().and_then(|bin| {
+            let mut cmd = std::process::Command::new(bin);
+            if console {
+                cmd.arg("--console");
+            }
+            if self.global.language == arkor_core::Language::Tr {
+                cmd.arg("--tr");
+            }
+            cmd.args(["browse", &url])
+                .stdin(if console {
+                    std::process::Stdio::piped()
+                } else {
+                    std::process::Stdio::null()
+                })
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok()
+        });
+        let Some(mut child) = child else {
+            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            return;
+        };
+        let pid = child.id();
+        if console && super::desk::available() {
+            let bg = cx.background_executor().clone();
+            cx.background_executor()
+                .spawn(async move {
+                    for wait in [250, 700, 1500] {
+                        bg.timer(std::time::Duration::from_millis(wait)).await;
+                        super::desk::show_process(pid);
+                    }
+                })
+                .detach();
+        }
+        self.mods.browser = Some(Browser {
+            pid,
+            pad: child
+                .stdin
+                .take()
+                .map(|s| std::sync::Arc::new(std::sync::Mutex::new(s))),
+            game,
+        });
+        let (tx, rx) = async_channel::unbounded::<String>();
+        let out = child.stdout.take();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            if let Some(out) = out {
+                for line in std::io::BufReader::new(out).lines() {
+                    let Ok(line) = line else { break };
+                    if tx.send_blocking(line).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = child.wait();
+        });
+        cx.spawn(async move |this, cx| {
+            while let Ok(line) = rx.recv().await {
+                if this
+                    .update(cx, |this, cx| this.mods_browser_said(line, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            // The browser is closed: Arkor's window takes the gamepad again.
+            let _ = this.update(cx, |this, cx| {
+                if this.mods.browser.as_ref().is_some_and(|b| b.pid == pid) {
+                    this.mods.browser = None;
+                    if this.console.on {
+                        this.console.come_back = true;
+                    }
+                    this.mods.game = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// A line from the mod browser: something to install for its game.
+    fn mods_browser_said(&mut self, line: String, cx: &mut Context<Self>) {
+        let Some(game) = self.mods.browser.as_ref().map(|b| b.game.clone()) else {
+            return;
+        };
+        let Some((what, rest)) = line.split_once(' ') else {
+            return;
+        };
+        match what {
+            "nxm" => self.mods_nxm(rest.to_string(), cx),
+            "ts" | "file" => {
+                let Some(link) = link::load(&game) else {
+                    return;
+                };
+                if what == "file" {
+                    self.mods_install(link, PathBuf::from(rest), None, cx);
+                    return;
+                }
+                let parts: Vec<String> = rest.split(' ').map(str::to_string).collect();
+                let [ns, name, version] = parts.as_slice() else {
+                    return;
+                };
+                self.status =
+                    Some(format!("{} {name}", self.tr("Installing:", "Kuruluyor:")).into());
+                let (ns, name, version) = (ns.clone(), name.clone(), version.clone());
+                self.mods_do(self.tr("Installing…", "Kuruluyor…"), cx, move |c| {
+                    mods::install_thunderstore(c, &link, &ns, &name, Some(&version)).map(|_| ())
+                });
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// Installs the game's mod loader (BepInEx) from Thunderstore; without a pack there,
+    /// the mod browser looks for it on Nexus Mods.
+    pub(super) fn mods_get_loader(&mut self, cx: &mut Context<Self>) {
+        let Known::Linked { link, domain, .. } = self.mods.known.clone() else {
+            return;
+        };
+        if self.mods.busy.is_some() {
+            return;
+        }
+        self.mods.busy = Some(self.tr("Installing BepInEx…", "BepInEx kuruluyor…"));
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move {
+                    amethyst::with(|c| match mods::find_bepinex(c, &link)? {
+                        Some((ns, name)) => {
+                            mods::install_thunderstore(c, &link, &ns, &name, None).map(Some)
+                        }
+                        None => Ok(None),
+                    })
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.mods.busy = None;
+                match result {
+                    Ok(Some(name)) => {
+                        this.status =
+                            Some(format!("{} {name}", this.tr("Installed:", "Kuruldu:")).into())
+                    }
+                    Ok(None) => match domain {
+                        Some(d) => this.mods_browse(
+                            format!("https://www.nexusmods.com/{d}/search/?keyword=BepInEx"),
+                            cx,
+                        ),
+                        None => {
+                            this.status = Some(
+                                this.tr(
+                                    "No BepInEx package was found for this game.",
+                                    "Bu oyun için bir BepInEx paketi bulunamadı.",
+                                )
+                                .into(),
+                            )
+                        }
+                    },
+                    Err(e) => this.status = Some(format!("{e:#}").into()),
+                }
+                this.mods_load(cx);
                 cx.notify();
             });
         })
@@ -520,23 +718,35 @@ impl Library {
                     }),
                 ),
             ),
-            (None, _) => buttons.child(
-                style::button("nexus-login", self.tr("Sign in", "Giriş yap"), true).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.mods_sign_in(cx);
-                        cx.notify();
-                    }),
-                ),
-            ),
+            (None, _) => {
+                let page = page.clone();
+                buttons
+                    .child(
+                        style::button("nexus-login", self.tr("Sign in", "Giriş yap"), true)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mods_sign_in(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        style::button("nexus-find", self.tr("Find mods", "Mod bul"), false)
+                            .child(style::icon("search", 13., pal::muted()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.mods_browse(page.clone(), cx);
+                                cx.notify();
+                            })),
+                    )
+            }
             (Some(_), _) => {
                 let link = link.clone();
                 buttons
                     .child(
                         style::button("nexus-find", self.tr("Find mods", "Mod bul"), true)
-                            .child(style::icon("external-link", 13., pal::on_accent()))
-                            .on_click(move |_, _, _| {
-                                let _ = std::process::Command::new("xdg-open").arg(&page).spawn();
-                            }),
+                            .child(style::icon("search", 13., pal::on_accent()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.mods_browse(page.clone(), cx);
+                                cx.notify();
+                            })),
                     )
                     .child(
                         style::button(
@@ -637,9 +847,10 @@ impl Library {
                 mods,
                 domain,
                 loader,
+                ..
             } => {
                 if let Some(loader) = loader {
-                    card = card.child(self.render_loader_warning(loader));
+                    card = card.child(self.render_loader_warning(loader, cx));
                 }
                 if let Some(domain) = &domain {
                     card = card.child(self.render_nexus(domain, &link, cx));
@@ -712,7 +923,8 @@ impl Library {
     }
 
     /// The mods' loader is missing: they are placed, but nothing loads them.
-    fn render_loader_warning(&self, loader: &str) -> Div {
+    fn render_loader_warning(&self, loader: &str, cx: &mut Context<Self>) -> Div {
+        let busy = self.mods.busy;
         div()
             .flex()
             .items_start()
@@ -727,7 +939,28 @@ impl Library {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(widgets::label(self.loader_text(loader))),
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(widgets::label(self.loader_text(loader)))
+                    .child(
+                        div().flex().child(match busy {
+                            Some(doing) => style::button("mods-loader", doing, true),
+                            None => style::button(
+                                "mods-loader",
+                                match self.global.language {
+                                    arkor_core::Language::Tr => format!("{loader} kur"),
+                                    _ => format!("Install {loader}"),
+                                },
+                                true,
+                            )
+                            .child(style::icon("download", 13., pal::on_accent()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mods_get_loader(cx);
+                                cx.notify();
+                            })),
+                        }),
+                    ),
             )
     }
 
@@ -739,9 +972,29 @@ impl Library {
                 "kurulu değil, bu yüzden bu modlar yüklenmiyor. Önce",
             ),
             self.tr(
-                " itself first (BepInExPack on Thunderstore or Nexus Mods).",
-                "'in kendisini kur (Thunderstore'da ya da Nexus Mods'ta BepInExPack).",
+                " itself first: the button below fetches it from Thunderstore.",
+                "'in kendisini kur: aşağıdaki düğme onu Thunderstore'dan getirir.",
             )
+        )
+    }
+
+    /// Thunderstore's page of the game's mods, in Arkor's browser.
+    fn mods_thunderstore_button(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
+        let Known::Linked {
+            thunderstore: Some(community),
+            ..
+        } = &self.mods.known
+        else {
+            return None;
+        };
+        let page = format!("https://thunderstore.io/c/{community}/");
+        Some(
+            style::button("mods-thunderstore", "Thunderstore", false)
+                .child(style::icon("search", 13., pal::muted()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.mods_browse(page.clone(), cx);
+                    cx.notify();
+                })),
         )
     }
 
@@ -786,6 +1039,7 @@ impl Library {
                             }))
                         }),
                 })
+                .children(self.mods_thunderstore_button(cx))
                 .child(self.mods_window_button(cx)),
         );
         if running {
@@ -1154,17 +1408,31 @@ impl Library {
                 mods,
                 domain,
                 loader,
+                thunderstore,
                 ..
             } => {
                 if let Some(loader) = loader {
                     rows.push(line(
-                        Act::ModsReload,
+                        Act::ModsGetLoader,
                         "circle-alert",
                         &format!("{loader} {}", self.tr("is not installed", "kurulu değil")),
-                        Shown::Text(
-                            self.tr("the mods do not load", "modlar yüklenmiyor")
-                                .to_string(),
-                        ),
+                        Shown::Text(self.tr("install it", "kurmak için seç").to_string()),
+                    ));
+                }
+                if let Some(d) = domain {
+                    rows.push(line(
+                        Act::ModsBrowse(nexus::mods_page(d)),
+                        "search",
+                        self.tr("Find mods on Nexus Mods", "Nexus Mods'ta mod bul"),
+                        Shown::None,
+                    ));
+                }
+                if let Some(community) = thunderstore {
+                    rows.push(line(
+                        Act::ModsBrowse(format!("https://thunderstore.io/c/{community}/")),
+                        "search",
+                        self.tr("Find mods on Thunderstore", "Thunderstore'da mod bul"),
+                        Shown::None,
                     ));
                 }
                 if domain.is_some() {
@@ -1339,6 +1607,7 @@ impl Library {
                 | Act::ModsAskRemove(_)
                 | Act::ModsRemove(_)
                 | Act::ModsLink
+                | Act::ModsGetLoader
                 | Act::ModsAnswer(true)
         );
         if running && changes {
@@ -1453,6 +1722,8 @@ impl Library {
                 }
             }
             Act::ModsAnswer(false) => self.mods.asking = None,
+            Act::ModsBrowse(url) => self.mods_browse(url, cx),
+            Act::ModsGetLoader => self.mods_get_loader(cx),
             _ => {}
         }
         cx.notify();
