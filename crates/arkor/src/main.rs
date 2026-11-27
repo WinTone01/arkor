@@ -56,7 +56,7 @@ usage:
   arkor clip                              save a clip of the running game (bind it to a key)
   arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
                                           folder); --add puts them in the library
-  arkor emulators [install <id> | remove <id> | core <core> | bios]
+  arkor emulators [install <id> | remove <id> | open <id> | core <core> | bios]
                                           emulators: what is installed, getting them, BIOS
   arkor trouble <id>                      why a game did not start, and what helps
   arkor backup create [--with-prefixes] | restore <file>
@@ -154,6 +154,10 @@ fn emulators(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         Some("remove") => install::remove(arg(args, 1)?),
+        Some("open") => {
+            let global = arkor_core::Global::load_or_import()?;
+            emu::open::start(arg(args, 1)?, &global.emulators)
+        }
         Some("bios") => {
             let global = arkor_core::Global::load_or_import()?;
             let dir = emu::bios_dir(&global.emulators);

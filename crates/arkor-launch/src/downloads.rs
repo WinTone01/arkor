@@ -29,8 +29,14 @@ pub fn label(key: &str) -> String {
     if let Some(name) = key.strip_prefix("latest:") {
         return name.to_string();
     }
-    if let Some(id) = key.strip_prefix("emu:") {
-        return crate::emu::engine(id).map_or(id.to_string(), |m| m.name.clone());
+    if let Some(rest) = key.strip_prefix("emu:") {
+        let (id, version) = rest.split_once('@').unwrap_or((rest, ""));
+        let name = crate::emu::engine(id).map_or(id.to_string(), |m| m.name.clone());
+        return if version.is_empty() {
+            name
+        } else {
+            format!("{name} {version}")
+        };
     }
     if let Some(core) = key.strip_prefix("core:") {
         let name = crate::emu::engine("retroarch")
@@ -70,6 +76,9 @@ pub fn run(key: &str) -> anyhow::Result<String> {
             "{name} {}",
             l.installed_version().unwrap_or_default()
         ));
+    }
+    if let Some((id, version)) = key.strip_prefix("emu:").and_then(|k| k.split_once('@')) {
+        return crate::emu::install::install_version(id, version);
     }
     if let Some(id) = key.strip_prefix("emu:") {
         return crate::emu::install::install(id);

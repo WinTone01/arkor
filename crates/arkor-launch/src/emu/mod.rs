@@ -27,6 +27,7 @@ pub mod launch;
 pub mod libs;
 pub mod manifest;
 pub mod names;
+pub mod open;
 pub mod retroarch;
 pub mod rom_sources;
 pub mod scan;

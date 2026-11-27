@@ -26,6 +26,10 @@ pub(super) struct EmuUi {
     waiting: Option<GameId>,
     /// Library packages already installed for emulators this session (never asked twice).
     tried: Vec<&'static str>,
+    /// The emulator whose options and versions are shown on the Emulators page.
+    detail: Option<String>,
+    /// The versions an emulator offers, once asked for (an error as text).
+    offered: std::collections::HashMap<String, Result<Vec<String>, String>>,
 }
 
 /// What an emulator is on this computer, in a few words.
@@ -343,6 +347,26 @@ impl Library {
         true
     }
 
+    /// Shows an emulator's options and versions on the Emulators page.
+    pub(super) fn emu_show_detail(&mut self, id: Option<&str>) {
+        self.emu.detail = id.map(str::to_string);
+    }
+
+    /// Opens an emulator on its own, to set its controls and graphics up.
+    pub(super) fn emu_open(&mut self, id: &str, cx: &mut Context<Self>) {
+        let r = emu::open::start(id, &self.global.emulators);
+        self.status = Some(match r {
+            Ok(()) => format!(
+                "{} {}",
+                emu::engine(id).map(|m| m.name.clone()).unwrap_or_default(),
+                self.tr("opened", "açıldı")
+            )
+            .into(),
+            Err(e) => format!("{e:#}").into(),
+        });
+        cx.notify();
+    }
+
     /// Removes what Arkor installed of an emulator.
     pub(super) fn emu_remove(&mut self, id: &str, cx: &mut Context<Self>) {
         let r = install::remove(id);
@@ -545,6 +569,14 @@ impl Library {
             let title = format!("{} · {}", m.name, self.emu_systems_short(m));
             let hint = state_of(self, m);
             let mut actions = div().flex().gap_1();
+            if installed && emu::open::can_open(&m.id) {
+                let id = id.clone();
+                actions = actions.child(
+                    style::button(("emu-open", ix), self.tr("Open", "Aç"), false)
+                        .child(style::icon("external-link", 13., pal::muted()))
+                        .on_click(cx.listener(move |this, _, _, cx| this.emu_open(&id, cx))),
+                );
+            }
             if !installed && install::can_get(m) {
                 let id = id.clone();
                 actions = actions.child(
@@ -558,6 +590,26 @@ impl Library {
                     ),
                 );
             }
+            let open = self.emu.detail.as_deref() == Some(m.id.as_str());
+            if installed || install::can_get(m) {
+                let id = id.clone();
+                actions = actions.child(
+                    style::button(("emu-more", ix), self.tr("Options", "Seçenekler"), false)
+                        .child(style::icon(
+                            if open { "chevron-up" } else { "settings-2" },
+                            13.,
+                            pal::muted(),
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.emu.detail = if this.emu.detail.as_deref() == Some(id.as_str()) {
+                                None
+                            } else {
+                                Some(id.clone())
+                            };
+                            cx.notify();
+                        })),
+                );
+            }
             if ours {
                 actions = actions.child(
                     style::button(("emu-remove", ix), self.tr("Remove", "Kaldır"), false)
@@ -567,8 +619,253 @@ impl Library {
             card = card
                 .child(widgets::divider())
                 .child(widgets::setting_row(title, hint, actions));
+            if open {
+                card = card.child(self.render_emu_detail(m, cx));
+            }
         }
         card
+    }
+
+    /// An option's name, shown.
+    fn emu_option_name(&self, id: &str) -> &'static str {
+        match id {
+            "fullscreen" => self.tr("Full screen", "Tam ekran"),
+            "vsync" => self.tr(
+                "Vertical sync (no tearing)",
+                "Dikey eşitleme (yırtılma olmaz)",
+            ),
+            "show_fps" => self.tr("Show FPS", "FPS'i göster"),
+            "video_driver" => self.tr("Graphics driver", "Grafik sürücüsü"),
+            "pause_in_background" => self.tr(
+                "Pause when another window is in front",
+                "Başka pencere öndeyken duraklat",
+            ),
+            "exit_on_quit" => self.tr("Close when the game ends", "Oyun bitince kapat"),
+            "aspect_ratio" => self.tr("Correct the aspect ratio", "En-boy oranını düzelt"),
+            "boot_logo" => self.tr(
+                "Show the console's start logo",
+                "Konsolun açılış logosunu göster",
+            ),
+            "onscreen_messages" => self.tr("Messages on screen", "Ekranda mesajlar"),
+            "widescreen" => self.tr("Widescreen", "Geniş ekran"),
+            _ => self.tr("Option", "Seçenek"),
+        }
+    }
+
+    /// Sets an emulator's option (`None`: back to the default).
+    fn emu_set_option(&mut self, engine: &str, option: &str, value: Option<String>) {
+        let e = &mut self.global.emulators;
+        if option == "fullscreen" {
+            e.windowed.retain(|w| w != engine);
+        }
+        let map = e.options.entry(engine.to_string()).or_default();
+        match value {
+            Some(v) => {
+                map.insert(option.to_string(), v);
+            }
+            None => {
+                map.remove(option);
+            }
+        }
+        if map.is_empty() {
+            e.options.remove(engine);
+        }
+        let r = self.global.save();
+        self.report(r);
+    }
+
+    /// Asks which versions an emulator offers (in the background).
+    fn emu_load_versions(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.emu.offered.contains_key(&id) {
+            return;
+        }
+        self.emu.offered.insert(id.clone(), Ok(Vec::new()));
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let key = id.clone();
+            let result = bg
+                .spawn(async move {
+                    let m = emu::engine(&key).ok_or_else(|| "unknown".to_string())?;
+                    install::releases(&m)
+                        .map(|r| r.into_iter().map(|r| r.version).collect::<Vec<_>>())
+                        .map_err(|e| format!("{e:#}"))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.emu.offered.insert(id, result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// An emulator's options and versions, under its row.
+    fn render_emu_detail(&mut self, m: &emu::EngineManifest, cx: &mut Context<Self>) -> Div {
+        let mut out = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .ml_4()
+            .pl_4()
+            .border_l_2()
+            .border_color(pal::accent().opacity(0.4));
+        let values = emu::launch::option_values(m, &self.global.emulators);
+        let os = emu::host::Os::current();
+        for (ox, o) in m
+            .options
+            .iter()
+            .filter(|o| o.visible_when.hosts.is_empty() || o.visible_when.hosts.contains(&os))
+            .enumerate()
+        {
+            let engine = m.id.clone();
+            let oid = o.id.clone();
+            let control: gpui::AnyElement = match o.kind {
+                emu::manifest::OptionKind::Toggle => {
+                    let on = values.get(&o.id).and_then(|v| v.as_bool()).unwrap_or(false);
+                    widgets::switch(on)
+                        .id(gpui::SharedString::from(format!(
+                            "emu-opt-{}-{}",
+                            m.id, o.id
+                        )))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.emu_set_option(&engine, &oid, Some((!on).to_string()));
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+                emu::manifest::OptionKind::Choice => {
+                    let now = values
+                        .get(&o.id)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let mut chips = div().flex().flex_wrap().gap_1();
+                    for (cx_ix, c) in o.choices.iter().enumerate() {
+                        let (engine, oid, c2) = (engine.clone(), oid.clone(), c.clone());
+                        let label = if c.is_empty() {
+                            self.tr("Automatic", "Otomatik").to_string()
+                        } else {
+                            c.clone()
+                        };
+                        chips = chips.child(
+                            widgets::chip(("emu-choice-opt", ox * 16 + cx_ix), label, *c == now)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.emu_set_option(&engine, &oid, Some(c2.clone()));
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                    chips.into_any_element()
+                }
+                emu::manifest::OptionKind::Text => div().into_any_element(),
+            };
+            out = out.child(widgets::setting_row(
+                self.emu_option_name(&o.id),
+                "",
+                control,
+            ));
+        }
+        // Versions Arkor downloaded: which one games use, and removing one.
+        let installed = install::installed_versions(&m.id);
+        if !installed.is_empty() || install::way(m) == install::Way::Download {
+            let pinned = self.global.emulators.versions.get(&m.id).cloned();
+            let mut chips = div().flex().flex_wrap().gap_1();
+            let id = m.id.clone();
+            chips = chips.child(
+                widgets::chip(
+                    "emu-ver-newest",
+                    self.tr("The newest", "En yenisi"),
+                    pinned.is_none(),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.global.emulators.versions.remove(&id);
+                    let r = this.global.save();
+                    this.report(r);
+                    cx.notify();
+                })),
+            );
+            for (vx, v) in installed.iter().enumerate() {
+                let (id, v2, v3) = (m.id.clone(), v.clone(), v.clone());
+                let id2 = m.id.clone();
+                chips = chips
+                    .child(
+                        widgets::chip(("emu-ver", vx), v.clone(), pinned.as_deref() == Some(v))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.global
+                                    .emulators
+                                    .versions
+                                    .insert(id.clone(), v2.clone());
+                                let r = this.global.save();
+                                this.report(r);
+                                cx.notify();
+                            })),
+                    )
+                    .when(installed.len() > 1, |c| {
+                        c.child(
+                            style::button(("emu-ver-rm", vx), "", false)
+                                .child(style::icon("trash-2", 12., pal::muted()))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.global.emulators.versions.get(&id2) == Some(&v3) {
+                                        this.global.emulators.versions.remove(&id2);
+                                        let _ = this.global.save();
+                                    }
+                                    let r = install::remove_version(&id2, &v3);
+                                    this.report(r);
+                                    cx.notify();
+                                })),
+                        )
+                    });
+            }
+            out = out.child(widgets::setting_row(
+                self.tr("Version games use", "Oyunların kullandığı sürüm"),
+                "",
+                chips,
+            ));
+            if install::way(m) == install::Way::Download {
+                let mut other = div().flex().flex_wrap().gap_1();
+                match self.emu.offered.get(&m.id).cloned() {
+                    None => {
+                        let id = m.id.clone();
+                        other = other.child(
+                            style::button(
+                                "emu-ver-list",
+                                self.tr("Show versions", "Sürümleri göster"),
+                                false,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.emu_load_versions(id.clone(), cx);
+                                    cx.notify();
+                                },
+                            )),
+                        );
+                    }
+                    Some(Ok(list)) if list.is_empty() => {
+                        other = other.child(widgets::label(self.tr("Looking…", "Bakılıyor…")));
+                    }
+                    Some(Ok(list)) => {
+                        for (vx, v) in list.iter().filter(|v| !installed.contains(v)).enumerate() {
+                            let key = format!("emu:{}@{v}", m.id);
+                            other = other.child(
+                                widgets::chip(("emu-ver-get", vx), v.clone(), false).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.enqueue_download(&key, cx)
+                                    }),
+                                ),
+                            );
+                        }
+                    }
+                    Some(Err(e)) => other = other.child(widgets::label(e)),
+                }
+                out = out.child(widgets::setting_row(
+                    self.tr("Install another version", "Başka bir sürüm kur"),
+                    "",
+                    other,
+                ));
+            }
+        }
+        out
     }
 
     /// The ROM part of the add page: ROM folders found, and choosing one.
@@ -686,7 +983,9 @@ impl Library {
         )];
         for (ix, m) in emu::engines().iter().enumerate() {
             let installed = !discovery::find(m).is_empty();
-            let act = if installed {
+            let act = if installed && emu::open::can_open(&m.id) {
+                Act::EmuOpen(m.id.clone())
+            } else if installed {
                 Act::Nothing
             } else if install::can_get(m) {
                 Act::Queue(format!("emu:{}", m.id))

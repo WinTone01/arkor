@@ -257,6 +257,14 @@ pub(crate) fn from_page(body: &str, pattern: &str, base: &str) -> anyhow::Result
 
 /// The newest build of `m` for this computer. Blocking (one or two requests).
 pub fn latest(m: &EngineManifest) -> anyhow::Result<Release> {
+    releases(m)?
+        .into_iter()
+        .next()
+        .with_context(|| format!("{} has no build for this computer", m.name))
+}
+
+/// The builds of `m` for this computer, newest first (a dozen at most). Blocking.
+pub fn releases(m: &EngineManifest) -> anyhow::Result<Vec<Release>> {
     let host = Host::current();
     for source in &m.sources {
         let Some(pattern) = source.asset_for(host) else {
@@ -294,8 +302,9 @@ pub fn latest(m: &EngineManifest) -> anyhow::Result<Release> {
         if !matches!(source, Source::Github { .. }) {
             list.sort_by(|a, b| compare_versions(&b.version, &a.version));
         }
-        if let Some(r) = list.into_iter().next() {
-            return Ok(r);
+        if !list.is_empty() {
+            list.truncate(12);
+            return Ok(list);
         }
     }
     bail!("{} has no build for this computer", m.name)
@@ -447,11 +456,24 @@ pub fn download(m: &EngineManifest, release: &Release) -> anyhow::Result<PathBuf
         program: dir.join(rel),
         size,
     };
+    // Older versions stay beside it (a game may need one): the newest few, and the one
+    // chosen in settings.
+    let pinned = arkor_core::Global::load_or_import()
+        .ok()
+        .and_then(|g| g.emulators.versions.get(&m.id).cloned());
     let older = discovery::update_state(|s| {
         let list = s.managed.entry(m.id.clone()).or_default();
-        let older: Vec<Managed> = list.drain(..).filter(|v| v.dir != installed.dir).collect();
+        list.retain(|v| v.dir != installed.dir);
         list.push(installed.clone());
-        older
+        list.sort_by(|a, b| compare_versions(&b.version, &a.version));
+        let mut kept = 0;
+        let (keep, drop): (Vec<Managed>, Vec<Managed>) = list.drain(..).partition(|v| {
+            let keep = kept < KEEP_VERSIONS || pinned.as_deref() == Some(v.version.as_str());
+            kept += 1;
+            keep
+        });
+        *list = keep;
+        drop
     })?;
     for v in older {
         if v.dir.starts_with(super::dirs::root()) && v.dir.exists() {
@@ -459,6 +481,56 @@ pub fn download(m: &EngineManifest, release: &Release) -> anyhow::Result<PathBuf
         }
     }
     Ok(installed.program)
+}
+
+/// Versions of an emulator kept side by side (besides the one chosen in settings).
+const KEEP_VERSIONS: usize = 3;
+
+/// Every version Arkor downloaded of `id`, newest first.
+pub fn installed_versions(id: &str) -> Vec<String> {
+    let mut v: Vec<String> = discovery::state()
+        .managed
+        .get(id)
+        .map(|l| {
+            l.iter()
+                .filter(|m| m.program.exists())
+                .map(|m| m.version.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by(|a, b| compare_versions(b, a));
+    v
+}
+
+/// Downloads `version` of `id` (beside the others). Blocking.
+pub fn install_version(id: &str, version: &str) -> anyhow::Result<String> {
+    let m = super::engine(id).with_context(|| format!("unknown emulator {id}"))?;
+    let release = releases(&m)?
+        .into_iter()
+        .find(|r| r.version == version)
+        .with_context(|| format!("{} {version} is not offered any more", m.name))?;
+    download(&m, &release)?;
+    Ok(format!("{} {version}", m.name))
+}
+
+/// Removes one downloaded version of `id`.
+pub fn remove_version(id: &str, version: &str) -> anyhow::Result<()> {
+    let gone = discovery::update_state(|s| {
+        let list = s.managed.entry(id.to_string()).or_default();
+        let gone: Vec<Managed> = list
+            .iter()
+            .filter(|v| v.version == version)
+            .cloned()
+            .collect();
+        list.retain(|v| v.version != version);
+        gone
+    })?;
+    for v in gone {
+        if v.dir.starts_with(super::dirs::root()) && v.dir.exists() {
+            arkor_core::fs_guard::remove_dir_in(&v.dir, &super::dirs::root())?;
+        }
+    }
+    Ok(())
 }
 
 /// Removes what Arkor installed of `id`: its downloads, and the Flatpak it installed.

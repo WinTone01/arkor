@@ -127,7 +127,7 @@ pub fn command(
         }
         .into());
     }
-    let installation = installs.first().context("no installation")?;
+    let installation = pick(&installs, &m, settings).context("no installation")?;
     if let Some(missing) = missing_libraries(&choice) {
         return Err(missing.into());
     }
@@ -146,10 +146,7 @@ pub fn command(
         }
         .into());
     }
-    let mut values = m.option_values(&BTreeMap::new());
-    if settings.windowed.contains(&m.id) && values.contains_key("fullscreen") {
-        values.insert("fullscreen".into(), Value::Bool(false));
-    }
+    let values = option_values(&m, settings);
     build(&Input {
         manifest: &m,
         installation,
@@ -159,6 +156,44 @@ pub fn command(
         values: &values,
         bios: &index,
     })
+}
+
+/// The installation games use: the version chosen in settings while it is there, else the
+/// best one found.
+pub fn pick<'a>(
+    installs: &'a [Installation],
+    m: &EngineManifest,
+    settings: &Emulators,
+) -> Option<&'a Installation> {
+    settings
+        .versions
+        .get(&m.id)
+        .and_then(|v| {
+            installs
+                .iter()
+                .find(|i| i.version.as_deref() == Some(v.as_str()))
+        })
+        .or_else(|| installs.first())
+}
+
+/// The emulator's option values: the user's (from settings), else the manifest's defaults.
+pub fn option_values(m: &EngineManifest, settings: &Emulators) -> BTreeMap<String, Value> {
+    use super::manifest::OptionKind;
+    let mut set = BTreeMap::new();
+    if let Some(user) = settings.options.get(&m.id) {
+        for (id, text) in user {
+            let Some(o) = m.option(id) else { continue };
+            let value = match o.kind {
+                OptionKind::Toggle => Value::Bool(text == "true"),
+                OptionKind::Choice | OptionKind::Text => Value::String(text.clone()),
+            };
+            set.insert(id.clone(), value);
+        }
+    }
+    if settings.windowed.contains(&m.id) && m.option("fullscreen").is_some() {
+        set.insert("fullscreen".into(), Value::Bool(false));
+    }
+    m.option_values(&set)
 }
 
 pub(crate) struct Input<'a> {

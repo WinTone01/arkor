@@ -705,6 +705,28 @@ pub struct Emulators {
     /// Emulators started windowed instead of full screen, by emulator id.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub windowed: Vec<String>,
+    /// Emulators' own options as set by the user (`retroarch` → `vsync` = `false`), by
+    /// emulator id; the manifest's defaults apply to the rest.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, BTreeMap<String, String>>,
+    /// The version of an emulator Arkor downloaded that games use (`None`: the newest), by
+    /// emulator id.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub versions: BTreeMap<String, String>,
+    /// ROM folders Arkor keeps reading: new games in them are added, by themselves.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rom_folders: Vec<PathBuf>,
+    /// Games removed from the library that a ROM folder holds (their files), so reading the
+    /// folder again does not bring them back.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<PathBuf>,
+    /// Box art for emulator games: libretro's thumbnails (on unless switched off).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_covers: bool,
+    /// LaunchBox's games database for box art of each game's region (off unless switched
+    /// on; it downloads about 100 MB once a week).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub launchbox: bool,
 }
 
 impl Emulators {

@@ -476,7 +476,10 @@ impl Library {
                 Selection::Add
             }
             Some("protons") => Selection::Protons,
-            Some("emulators") => Selection::Emulators,
+            Some("emulators") => {
+                self.emu_show_detail(tab);
+                Selection::Emulators
+            }
             Some("system") => Selection::System,
             Some("stores") => {
                 use arkor_launch::shops::Shop;

@@ -276,6 +276,8 @@ pub(super) enum Act {
     AddFound(usize),
     /// A ROM folder found on the computer: its games go into the library.
     EmuAddSuggested(usize),
+    /// Opens an emulator on its own (to set its controls up).
+    EmuOpen(String),
     AddCandidate(usize),
     AddFile(PathBuf),
     AddLauncher(&'static str),
@@ -3490,6 +3492,7 @@ impl Library {
                 self.quick_act(act, window, cx)
             }
             Act::EmuAddSuggested(ix) => self.emu_add_suggested(ix, cx),
+            Act::EmuOpen(id) => self.emu_open(&id, cx),
             Act::AddScan
             | Act::AddFound(_)
             | Act::AddCandidate(_)
