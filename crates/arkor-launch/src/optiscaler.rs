@@ -296,7 +296,7 @@ pub fn update_fakenvapi() -> anyhow::Result<String> {
     Ok(release.tag)
 }
 
-fn extract(archive: &Path, into: &Path) -> anyhow::Result<()> {
+pub(crate) fn extract(archive: &Path, into: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(into)?;
     // 7z handles every 7z filter; bsdtar (libarchive, part of Arch's base) is the fallback.
     let seven = Command::new("7z")
@@ -357,15 +357,18 @@ pub enum Mod {
     Streamline,
     /// A user-supplied FSR4 upscaler DLL next to OptiScaler (no proxy DLL).
     Fsr4,
+    /// ANR FG with Apex's own OptiScaler build.
+    Anr,
 }
 
 impl Mod {
-    pub const ALL: [Mod; 5] = [
+    pub const ALL: [Mod; 6] = [
         Mod::OptiScaler,
         Mod::DlssEnabler,
         Mod::ReShade,
         Mod::Streamline,
         Mod::Fsr4,
+        Mod::Anr,
     ];
 
     pub fn name(self) -> &'static str {
@@ -375,6 +378,7 @@ impl Mod {
             Mod::ReShade => "ReShade",
             Mod::Streamline => "Streamline",
             Mod::Fsr4 => "FSR4",
+            Mod::Anr => "ANR FG",
         }
     }
 
@@ -385,6 +389,7 @@ impl Mod {
             Mod::ReShade => "reshade",
             Mod::Streamline => "streamline",
             Mod::Fsr4 => "fsr4",
+            Mod::Anr => "anr",
         }
     }
 }
@@ -466,6 +471,10 @@ pub fn install(
     anyhow::ensure!(
         PROXY_DLLS.contains(&proxy),
         "unsupported proxy DLL `{proxy}`"
+    );
+    anyhow::ensure!(
+        Manifest::load_mod(Mod::Anr, id)?.is_none(),
+        "ANR FG brings its own OptiScaler: remove ANR FG from this game first"
     );
     let dll = format!("{proxy}.dll");
     let newer_fakenvapi = fakenvapi().map(|(_, dir)| dir.join("fakenvapi.dll"));

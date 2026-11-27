@@ -320,6 +320,10 @@ fn download_of(id: &str) -> Option<(Ready, Start)> {
             |l| l.tools.downloaded.is_some() || l.tools.manifest.is_some(),
             |l, cx| l.download_optiscaler(cx),
         ),
+        "anr" => (
+            |l| l.tools.anr_downloaded.is_some() || l.tools.anr_manifest.is_some(),
+            |l, cx| l.enqueue_download("anr", cx),
+        ),
         "dlss-enabler" => (
             |l| l.tools.de_downloaded.is_some() || l.tools.de_manifest.is_some(),
             |l, cx| l.enqueue_download("dlss-enabler", cx),
@@ -841,6 +845,24 @@ pub(super) const FEATURES: &[Feature] = &[
         applies: amd_only,
         active: Some(|l| l.profile.layers.afmf.enabled),
         render: |l, cx| Some(l.render_afmf(cx)),
+    },
+    Feature {
+        id: "anr",
+        tab: GameTab::Smooth,
+        group: "framegen",
+        icon: "brain",
+        name: (
+            "ANR FG (AI frame generation)",
+            "ANR FG (yapay zekâ kare üretimi)",
+        ),
+        desc: (
+            "AI frame generation in place of DLSS frame generation, for DirectX 12 and Vulkan games on any graphics card.",
+            "DirectX 12 ve Vulkan oyunlarında, her ekran kartında DLSS kare üretiminin yerine geçen yapay zekâ kare üretimi.",
+        ),
+        keywords: "anr apex neural rendering frame generation kare üretimi dlss-g dlssg fg ai yapay zeka",
+        applies: wine_game,
+        active: Some(|l| l.tools.anr_manifest.is_some()),
+        render: |l, cx| Some(l.render_anr(cx)),
     },
     Feature {
         id: "optiscaler",

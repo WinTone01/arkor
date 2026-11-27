@@ -421,6 +421,10 @@ pub fn dlssnr_install(
             crate::optiscaler::Manifest::load(id)?.is_none(),
             "DLSS-NR brings its own OptiScaler: remove Arkor's OptiScaler from this game first"
         );
+        anyhow::ensure!(
+            crate::anr::manifest(id).is_none(),
+            "DLSS-NR brings its own OptiScaler: remove ANR FG from this game first"
+        );
     } else {
         anyhow::ensure!(
             crate::reshade::manifest(id).is_none(),

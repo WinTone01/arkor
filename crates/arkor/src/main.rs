@@ -38,6 +38,8 @@ usage:
   arkor optiscaler download [--edge] | install <id> <dir> [proxy] | remove <id>
                   | optipatcher <id> [remove] | fsr4 <id> <dll|remove> | fakenvapi
                                           OptiScaler
+  arkor anr download | install <id> <dir> [dxgi|winmm|version] | update <id> | remove <id>
+                                          ANR FG frame generation (with Apex's OptiScaler)
   arkor dlss-enabler download | install <id> <dir> | remove <id>
                                           DLSS Enabler
   arkor reshade download | install <id> <dir> [proxy] [--32] | remove <id>
@@ -408,6 +410,7 @@ fn main() -> anyhow::Result<()> {
         Some("proton") => proton(&args[1..]),
         Some("optiscaler") => optiscaler(&args[1..]),
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
+        Some("anr") => anr(&args[1..]),
         Some("reshade") => reshade(&args[1..]),
         Some("saves") => saves(&args[1..]),
         // Saves the running game's last moments; said in a notification, as a key started it.
@@ -742,6 +745,50 @@ fn dlss_enabler(args: &[String]) -> anyhow::Result<()> {
         }
         Some("remove") => {
             de::uninstall(&arg(args, 1)?.parse()?)?;
+            println!("removed");
+        }
+        _ => anyhow::bail!(USAGE),
+    }
+    Ok(())
+}
+
+fn anr(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::anr;
+    match args.first().map(String::as_str) {
+        Some("download") => {
+            let r = anr::latest()?;
+            println!(
+                "downloading ANR FG {} ({} MB)…",
+                r.version,
+                r.size / 1_000_000
+            );
+            println!("ready: {}", anr::download(&r)?.display());
+        }
+        Some("install") => {
+            let id: GameId = arg(args, 1)?.parse()?;
+            let dir = PathBuf::from(arg(args, 2)?);
+            let (version, source) = anr::downloaded()
+                .into_iter()
+                .next()
+                .context("run `arkor anr download` first")?;
+            let proxy = args
+                .get(3)
+                .map_or_else(|| anr::default_proxy(&dir), String::as_str);
+            let m = anr::install(&id, &version, &source, &dir, proxy)?;
+            println!(
+                "installed ANR FG {version} with Apex's OptiScaler as {} ({} game files backed up); \
+                 games start with WINEDLLOVERRIDES={}=n,b",
+                m.dll,
+                m.backed_up.len(),
+                m.dll_stem()
+            );
+        }
+        Some("update") => {
+            let m = anr::update(&arg(args, 1)?.parse()?)?;
+            println!("ANR FG {} in place, nr_fg.ini kept", m.version);
+        }
+        Some("remove") => {
+            anr::uninstall(&arg(args, 1)?.parse()?)?;
             println!("removed");
         }
         _ => anyhow::bail!(USAGE),

@@ -587,7 +587,7 @@ pub fn parse_sha256sums(text: &str, file_name: &str) -> Option<String> {
     })
 }
 
-fn sha256(path: &Path) -> anyhow::Result<String> {
+pub(crate) fn sha256(path: &Path) -> anyhow::Result<String> {
     let out = std::process::Command::new("sha256sum")
         .arg(path)
         .output()

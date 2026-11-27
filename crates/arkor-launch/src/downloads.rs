@@ -19,7 +19,7 @@ use arkor_core::Profile;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{self, Latest};
-use crate::{bundles, dlss_enabler, layers, optiscaler, progress, reshade, shops, streamline};
+use crate::{anr, bundles, dlss_enabler, layers, optiscaler, progress, reshade, shops, streamline};
 
 /// A display name for `key`.
 pub fn label(key: &str) -> String {
@@ -60,6 +60,7 @@ pub fn label(key: &str) -> String {
         "amethyst" => "Amethyst Mod Manager",
         "launchbox" => "LaunchBox Games Database",
         "dlss-enabler" => "DLSS Enabler",
+        "anr" => "ANR FG",
         "reshade" => "ReShade",
         "streamline" => "Streamline SDK",
         "umu" => "umu-launcher",
@@ -132,6 +133,11 @@ pub fn run(key: &str) -> anyhow::Result<String> {
                 dir,
                 dlss_enabler::downloaded(),
             )
+        }
+        "anr" => {
+            let r = anr::latest()?;
+            let dir = anr::download(&r)?;
+            ("ANR FG", r.version, dir, anr::downloaded())
         }
         "reshade" => {
             let v = reshade::latest_version()?;
@@ -300,6 +306,14 @@ pub fn check_updates() -> Vec<Update> {
             "optiscaler".into(),
             Some(v),
             optiscaler::latest_release().map(|r| r.tag),
+            &exact,
+        );
+    }
+    if let Some(v) = newest(anr::downloaded()) {
+        add(
+            "anr".into(),
+            Some(v),
+            anr::latest().map(|r| r.version),
             &exact,
         );
     }

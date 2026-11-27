@@ -7,6 +7,7 @@
 //! `start` (see [`start`]) is the library-aware entry point behind `arkor launch` / Play.
 
 pub mod admin;
+pub mod anr;
 pub mod bundles;
 pub mod clips;
 pub mod compat;

@@ -202,7 +202,8 @@ gamepads). Each area opens on cards that say what its categories are for, and ev
 says in a sentence what it does. Console mode uses the same areas and explanations. Also:
 MangoHud can report another graphics card, MAKO's GPU headroom and HDR brightness, ReShade's
 menu key, renaming benchmark runs, the newest fakenvapi with OptiScaler, and DLSS-NR's
-ReShade routes and 32-bit package.
+ReShade routes and 32-bit package · [ANR FG](https://github.com/apex-compute/ANR) (Apex's AI frame
+generation) per game, with its own OptiScaler and the launch setting it needs.
 
 <a id="console-mode"></a>
 

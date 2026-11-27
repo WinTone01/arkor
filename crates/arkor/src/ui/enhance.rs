@@ -65,6 +65,10 @@ pub(super) struct GameTools {
     /// The game's OptiScaler.ini text (when installed), cached for the settings chips.
     pub(super) ini: Option<(PathBuf, String)>,
     pub(super) de_downloaded: Option<(String, PathBuf)>,
+    pub(super) anr_manifest: Option<Manifest>,
+    pub(super) anr_downloaded: Option<(String, PathBuf)>,
+    /// The proxy name picked for ANR FG (`None`: what the game folder suggests).
+    pub(super) anr_proxy: Option<&'static str>,
     /// Folders holding the game's likely main executables, best first.
     pub(super) folders: Vec<PathBuf>,
     pub(super) target: Option<PathBuf>,
@@ -136,6 +140,9 @@ impl GameTools {
             system_layers: arkor_launch::layers::system_layers(),
             ini: None,
             de_downloaded: None,
+            anr_manifest: None,
+            anr_downloaded: None,
+            anr_proxy: None,
             folders: Vec::new(),
             target: None,
             proxy: PROXY_DLLS[0],
@@ -167,6 +174,9 @@ impl GameTools {
             _ => 0,
         };
         self.de_downloaded = arkor_launch::dlss_enabler::downloaded().into_iter().next();
+        self.anr_manifest = arkor_launch::anr::manifest(&game.id);
+        self.anr_downloaded = arkor_launch::anr::downloaded().into_iter().next();
+        self.anr_proxy = None;
         self.folders.clear();
         if let Some(dir) = &game.install_dir {
             for exe in arkor_stores::prefix::game_executables(dir) {
@@ -2012,6 +2022,178 @@ impl Library {
             },
         };
         card
+    }
+}
+
+impl Library {
+    /// Installs, updates or removes ANR FG off the UI thread.
+    fn anr_job(&mut self, what: &'static str, cx: &mut Context<Self>) {
+        use arkor_launch::anr;
+        let Some(id) = self.selected_id() else { return };
+        let target = self.tools.target.clone();
+        let downloaded = self.tools.anr_downloaded.clone();
+        let proxy = match (self.tools.anr_proxy, &target) {
+            (Some(p), _) => p,
+            (None, Some(dir)) => anr::default_proxy(dir),
+            (None, None) => "dxgi",
+        };
+        self.tools.busy = Some("…");
+        self.tools.error = None;
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn({
+                    let id = id.clone();
+                    async move {
+                        match what {
+                            "remove" => anr::uninstall(&id).map(|()| None),
+                            "update" => anr::update(&id).map(Some),
+                            _ => {
+                                let target =
+                                    anyhow::Context::context(target, "no game folder chosen")?;
+                                let (v, src) = anyhow::Context::context(
+                                    downloaded,
+                                    "ANR FG is not downloaded",
+                                )?;
+                                anr::install(&id, &v, &src, &target, proxy).map(Some)
+                            }
+                        }
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.tools.busy = None;
+                match result {
+                    Ok(m) => {
+                        this.tools.anr_manifest = m;
+                        this.sound(super::sounds::Sound::Done);
+                    }
+                    Err(e) => {
+                        this.tools.error = Some(format!("{e:#}"));
+                        this.sound(super::sounds::Sound::Error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn render_anr(&mut self, cx: &mut Context<Self>) -> Div {
+        use arkor_launch::anr;
+        let tools = &self.tools;
+        let mut card = widgets::section("ANR FG").child(widgets::label(self.tr(
+            "Apex Neural Rendering: AI frame generation that takes the place of DLSS frame generation, on NVIDIA, AMD and Intel cards. It comes with its own OptiScaler, so Arkor's OptiScaler, DLSS Enabler and DLSS-NR cannot be in the same game. In beta.",
+            "Apex Neural Rendering: DLSS kare üretiminin yerine geçen yapay zekâ kare üretimi; NVIDIA, AMD ve Intel kartlarda. Kendi OptiScaler'ıyla gelir, bu yüzden aynı oyunda Arkor'un OptiScaler'ı, DLSS Enabler ve DLSS-NR olamaz. Beta aşamasında.",
+        )));
+        if let Some(err) = &tools.error {
+            card = card.child(warning(err.clone()));
+        }
+        if let Some(busy) = tools.busy {
+            return card.child(widgets::label(busy));
+        }
+        if let Some(m) = tools.anr_manifest.clone() {
+            let newer = tools
+                .anr_downloaded
+                .as_ref()
+                .filter(|(v, _)| *v != m.version)
+                .map(|(v, _)| v.clone());
+            let log = anr::latest_log(&m);
+            return card
+                .child(div().text_sm().child(format!(
+                    "{} · {} · {}",
+                    self.t().opti_installed,
+                    m.version,
+                    m.dll
+                )))
+                .child(widgets::label(m.target_dir.display().to_string()))
+                .child(widgets::label(self.tr(
+                    "In the game, turn on frame generation (the NVIDIA / DLSS option where there are several). Insert opens OptiScaler's menu. Arkor starts the game with the setting it needs; for Steam it is written into the launch options.",
+                    "Oyunda kare üretimini aç (birden çok seçenek varsa NVIDIA / DLSS olanı). Insert OptiScaler menüsünü açar. Arkor oyunu gereken ayarla başlatır; Steam için başlatma seçeneklerine yazılır.",
+                )))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .children(newer.map(|v| {
+                            widgets::chip(
+                                "anr-update",
+                                format!("{} {v}", self.tr("Update to", "Güncelle:")),
+                                true,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.anr_job("update", cx)))
+                        }))
+                        .children(log.map(|log| {
+                            widgets::chip("anr-log", self.tr("Open its log", "Kaydını aç"), false)
+                                .on_click(move |_, _, _| {
+                                    let _ = std::process::Command::new("xdg-open").arg(&log).spawn();
+                                })
+                        }))
+                        .child(
+                            widgets::chip("anr-remove", self.t().opti_remove, false)
+                                .on_click(cx.listener(|this, _, _, cx| this.anr_job("remove", cx))),
+                        ),
+                );
+        }
+        let Some((version, _)) = tools.anr_downloaded.clone() else {
+            return card;
+        };
+        let Some(target) = tools.target.clone() else {
+            return card.child(widgets::label(self.t().opti_no_folder));
+        };
+        let mut folders = div().flex().flex_col().items_start().gap_1().max_w_full();
+        for (ix, folder) in tools.folders.iter().enumerate() {
+            let f = folder.clone();
+            folders = folders.child(
+                widgets::chip(("anr-folder", ix), short_dir(folder), &target == folder)
+                    .max_w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tools.target = Some(f.clone());
+                        cx.notify();
+                    })),
+            );
+        }
+        let suggested = anr::default_proxy(&target);
+        let chosen = tools.anr_proxy.unwrap_or(suggested);
+        let mut proxies = div().flex().flex_wrap().gap_2();
+        for (ix, p) in anr::PROXIES.into_iter().enumerate() {
+            let label = if p == suggested {
+                format!("{p}.dll · {}", self.tr("suggested", "önerilen"))
+            } else {
+                format!("{p}.dll")
+            };
+            proxies = proxies.child(
+                widgets::chip(("anr-proxy", ix), label, chosen == p).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.tools.anr_proxy = Some(p);
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        card.child(widgets::subheading(self.tr(
+            "The folder with the game's program",
+            "Oyunun programının olduğu klasör",
+        )))
+        .child(folders)
+        .child(widgets::subheading(self.tr("Loads as", "Yüklenme adı")))
+        .child(widgets::label(self.tr(
+            "dxgi for DirectX games, winmm for Vulkan games. Arkor suggests the right one; change it only if the game already uses that name for another mod.",
+            "DirectX oyunları için dxgi, Vulkan oyunları için winmm. Arkor doğru olanı önerir; yalnızca oyun bu adı başka bir mod için zaten kullanıyorsa değiştir.",
+        )))
+        .child(proxies)
+        .child(
+            div().flex().child(
+                widgets::primary_button(
+                    "anr-install",
+                    format!("{} ({version})", self.t().opti_install),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.anr_job("install", cx))),
+            ),
+        )
     }
 }
 

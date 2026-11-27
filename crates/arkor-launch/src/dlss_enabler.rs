@@ -127,6 +127,10 @@ pub fn install(
     source: &Path,
     target_dir: &Path,
 ) -> anyhow::Result<Manifest> {
+    anyhow::ensure!(
+        Manifest::load_mod(Mod::Anr, id)?.is_none(),
+        "ANR FG is installed in this game; remove it first"
+    );
     let files = vec![(source.join(DLL), PathBuf::from(DLL))];
     crate::optiscaler::install_files(Mod::DlssEnabler, id, version, files, target_dir, DLL)
 }

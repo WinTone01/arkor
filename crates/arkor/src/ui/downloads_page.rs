@@ -11,7 +11,7 @@ use arkor_launch::bundles::{self, Bundle};
 use arkor_launch::components::Latest;
 use arkor_launch::downloads::{self, Update};
 use arkor_launch::progress;
-use arkor_launch::{dlss_enabler, layers, optiscaler, proton_dl, reshade, streamline, tools};
+use arkor_launch::{anr, dlss_enabler, layers, optiscaler, proton_dl, reshade, streamline, tools};
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, div, prelude::*, px};
 
@@ -24,6 +24,7 @@ pub(super) enum Kind {
     Layer(usize),
     OptiScaler,
     DlssEnabler,
+    Anr,
     ReShade,
     Streamline,
     Bundle(Bundle),
@@ -47,6 +48,7 @@ impl Kind {
         v.extend([
             Kind::OptiScaler,
             Kind::DlssEnabler,
+            Kind::Anr,
             Kind::ReShade,
             Kind::Streamline,
         ]);
@@ -67,6 +69,7 @@ impl Kind {
             Kind::Layer(ix) => layers::TOOLS[ix].id,
             Kind::OptiScaler => "optiscaler",
             Kind::DlssEnabler => "dlss-enabler",
+            Kind::Anr => "anr",
             Kind::ReShade => "reshade",
             Kind::Streamline => "streamline",
             Kind::Bundle(b) => b.key(),
@@ -78,6 +81,7 @@ impl Kind {
             Kind::Layer(ix) => layers::TOOLS[ix].name,
             Kind::OptiScaler => "OptiScaler",
             Kind::DlssEnabler => "DLSS Enabler",
+            Kind::Anr => "ANR FG",
             Kind::ReShade => "ReShade",
             Kind::Streamline => "Streamline SDK",
             Kind::Bundle(b) => b.name(),
@@ -89,6 +93,7 @@ impl Kind {
             Kind::Layer(_) => "layers",
             Kind::OptiScaler => "scan-eye",
             Kind::DlssEnabler => "cpu",
+            Kind::Anr => "brain",
             Kind::ReShade => "brush",
             Kind::Streamline => "refresh-cw",
             Kind::Bundle(_) => "atom",
@@ -112,6 +117,7 @@ impl Kind {
             }
             Kind::OptiScaler => optiscaler::downloaded(),
             Kind::DlssEnabler => dlss_enabler::downloaded(),
+            Kind::Anr => anr::downloaded(),
             Kind::ReShade => reshade::downloaded(),
             Kind::Streamline => streamline::downloaded(),
             Kind::Bundle(b) => bundles::downloaded(b),
