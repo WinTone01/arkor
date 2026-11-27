@@ -192,7 +192,8 @@ graphics card a game renders on (laptops with two) · DXVK and VKD3D-Proton vers
 connections or outside chosen hours · **Ctrl+K** command palette, **Ctrl +/−/0** text size ·
 `arkor://launch/<id>` links (and Heroic's) · Arkor's games in Sunshine for Moonlight ·
 Bottles' programs, and favourites, categories and play time carried over from Heroic,
-Lutris and Faugus.
+Lutris and Faugus · Steam friends online in the sidebar (with Steam control on) · GOG play
+time and achievements on the game page · Epic's overlay per game.
 
 <a id="console-mode"></a>
 
@@ -392,6 +393,8 @@ running game, which every desktop allows in its own way:
 | `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
 | `arkor clip` | Saves a clip of the running game (bind it to a key) |
 | `arkor url <arkor://… \| heroic://…>` | Follows a link: starts a game or opens a page |
+| `arkor friends` · `arkor steam control on\|off` | Steam friends online · Arkor's control of Steam |
+| `arkor achievements gog:<id>` | A GOG game's play time and achievements |
 | `arkor info <id>` | What is known about a game (description, genres, age ratings) |
 | `arkor dxvk [install \| remove <dxvk\|vkd3d> [version]]` | DXVK / VKD3D-Proton versions games can use |
 | `arkor roms [--add] [folder…]` | Games in ROM folders (the usual ones without a folder); `--add` adds them |
