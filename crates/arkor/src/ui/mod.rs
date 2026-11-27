@@ -970,6 +970,12 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 })
                 .detach();
                 arkor_launch::downloads::start();
+                // Mods a launch left in a game folder (the computer went off while it ran).
+                if !cfg!(test) {
+                    cx.background_executor()
+                        .spawn(async { arkor_launch::mods::play::leftovers() })
+                        .detach();
+                }
                 if lib.console.on {
                     lib.console_first(cx);
                     lib.start_console_intro();
