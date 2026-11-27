@@ -69,7 +69,7 @@ impl Library {
             .unwrap_or_default();
         let runs = self.bench.runs.clone().unwrap_or_default();
         let mut page = div().child(Self::header(
-            self.tr("Benchmarks", "Benchmark'lar"),
+            self.tr("Benchmarks", "Performans ölçümü"),
             self.tr(
                 "Measure how smoothly a game runs. In the game, press Left Shift + F2 to start recording and again to stop (MangoHud must be on). Each recording appears here; pick two or more to compare them, e.g. before and after turning on a setting.",
                 "Bir oyunun ne kadar akıcı çalıştığını ölç. Oyunda kaydı başlatmak için Sol Shift + F2'ye bas, durdurmak için yine bas (MangoHud açık olmalı). Her kayıt burada görünür; ikisini ya da daha fazlasını seçip karşılaştır, ör. bir ayarı açmadan önce ve sonra.",
@@ -122,12 +122,16 @@ impl Library {
                         .gap_2()
                         .child(div().w(px(360.)).child(input))
                         .child(
-                            widgets::chip(("bench-rename-cancel", ix), self.tr("Cancel", "Vazgeç"), false)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.bench.renaming = None;
-                                    this.fields.remove("bench-rename");
-                                    cx.notify();
-                                })),
+                            widgets::chip(
+                                ("bench-rename-cancel", ix),
+                                self.tr("Cancel", "Vazgeç"),
+                                false,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.bench.renaming = None;
+                                this.fields.remove("bench-rename");
+                                cx.notify();
+                            })),
                         ),
                 );
                 continue;
@@ -137,23 +141,29 @@ impl Library {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(widgets::chip(("bench-run", ix), name, selected).on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            if !this.bench.selected.contains(&p1) {
-                                this.bench.selected.push(p1.clone());
-                            } else {
-                                this.bench.selected.retain(|p| p != &p1);
-                            }
-                            cx.notify();
-                        }),
-                    ))
                     .child(
-                        widgets::chip(("bench-ren", ix), self.tr("Rename", "Yeniden adlandır"), false)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.fields.remove("bench-rename");
-                                this.bench.renaming = Some(p3.clone());
+                        widgets::chip(("bench-run", ix), name, selected).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                if !this.bench.selected.contains(&p1) {
+                                    this.bench.selected.push(p1.clone());
+                                } else {
+                                    this.bench.selected.retain(|p| p != &p1);
+                                }
                                 cx.notify();
-                            })),
+                            },
+                        )),
+                    )
+                    .child(
+                        widgets::chip(
+                            ("bench-ren", ix),
+                            self.tr("Rename", "Yeniden adlandır"),
+                            false,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.fields.remove("bench-rename");
+                            this.bench.renaming = Some(p3.clone());
+                            cx.notify();
+                        })),
                     )
                     .child(
                         widgets::chip(("bench-del", ix), self.tr("Delete", "Sil"), false).on_click(

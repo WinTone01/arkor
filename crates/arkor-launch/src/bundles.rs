@@ -537,9 +537,19 @@ mod tests {
             ]
         );
         assert_eq!(parse_overrides(out), ["d3d9"]);
-        assert!(parse_launch_env("Steam launch options:  WINEDLLOVERRIDES=\"dxgi=n,b\" %command%").is_empty());
-        assert_eq!(NrRoute::from_arg("reshade-feeder-dx9"), Some(NrRoute::ReshadeFeederDx9));
-        assert!(Bundle::DlssNrRdna3.models().contains(&"CC_SMALL_FP8_EXPERIMENTAL"));
+        assert!(
+            parse_launch_env("Steam launch options:  WINEDLLOVERRIDES=\"dxgi=n,b\" %command%")
+                .is_empty()
+        );
+        assert_eq!(
+            NrRoute::from_arg("reshade-feeder-dx9"),
+            Some(NrRoute::ReshadeFeederDx9)
+        );
+        assert!(
+            Bundle::DlssNrRdna3
+                .models()
+                .contains(&"CC_SMALL_FP8_EXPERIMENTAL")
+        );
     }
 
     #[test]

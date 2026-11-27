@@ -128,10 +128,10 @@ impl Library {
         if self.global_hud_tab {
             return div()
                 .child(Self::header(
-                    self.tr("MangoHud overlay", "MangoHud overlay"),
+                    self.tr("FPS overlay (MangoHud)", "FPS göstergesi (MangoHud)"),
                     self.tr(
-                        "The shared layout: every game set to “Use the shared layout” shows this. A game can also have its own (game page → Overlay & visuals).",
-                        "Ortak düzen: “Ortak düzeni kullan” seçili her oyun bunu gösterir. Bir oyunun kendi düzeni de olabilir (oyun sayfası → Overlay ve görüntü).",
+                        "MangoHud shows FPS, temperatures and usage on top of games. This is the layout every game uses, unless it has its own (game page → Performance overlay).",
+                        "MangoHud oyunların üstünde FPS, sıcaklık ve kullanım değerlerini gösterir. Bu, kendi düzeni olmayan her oyunun kullandığı düzendir (oyun sayfası → Performans göstergesi).",
                     ),
                 ))
                 .child(

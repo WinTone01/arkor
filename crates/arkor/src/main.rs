@@ -863,8 +863,9 @@ fn bundle(args: &[String]) -> anyhow::Result<()> {
                 .filter(|a| !a.starts_with("--"))
                 .map_or("CC_SMALL_FP8", String::as_str);
             let route = match args.get(5).filter(|a| !a.starts_with("--")) {
-                Some(r) => bundles::NrRoute::from_arg(r)
-                    .with_context(|| format!("unknown route {r}"))?,
+                Some(r) => {
+                    bundles::NrRoute::from_arg(r).with_context(|| format!("unknown route {r}"))?
+                }
                 None if bits32 => bundles::NrRoute::ReshadeFeederVulkan,
                 None => bundles::NrRoute::Optiscaler,
             };

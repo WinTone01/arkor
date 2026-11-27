@@ -178,7 +178,10 @@ pub(super) const GROUPS: &[Group] = &[
         tab: GameTab::Smooth,
         key: "framegen",
         icon: "layers",
-        name: ("Frame generation: smoother motion", "Kare üretimi: daha akıcı hareket"),
+        name: (
+            "Frame generation: smoother motion",
+            "Kare üretimi: daha akıcı hareket",
+        ),
         desc: (
             "Adds made-up frames between the real ones, so 60 FPS can look like 120. Works best when the game already runs well.",
             "Gerçek karelerin arasına üretilmiş kareler ekler; 60 FPS 120 gibi görünebilir. Oyun zaten iyi çalışıyorsa en iyi sonucu verir.",
@@ -401,8 +404,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "file-terminal",
         name: ("Game files", "Oyun dosyaları"),
         desc: (
-            "The executable, its arguments and the Wine prefix it runs in.",
-            "Çalıştırılabilir dosya, argümanları ve çalıştığı Wine prefix'i.",
+            "Which program starts the game, and the folder a Windows game keeps its settings in (its Wine prefix).",
+            "Oyunu hangi programın başlattığı ve bir Windows oyununun ayarlarını tuttuğu klasör (Wine prefix'i).",
         ),
         keywords: "exe arguments argümanlar prefix wine protontricks app id",
         applies: always,
@@ -447,8 +450,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "wine",
         name: ("Proton version", "Proton sürümü"),
         desc: (
-            "Which Proton build runs the game.",
-            "Oyunu hangi Proton derlemesinin çalıştıracağı.",
+            "Proton runs Windows games on Linux. Automatic suits most games; try another version if this one has problems.",
+            "Proton, Windows oyunlarını Linux'ta çalıştırır. Çoğu oyun için Otomatik yeterlidir; sorun olursa başka bir sürüm dene.",
         ),
         keywords: "proton ge cachyos wine version sürüm latest",
         applies: proton_choice,
@@ -465,8 +468,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "wine",
         name: ("Steam: Proton and launch", "Steam: Proton ve başlatma"),
         desc: (
-            "The Proton Steam uses for the game, and starting it through Arkor.",
-            "Steam'in oyun için kullandığı Proton ve oyunu Arkor üzerinden başlatma.",
+            "Steam starts this game. Pick the Proton Steam uses, and let Arkor's settings apply when it does.",
+            "Bu oyunu Steam başlatır. Steam'in kullanacağı Proton'u seç ve Steam başlatırken Arkor'un ayarlarının uygulanmasını sağla.",
         ),
         keywords: "proton steam compatibility uyumluluk launch options başlatma seçenekleri verify doğrula",
         applies: steam_game,
@@ -478,7 +481,10 @@ pub(super) const FEATURES: &[Feature] = &[
         tab: GameTab::Smooth,
         group: "upscale",
         icon: "sparkles",
-        name: ("Upgrade the game's own upscaler", "Oyunun kendi ölçekleyicisini yükselt"),
+        name: (
+            "Upgrade the game's own upscaler",
+            "Oyunun kendi ölçekleyicisini yükselt",
+        ),
         desc: (
             "Newer DLSS, FSR 4 or XeSS in games that ship an older one. One click each.",
             "Eski sürüm getiren oyunlarda daha yeni DLSS, FSR 4 ya da XeSS. Her biri tek tıkla.",
@@ -615,8 +621,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "wrench",
         name: ("Protonfixes", "Protonfix'ler"),
         desc: (
-            "Known fixes for this game, applied by Proton when it knows its umu id.",
-            "Bu oyun için bilinen düzeltmeler; Proton umu kimliğini bilince uygular.",
+            "Ready-made fixes for known problem games, applied by themselves once the game is recognised.",
+            "Bilinen sorunlu oyunlar için hazır düzeltmeler; oyun tanınınca kendiliğinden uygulanır.",
         ),
         keywords: "umu protonfix gameid fix düzeltme",
         applies: proton_choice,
@@ -645,8 +651,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "layers",
         name: ("DXVK & VKD3D-Proton version", "DXVK ve VKD3D-Proton sürümü"),
         desc: (
-            "Another DirectX translation version than Proton's, for this game only.",
-            "Yalnızca bu oyun için Proton'unkinden farklı bir DirectX çeviri sürümü.",
+            "DXVK and VKD3D turn the game's DirectX graphics into Vulkan. Proton brings its own; pick another version only to fix a problem.",
+            "DXVK ve VKD3D oyunun DirectX grafiklerini Vulkan'a çevirir. Proton kendi sürümünü getirir; yalnızca bir sorunu çözmek için başkasını seç.",
         ),
         keywords: "dxvk vkd3d directx d3d11 d3d12 dx11 dx12 version sürüm",
         applies: proton_choice,
@@ -675,8 +681,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "box",
         name: ("Steam Linux Runtime", "Steam Linux Runtime"),
         desc: (
-            "Run the game in a Steam runtime container for library compatibility.",
-            "Kütüphane uyumluluğu için oyunu bir Steam runtime konteynerinde çalıştır.",
+            "Runs a Linux game inside Steam's runtime, so it finds the libraries it was made for. Try it if a Linux game will not start.",
+            "Linux oyununu Steam'in çalışma ortamında açar; oyun yapıldığı kütüphaneleri bulur. Bir Linux oyunu açılmıyorsa dene.",
         ),
         keywords: "sniper soldier scout runtime container",
         applies: linux_game,
@@ -690,8 +696,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "folder-cog",
         name: ("Wine prefix tools", "Wine prefix araçları"),
         desc: (
-            "winecfg, winetricks, running an installer in the prefix, stopping it.",
-            "winecfg, winetricks, prefix'te kurulum dosyası çalıştırma, durdurma.",
+            "Each Windows game has a small Windows folder of its own (its prefix). Change its settings, add Windows parts, run an installer in it.",
+            "Her Windows oyununun kendine ait küçük bir Windows klasörü (prefix) vardır. Ayarlarını değiştir, Windows parçaları ekle, içinde bir kurulum dosyası çalıştır.",
         ),
         keywords: "winecfg winetricks regedit installer kurulum run çalıştır dll kill",
         applies: wine_game,
@@ -709,8 +715,8 @@ pub(super) const FEATURES: &[Feature] = &[
             "Başlatma seçenekleri ve komutlar",
         ),
         desc: (
-            "Extra words for the command line, commands before and after, a second program.",
-            "Komut satırına ek kelimeler, önce ve sonra komutlar, ikinci bir program.",
+            "Extra start options (such as -dx11), commands to run before and after, and a second program to start with the game.",
+            "Ek başlatma seçenekleri (ör. -dx11), önce ve sonra çalışacak komutlar ve oyunla birlikte açılacak ikinci bir program.",
         ),
         keywords: "%command% pre post script hook extra app trainer sleep uyku inhibit",
         applies: always,
@@ -733,8 +739,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "variable",
         name: ("Environment variables", "Ortam değişkenleri"),
         desc: (
-            "KEY=VALUE pairs for this game only (they override the global ones).",
-            "Sadece bu oyun için ANAHTAR=DEĞER çiftleri (globalleri ezer).",
+            "Advanced: settings handed to the game as NAME=VALUE. Change them only when a guide tells you to.",
+            "Gelişmiş: oyuna AD=DEĞER olarak verilen ayarlar. Yalnızca bir rehber söylüyorsa değiştir.",
         ),
         keywords: "env ortam değişken variable key value",
         applies: always,
@@ -764,8 +770,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "monitor",
         name: ("Gamescope", "Gamescope"),
         desc: (
-            "Valve's compositor: resolution, upscaling, FPS limit, HDR, fullscreen.",
-            "Valve'ın birleştiricisi: çözünürlük, ölçekleme, FPS limiti, HDR, tam ekran.",
+            "Valve's game window, as on the Steam Deck: force a resolution, upscale, cap FPS, fullscreen and HDR.",
+            "Steam Deck'teki gibi Valve'ın oyun penceresi: çözünürlüğü zorla, ölçekle, FPS'i sınırla, tam ekran ve HDR.",
         ),
         keywords: "gamescope resolution çözünürlük fsr nis scaling hdr refresh fullscreen tam ekran fps limit",
         applies: always,
@@ -779,15 +785,15 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "moon",
         name: ("Idle FPS limit (vkNemu)", "Boşta FPS sınırı (vkNemu)"),
         desc: (
-            "Lowers the frame rate while the game is in the background.",
-            "Oyun arka plandayken kare hızını düşürür.",
+            "Lowers the frame rate while you are away or the game is in the background, to save power and heat.",
+            "Sen başında değilken ya da oyun arka plandayken kare hızını düşürür; güç ve ısıdan tasarruf eder.",
         ),
         keywords: "vknemu idle boşta fps limit power güç",
         applies: always,
         active: Some(|l| l.profile.layers.vknemu.enabled),
         render: |l, cx| Some(l.render_vknemu(cx)),
     },
-    // Upscaling & frame generation
+    // Smoother & faster
     Feature {
         id: "lsfg",
         tab: GameTab::Smooth,
@@ -798,8 +804,8 @@ pub(super) const FEATURES: &[Feature] = &[
             "Lossless Scaling kare üretimi (lsfg-vk)",
         ),
         desc: (
-            "Generated frames between real ones (needs Lossless Scaling on Steam).",
-            "Gerçek kareler arasına üretilmiş kareler (Steam'de Lossless Scaling gerekir).",
+            "Doubles or triples the frame rate with generated frames. Needs the Lossless Scaling app, bought on Steam.",
+            "Üretilmiş karelerle kare hızını ikiye ya da üçe katlar. Steam'den satın alınan Lossless Scaling uygulaması gerekir.",
         ),
         keywords: "lsfg lossless frame generation kare üretimi multiplier çarpan flow fps",
         applies: always,
@@ -813,8 +819,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "layers-2",
         name: ("MAKO frame gen & scaling", "MAKO kare üretimi ve ölçekleme"),
         desc: (
-            "Open-source frame generation and spatial upscaling layer.",
-            "Açık kaynak kare üretimi ve uzamsal ölçekleme katmanı.",
+            "Free frame generation and upscaling for Vulkan and DXVK games.",
+            "Vulkan ve DXVK oyunları için ücretsiz kare üretimi ve ölçekleme.",
         ),
         keywords: "mako frame generation kare üretimi spatial scaling ölçekleme fps",
         applies: always,
@@ -828,8 +834,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "fast-forward",
         name: ("AFMF frame gen", "AFMF kare üretimi"),
         desc: (
-            "AMD Fluid Motion Frames for any game.",
-            "Her oyun için AMD Fluid Motion Frames.",
+            "AMD's frame generation (Fluid Motion Frames), for any game on a Radeon card.",
+            "AMD'nin kare üretimi (Fluid Motion Frames); Radeon kartta her oyun için.",
         ),
         keywords: "afmf amd fluid motion frames kare üretimi fps",
         applies: amd_only,
@@ -843,8 +849,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "scan-eye",
         name: ("OptiScaler", "OptiScaler"),
         desc: (
-            "Swap the game's DLSS/FSR/XeSS for another upscaler, e.g. FSR 4.",
-            "Oyunun DLSS/FSR/XeSS'ini başka bir ölçekleyiciyle değiştir, ör. FSR 4.",
+            "Lets a game that only has DLSS use FSR 4 or XeSS instead (and the other way round), and adds frame generation.",
+            "Yalnızca DLSS'i olan bir oyunun FSR 4 ya da XeSS kullanmasını (ya da tersini) sağlar ve kare üretimi ekler.",
         ),
         keywords: "optiscaler dlss fsr fsr4 xess optipatcher edge upscaler ölçekleyici",
         applies: wine_game,
@@ -858,8 +864,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "cpu",
         name: ("DLSS Enabler", "DLSS Enabler"),
         desc: (
-            "DLSS frame generation on AMD and Intel GPUs.",
-            "AMD ve Intel GPU'larda DLSS kare üretimi.",
+            "Brings DLSS frame generation to AMD and Intel cards in games that offer DLSS.",
+            "DLSS sunan oyunlarda AMD ve Intel kartlara DLSS kare üretimini getirir.",
         ),
         keywords: "dlss enabler frame generation amd intel",
         applies: non_nvidia_wine_game,
@@ -873,8 +879,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "refresh-cw",
         name: ("Streamline / DLSS update", "Streamline / DLSS güncelleme"),
         desc: (
-            "Replace the game's NVIDIA DLSS files with newer ones.",
-            "Oyunun NVIDIA DLSS dosyalarını yenileriyle değiştir.",
+            "Swaps the game's old DLSS files for the newest ones, for a sharper picture.",
+            "Oyunun eski DLSS dosyalarını en yenileriyle değiştirir; görüntü daha net olur.",
         ),
         keywords: "streamline nvidia dlss update güncelle reflex nvngx",
         applies: wine_game,
@@ -888,15 +894,15 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "atom",
         name: ("HelixSR & DLSS-NR (AMD)", "HelixSR ve DLSS-NR (AMD)"),
         desc: (
-            "Neural upscalers for AMD RDNA cards.",
-            "AMD RDNA kartlar için yapay zekâ ölçekleyiciler.",
+            "AI upscalers for Radeon RX 7000 and 9000 cards: HelixSR and DLSS-NR.",
+            "Radeon RX 7000 ve 9000 kartlar için yapay zekâ ölçekleyicileri: HelixSR ve DLSS-NR.",
         ),
         keywords: "helixsr dlss-nr dlssnr amd rdna fsr4 neural",
         applies: amd_wine_game,
         active: Some(|l| l.tools.dlssnr.is_some()),
         render: |l, cx| Some(l.render_amd_bundles(cx)),
     },
-    // Overlay & visuals
+    // Performance overlay and picture
     Feature {
         id: "mangohud",
         tab: GameTab::Hud,
@@ -904,8 +910,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "gauge",
         name: ("MangoHud", "MangoHud"),
         desc: (
-            "FPS, temperatures and load drawn over the game.",
-            "Oyunun üstünde FPS, sıcaklık ve yük.",
+            "Shows FPS, temperatures and usage on top of the game.",
+            "Oyunun üstünde FPS, sıcaklık ve kullanım değerlerini gösterir.",
         ),
         keywords: "mangohud overlay fps hud frametime grafik log",
         applies: always,
@@ -923,8 +929,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "wand-sparkles",
         name: ("vkBasalt", "vkBasalt"),
         desc: (
-            "Sharpening, anti-aliasing and colour effects for Vulkan games.",
-            "Vulkan oyunları için keskinleştirme, kenar yumuşatma ve renk efektleri.",
+            "Sharpens a blurry picture and adds effects such as smoother edges and colour filters.",
+            "Bulanık görüntüyü keskinleştirir; kenar yumuşatma ve renk filtreleri gibi efektler ekler.",
         ),
         keywords: "vkbasalt cas sharpen keskinlik smaa fxaa lut reshade daltonize",
         applies: always,
@@ -938,8 +944,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "brush",
         name: ("ReShade", "ReShade"),
         desc: (
-            "ReShade shaders installed in the game folder.",
-            "Oyun klasörüne kurulan ReShade shader'ları.",
+            "The well-known effects pack: hundreds of filters, installed into the game folder.",
+            "Bilinen efekt paketi: oyun klasörüne kurulan yüzlerce filtre.",
         ),
         keywords: "reshade shader efekt effects",
         applies: wine_game,
@@ -952,7 +958,10 @@ pub(super) const FEATURES: &[Feature] = &[
         group: "effects",
         icon: "contrast",
         name: ("Colour grading (vkSumi)", "Renk ayarı (vkSumi)"),
-        desc: ("Vibrance and contrast.", "Canlılık ve kontrast."),
+        desc: (
+            "More vivid colours and stronger contrast.",
+            "Daha canlı renkler ve daha güçlü kontrast.",
+        ),
         keywords: "vksumi vibrance canlılık contrast kontrast colour renk",
         applies: always,
         active: Some(|l| l.profile.layers.vksumi),
@@ -965,8 +974,8 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "layers-2",
         name: ("Other Vulkan layers", "Diğer Vulkan katmanları"),
         desc: (
-            "Other layers installed on this computer, e.g. OBS capture.",
-            "Bu bilgisayarda kurulu diğer katmanlar, ör. OBS yakalama.",
+            "Other picture add-ons found on this computer, such as OBS capture.",
+            "Bu bilgisayarda bulunan diğer görüntü eklentileri, ör. OBS yakalama.",
         ),
         keywords: "vulkan layer katman obs",
         applies: has_other_layers,
@@ -1102,13 +1111,25 @@ impl Library {
         let p = &self.profile;
         match key {
             "mangohud" => (
-                "MangoHud",
+                self.tr("FPS counter (MangoHud)", "FPS göstergesi (MangoHud)"),
                 "gauge",
                 (feature("mangohud").active.unwrap())(self),
             ),
-            "gamescope" => ("Gamescope", "monitor", p.gamescope.enabled),
-            "lsfg" => ("lsfg-vk", "layers", p.lsfg.mode == LsfgMode::On),
-            "vkbasalt" => ("vkBasalt", "wand-sparkles", p.vkbasalt.enabled),
+            "gamescope" => (
+                self.tr("Game window (Gamescope)", "Oyun penceresi (Gamescope)"),
+                "monitor",
+                p.gamescope.enabled,
+            ),
+            "lsfg" => (
+                self.tr("Frame generation (lsfg-vk)", "Kare üretimi (lsfg-vk)"),
+                "layers",
+                p.lsfg.mode == LsfgMode::On,
+            ),
+            "vkbasalt" => (
+                self.tr("Sharpening (vkBasalt)", "Keskinleştirme (vkBasalt)"),
+                "wand-sparkles",
+                p.vkbasalt.enabled,
+            ),
             _ => (self.tr("Keep awake", "Uyku engelle"), "coffee", p.no_sleep),
         }
     }
@@ -1697,20 +1718,22 @@ impl Library {
             .filter(|g| groups.iter().any(|h| h.key == g.key))
             .or_else(|| (groups.len() == 1).then(|| groups[0]));
         let (icon, title, desc) = match current {
-            Some(g) => (g.icon, self.tr(g.name.0, g.name.1), self.tr(g.desc.0, g.desc.1)),
+            Some(g) => (
+                g.icon,
+                self.tr(g.name.0, g.name.1),
+                self.tr(g.desc.0, g.desc.1),
+            ),
             None => (tab.icon(), tab.name(self), tab.desc(self)),
         };
         if current.is_some() && groups.len() > 1 {
-            content = content.child(
-                div().flex().child(
-                    style::back_link("group-back", tab.name(self)).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.game_ui.group = None;
-                            cx.notify();
-                        },
-                    )),
-                ),
-            );
+            content = content.child(div().flex().child(
+                style::back_link("group-back", tab.name(self)).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.game_ui.group = None;
+                        cx.notify();
+                    },
+                )),
+            ));
         }
         content = content.child(
             div()
@@ -1723,7 +1746,12 @@ impl Library {
                         .items_center()
                         .gap_2()
                         .child(style::icon(icon, 18., pal::accent_light()))
-                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title)),
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(title),
+                        ),
                 )
                 .child(div().text_sm().text_color(pal::muted()).child(desc)),
         );

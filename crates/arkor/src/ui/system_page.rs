@@ -108,8 +108,8 @@ impl Library {
         let page = div().child(Self::header(
             self.tr("System", "Sistem"),
             self.tr(
-                "What Arkor sees on this computer.",
-                "Arkor'un bu bilgisayarda gördükleri.",
+                "What Arkor sees on this computer: graphics cards, drivers and the tools games use. Useful when you ask someone for help.",
+                "Arkor'un bu bilgisayarda gördükleri: ekran kartları, sürücüler ve oyunların kullandığı araçlar. Birinden yardım isterken işe yarar.",
             ),
         ));
         let Some((info, _)) = self.system.info.clone() else {

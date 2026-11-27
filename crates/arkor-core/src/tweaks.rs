@@ -112,8 +112,8 @@ pub const TWEAKS: &[Tweak] = &[
         "Upgrade FSR to FSR 4",
         "FSR'yi FSR 4'e yükselt",
         None,
-        "Games with FSR 3.1 use FSR 4 instead, for a much cleaner picture. Radeon RX 9000 cards (RX 7000 with newer Proton builds).",
-        "FSR 3.1'li oyunlar onun yerine FSR 4 kullanır; görüntü çok daha temiz olur. Radeon RX 9000 kartlar (yeni Proton sürümleriyle RX 7000).",
+        "Games with FSR 3.1 use FSR 4: a much cleaner picture. Radeon RX 9000 (and 7000) cards.",
+        "FSR 3.1'li oyunlar FSR 4 kullanır: çok daha temiz görüntü. Radeon RX 9000 (ve 7000) kartlar.",
     ),
     t(
         "xess_upgrade",

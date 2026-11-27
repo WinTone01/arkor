@@ -781,7 +781,10 @@ impl Library {
         match c {
             GameCat::Smooth => ("zap", self.tr("Smoother & faster", "Daha akıcı ve hızlı")),
             GameCat::Picture => ("palette", self.tr("Picture", "Görüntü")),
-            GameCat::Overlay => ("gauge", self.tr("Performance overlay", "Performans göstergesi")),
+            GameCat::Overlay => (
+                "gauge",
+                self.tr("Performance overlay", "Performans göstergesi"),
+            ),
             GameCat::Compatibility => ("wine", self.tr("Compatibility", "Uyumluluk")),
             GameCat::Starting => ("terminal", self.tr("Starting", "Başlatma")),
             GameCat::Game => ("gamepad-2", self.tr("Game", "Oyun")),
@@ -1230,32 +1233,60 @@ impl Library {
                 ),
             ],
             AppCat::Games => {
+                let with = |mut row: Row, sub: &str| {
+                    row.items[0].sub = sub.to_string();
+                    row
+                };
                 let mut rows = vec![
-                    line(
-                        Opt::GlobalHud,
-                        "gauge",
-                        t("MangoHud in every game", "Her oyunda MangoHud"),
-                    ),
-                    line(
-                        Opt::FullScreen,
-                        "maximize",
+                    with(
+                        line(
+                            Opt::GlobalHud,
+                            "gauge",
+                            t("FPS overlay in every game", "Her oyunda FPS göstergesi"),
+                        ),
                         t(
-                            "Keep games full screen (gamescope)",
-                            "Oyunları tam ekranda tut (gamescope)",
+                            "MangoHud shows FPS and temperatures on top of games.",
+                            "MangoHud oyunların üstünde FPS ve sıcaklığı gösterir.",
                         ),
                     ),
-                    line(
-                        Opt::CloudSaves,
-                        "cloud",
+                    with(
+                        line(
+                            Opt::FullScreen,
+                            "maximize",
+                            t(
+                                "Keep games full screen (gamescope)",
+                                "Oyunları tam ekranda tut (gamescope)",
+                            ),
+                        ),
                         t(
-                            "Saves follow the stores' clouds",
-                            "Kayıtlar mağaza bulutuyla eşitlensin",
+                            "Games open full screen in Valve's game window, as on the Steam Deck.",
+                            "Oyunlar Steam Deck'teki gibi Valve'ın oyun penceresinde tam ekran açılır.",
                         ),
                     ),
-                    line(
-                        Opt::DefaultProton,
-                        "wine",
-                        t("Proton for new games", "Yeni oyunlar için Proton"),
+                    with(
+                        line(
+                            Opt::CloudSaves,
+                            "cloud",
+                            t(
+                                "Saves follow the stores' clouds",
+                                "Kayıtlar mağaza bulutuyla eşitlensin",
+                            ),
+                        ),
+                        t(
+                            "Your saves go to Epic's or GOG's cloud and come back on another computer.",
+                            "Kayıtların Epic ya da GOG bulutuna gider, başka bir bilgisayarda geri gelir.",
+                        ),
+                    ),
+                    with(
+                        line(
+                            Opt::DefaultProton,
+                            "wine",
+                            t("Proton for new games", "Yeni oyunlar için Proton"),
+                        ),
+                        t(
+                            "What runs new Windows games. Automatic picks a good one.",
+                            "Yeni Windows oyunlarını ne çalıştıracak. Otomatik iyi bir tanesini seçer.",
+                        ),
                     ),
                     Row::new(
                         Kind::Line,

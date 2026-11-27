@@ -308,7 +308,9 @@ impl Library {
         use arkor_core::tweaks::Category::*;
         let wine_only = matches!(c, Upscaling | Fixes | Input | Display);
         !self.tweaks_of(c).is_empty()
-            && (!wine_only || g.needs_prefix() || matches!(g.kind, arkor_core::library::GameKind::Steam { .. }))
+            && (!wine_only
+                || g.needs_prefix()
+                || matches!(g.kind, arkor_core::library::GameKind::Steam { .. }))
     }
 
     /// How many of a category's switches are on for this game.
@@ -924,24 +926,28 @@ impl Library {
         card = card
             .child(widgets::subheading(self.tr("1. The game", "1. Oyun")))
             .child(
-                div().flex().flex_wrap().gap_2().children([false, true].map(|b32| {
-                    widgets::chip(
-                        ("nr-bits", usize::from(b32)),
-                        if b32 {
-                            self.tr("32-bit (older games)", "32-bit (eski oyunlar)")
-                        } else {
-                            self.tr("64-bit (most games)", "64-bit (çoğu oyun)")
-                        },
-                        bits32 == b32,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tools.dlssnr_32 = b32;
-                        if b32 && this.tools.dlssnr_route == bundles::NrRoute::Optiscaler {
-                            this.tools.dlssnr_route = bundles::NrRoute::ReshadeFeederVulkan;
-                        }
-                        cx.notify();
-                    }))
-                })),
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .children([false, true].map(|b32| {
+                        widgets::chip(
+                            ("nr-bits", usize::from(b32)),
+                            if b32 {
+                                self.tr("32-bit (older games)", "32-bit (eski oyunlar)")
+                            } else {
+                                self.tr("64-bit (most games)", "64-bit (çoğu oyun)")
+                            },
+                            bits32 == b32,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.tools.dlssnr_32 = b32;
+                            if b32 && this.tools.dlssnr_route == bundles::NrRoute::Optiscaler {
+                                this.tools.dlssnr_route = bundles::NrRoute::ReshadeFeederVulkan;
+                            }
+                            cx.notify();
+                        }))
+                    })),
             );
 
         // 2. The package.
@@ -1011,7 +1017,9 @@ impl Library {
             );
         }
         card = card
-            .child(widgets::subheading(self.tr("3. How it hooks in", "3. Nasıl bağlanacak")))
+            .child(widgets::subheading(
+                self.tr("3. How it hooks in", "3. Nasıl bağlanacak"),
+            ))
             .child(routes);
 
         // 4. The network it starts with.
@@ -1087,9 +1095,8 @@ impl Library {
         let mut buttons = div().flex().flex_wrap().gap_2();
         if has_models {
             buttons = buttons.child(
-                widgets::primary_button("nr-install-now", self.tr("Install", "Kur")).on_click(
-                    cx.listener(move |this, _, _, cx| install(this, None, cx)),
-                ),
+                widgets::primary_button("nr-install-now", self.tr("Install", "Kur"))
+                    .on_click(cx.listener(move |this, _, _, cx| install(this, None, cx))),
             );
         }
         buttons = buttons.child(
@@ -1141,7 +1148,10 @@ impl Library {
                 ),
             ),
             NrRoute::ReshadeFeederVulkan => (
-                self.tr("ReShade · Vulkan / DirectX 9", "ReShade · Vulkan / DirectX 9"),
+                self.tr(
+                    "ReShade · Vulkan / DirectX 9",
+                    "ReShade · Vulkan / DirectX 9",
+                ),
                 self.tr(
                     "Vulkan games and DirectX 9 games.",
                     "Vulkan oyunları ve DirectX 9 oyunları.",
@@ -2036,7 +2046,11 @@ impl Library {
     }
 
     /// The key that opens ReShade's menu in the game.
-    fn reshade_menu_key(&self, m: &arkor_launch::optiscaler::Manifest, cx: &mut Context<Self>) -> Div {
+    fn reshade_menu_key(
+        &self,
+        m: &arkor_launch::optiscaler::Manifest,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let current = arkor_launch::reshade::menu_key(m).unwrap_or(36);
         let mut keys = div().flex().flex_wrap().gap_2();
         for (ix, (code, name)) in arkor_launch::reshade::MENU_KEYS.into_iter().enumerate() {

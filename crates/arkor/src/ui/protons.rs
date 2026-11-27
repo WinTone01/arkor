@@ -420,8 +420,8 @@ impl Library {
             .child(Self::header(
                 self.tr("Proton & Wine", "Proton ve Wine"),
                 self.tr(
-                    "Builds Windows games run with. Pick one per game (game page → Compatibility) or a default for all (Settings → Game defaults).",
-                    "Windows oyunlarının çalıştığı derlemeler. Oyun başına seç (oyun sayfası → Uyumluluk) ya da hepsi için varsayılan belirle (Ayarlar → Oyun varsayılanları).",
+                    "Proton is what runs Windows games on Linux. Arkor picks a good one by itself; install another here only if a game needs it. Choose one per game (game page → Compatibility) or for every game (Settings → Game defaults).",
+                    "Proton, Windows oyunlarını Linux'ta çalıştıran yazılımdır. Arkor kendiliğinden iyi bir tanesini seçer; buradan başkasını yalnızca bir oyun isterse kur. Oyun başına (oyun sayfası → Uyumluluk) ya da tüm oyunlar için (Ayarlar → Oyun varsayılanları) seç.",
                 ),
             ))
             .child(content)

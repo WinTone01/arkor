@@ -2246,11 +2246,32 @@ impl Library {
                     self.shops.on_open = Some(("login".into(), shop.into()));
                     vec![Screen::Stores]
                 }
-                Some(("settings", id)) => vec![
-                    Screen::Library,
-                    Screen::Game(id.into()),
-                    Screen::GameSettings(id.into()),
-                ],
+                Some(("settings", rest)) => {
+                    use super::console_settings::GameCat;
+                    // `settings/<id>/<category>` opens one of the game's categories.
+                    let (id, cat) = match rest.split_once('/') {
+                        Some((id, c)) => (
+                            id,
+                            match c {
+                                "smooth" | "performance" => Some(GameCat::Smooth),
+                                "picture" => Some(GameCat::Picture),
+                                "overlay" | "mangohud" => Some(GameCat::Overlay),
+                                "compatibility" | "proton" => Some(GameCat::Compatibility),
+                                "starting" | "launch" => Some(GameCat::Starting),
+                                "game" => Some(GameCat::Game),
+                                _ => None,
+                            },
+                        ),
+                        None => (rest, None),
+                    };
+                    let mut v = vec![
+                        Screen::Library,
+                        Screen::Game(id.into()),
+                        Screen::GameSettings(id.into()),
+                    ];
+                    v.extend(cat.map(|c| Screen::GameCat(id.into(), c)));
+                    v
+                }
                 Some((shop, id)) if Shop::from_key(shop).is_some() => vec![
                     Screen::Stores,
                     Screen::ShopGame(Shop::from_key(shop).expect("checked"), id.into()),
@@ -2268,6 +2289,7 @@ impl Library {
             s @ (Screen::SettingsCat(_) | Screen::Settings) => self.console_open(s, cx),
             Screen::Game(id)
             | Screen::GameSettings(id)
+            | Screen::GameCat(id, _)
             | Screen::Saves(id)
             | Screen::Mods(id)
             | Screen::Trouble(id) => {
