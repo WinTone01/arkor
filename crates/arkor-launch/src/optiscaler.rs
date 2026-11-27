@@ -6,6 +6,11 @@
 //! manifest and any game file it would overwrite is kept as `<name>.arkor-backup`, so
 //! uninstalling restores the folder exactly. While installed, games launch with
 //! `WINEDLLOVERRIDES=<proxy>=n,b` so Wine loads OptiScaler instead of its builtin DLL.
+//!
+//! fakenvapi (which lets AMD and Intel cards use Reflex-style latency reduction and the
+//! frame generation that needs it) ships inside OptiScaler's release, often an older build.
+//! The newest one from its own repository is kept in `tools/fakenvapi/<tag>/` and installed
+//! in its place.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,6 +20,7 @@ use arkor_core::GameId;
 use serde::{Deserialize, Serialize};
 
 const REPO_API: &str = "https://api.github.com/repos/optiscaler/OptiScaler/releases/latest";
+const FAKENVAPI_API: &str = "https://api.github.com/repos/optiscaler/fakenvapi/releases/latest";
 const BACKUP_SUFFIX: &str = ".arkor-backup";
 
 /// DLL names Windows games load that OptiScaler can pose as. `dxgi` works for most
@@ -235,7 +241,59 @@ pub fn download(release: &Release) -> anyhow::Result<PathBuf> {
     let source = find_dll_dir(&unpacked).context("archive does not contain OptiScaler.dll")?;
     std::fs::rename(&source, &dest).with_context(|| format!("moving into {}", dest.display()))?;
     let _ = std::fs::remove_dir_all(&staging);
+    // Best effort: OptiScaler works with the fakenvapi it ships.
+    if let Err(e) = update_fakenvapi() {
+        eprintln!("arkor: newer fakenvapi not downloaded: {e:#}");
+    }
     Ok(dest)
+}
+
+fn fakenvapi_root() -> anyhow::Result<PathBuf> {
+    Ok(dirs::data_dir()
+        .context("no XDG data dir")?
+        .join("arkor/tools/fakenvapi"))
+}
+
+/// The newest downloaded fakenvapi: (tag, folder holding `fakenvapi.dll`).
+pub fn fakenvapi() -> Option<(String, PathBuf)> {
+    let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(fakenvapi_root().ok()?)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().join("fakenvapi.dll").is_file())
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    found.sort_by_key(|(tag, _)| std::cmp::Reverse(crate::start::natural_key(tag)));
+    found.into_iter().next()
+}
+
+/// Downloads the latest fakenvapi when it is not there yet; its tag. Blocking.
+pub fn update_fakenvapi() -> anyhow::Result<String> {
+    let release = parse_release(&crate::tools::http_get(FAKENVAPI_API)?)?;
+    let root = fakenvapi_root()?;
+    let dest = root.join(&release.tag);
+    if dest.join("fakenvapi.dll").is_file() {
+        return Ok(release.tag);
+    }
+    let staging = root.join(format!(".{}.partial", release.tag));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)?;
+    let archive = staging.join("release.archive");
+    crate::tools::download(&release.url, &archive)?;
+    let unpacked = staging.join("files");
+    extract(&archive, &unpacked)?;
+    anyhow::ensure!(
+        unpacked.join("fakenvapi.dll").is_file(),
+        "the fakenvapi archive has no fakenvapi.dll"
+    );
+    std::fs::rename(&unpacked, &dest)?;
+    let _ = std::fs::remove_dir_all(&staging);
+    // Older copies are not needed any more.
+    for e in std::fs::read_dir(&root)?.flatten() {
+        if e.path() != dest {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+    Ok(release.tag)
 }
 
 fn extract(archive: &Path, into: &Path) -> anyhow::Result<()> {
@@ -410,6 +468,7 @@ pub fn install(
         "unsupported proxy DLL `{proxy}`"
     );
     let dll = format!("{proxy}.dll");
+    let newer_fakenvapi = fakenvapi().map(|(_, dir)| dir.join("fakenvapi.dll"));
     let files = release_entries(source)?
         .into_iter()
         .map(|rel| {
@@ -418,7 +477,13 @@ pub fn install(
             } else {
                 rel.clone()
             };
-            (source.join(rel), dest)
+            let src = match &newer_fakenvapi {
+                Some(newer) if rel.as_os_str().eq_ignore_ascii_case("fakenvapi.dll") => {
+                    newer.clone()
+                }
+                _ => source.join(rel),
+            };
+            (src, dest)
         })
         .collect();
     install_files(Mod::OptiScaler, id, version, files, target_dir, &dll)

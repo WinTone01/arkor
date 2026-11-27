@@ -36,7 +36,7 @@ usage:
   arkor proton installed | list <ge|cachyos|dw|wineland|umu|em|sarek> | install <variant> <tag>
                                           Proton versions
   arkor optiscaler download [--edge] | install <id> <dir> [proxy] | remove <id>
-                  | optipatcher <id> [remove] | fsr4 <id> <dll|remove>
+                  | optipatcher <id> [remove] | fsr4 <id> <dll|remove> | fakenvapi
                                           OptiScaler
   arkor dlss-enabler download | install <id> <dir> | remove <id>
                                           DLSS Enabler
@@ -668,6 +668,9 @@ fn optiscaler(args: &[String]) -> anyhow::Result<()> {
                 release.size / 1_000_000
             );
             println!("ready: {}", optiscaler::download(&release)?.display());
+        }
+        Some("fakenvapi") => {
+            println!("fakenvapi {} ready", optiscaler::update_fakenvapi()?);
         }
         Some("fsr4") => {
             let id: GameId = arg(args, 1)?.parse()?;
