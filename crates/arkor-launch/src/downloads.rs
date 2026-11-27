@@ -576,8 +576,107 @@ pub fn start() {
     });
 }
 
+/// Why downloads wait now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hold {
+    /// No network (no default route).
+    Offline,
+    /// The connection is metered and the user said not on those.
+    Metered,
+    /// Outside the hours the user chose.
+    Hours,
+}
+
+/// Whether this computer has a way out (a default route, IPv4 or IPv6).
+fn online() -> bool {
+    let v4 = std::fs::read_to_string("/proc/net/route").is_ok_and(|t| {
+        t.lines()
+            .skip(1)
+            .any(|l| l.split_whitespace().nth(1) == Some("00000000"))
+    });
+    let v6 = std::fs::read_to_string("/proc/net/ipv6_route").is_ok_and(|t| {
+        t.lines().any(|l| {
+            let mut w = l.split_whitespace();
+            w.next() == Some("00000000000000000000000000000000")
+                && w.next() == Some("00")
+                && w.last() != Some("lo")
+        })
+    });
+    v4 || v6
+}
+
+/// Whether NetworkManager says a connection in use is metered.
+fn metered() -> bool {
+    std::process::Command::new("nmcli")
+        .args(["-t", "-g", "GENERAL.METERED", "device", "show"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l.trim().starts_with("yes"))
+        })
+}
+
+/// Why downloads wait now, if they do (checked every few seconds). Blocking (briefly).
+pub fn hold() -> Option<Hold> {
+    static LAST: Mutex<Option<(std::time::Instant, Option<Hold>)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, h)) = *last
+        && at.elapsed() < std::time::Duration::from_secs(5)
+    {
+        return h;
+    }
+    let rules = arkor_core::Global::load_or_import()
+        .map(|g| g.download_rules)
+        .unwrap_or_default();
+    let hour = arkor_core::stats::local_day(arkor_core::stats::now()).hour as u8;
+    let h = if cfg!(test) {
+        None
+    } else if !online() {
+        Some(Hold::Offline)
+    } else if !rules.hour_allowed(hour) {
+        Some(Hold::Hours)
+    } else if rules.not_metered && metered() {
+        Some(Hold::Metered)
+    } else {
+        None
+    };
+    *last = Some((std::time::Instant::now(), h));
+    h
+}
+
+/// Items paused because downloads had to wait (resumed when they may run again).
+static HELD: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Pauses what runs while downloads must wait, and resumes it after.
+fn apply_hold() -> bool {
+    let waiting = hold().is_some();
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    if waiting {
+        for e in progress::list() {
+            if !e.external && pending(&e.key) && !held.contains(&e.key) {
+                held.push(e.key.clone());
+                drop(held);
+                pause(&e.key);
+                held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            }
+        }
+    } else if !held.is_empty() {
+        for key in std::mem::take(&mut *held) {
+            resume(&key);
+        }
+    }
+    waiting
+}
+
 fn worker(games: bool) {
     loop {
+        if apply_hold() {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            continue;
+        }
         let next = QUEUE
             .lock()
             .unwrap_or_else(|e| e.into_inner())

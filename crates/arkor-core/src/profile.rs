@@ -413,6 +413,9 @@ pub struct Global {
     /// own options. Written only when changed.
     #[serde(skip_serializing_if = "Emulators::is_default")]
     pub emulators: Emulators,
+    /// When downloads may run (see `arkor_launch::downloads::hold`). Written only when changed.
+    #[serde(skip_serializing_if = "DownloadRules::is_default")]
+    pub download_rules: DownloadRules,
     /// No look-ups of games' descriptions, screenshots and the like.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_game_info: bool,
@@ -705,6 +708,34 @@ impl Clips {
 
     pub fn seconds(&self) -> u32 {
         self.seconds.unwrap_or(60).clamp(5, 1800)
+    }
+}
+
+/// When downloads may run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DownloadRules {
+    /// Not on a metered connection (a phone's hotspot, a mobile line).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_metered: bool,
+    /// Only between these hours (start, end; 1 and 7 = 01:00 to 07:00; may pass midnight).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hours: Option<(u8, u8)>,
+}
+
+impl DownloadRules {
+    pub fn is_default(&self) -> bool {
+        *self == DownloadRules::default()
+    }
+
+    /// Whether `hour` (0–23) is inside the hours downloads may run in.
+    pub fn hour_allowed(&self, hour: u8) -> bool {
+        match self.hours {
+            None => true,
+            Some((a, b)) if a == b => true,
+            Some((a, b)) if a < b => (a..b).contains(&hour),
+            Some((a, b)) => hour >= a || hour < b,
+        }
     }
 }
 
@@ -1091,5 +1122,22 @@ mod appearance_default_tests {
             )
         );
         assert!(a.sounds && a.accent.is_none() && !a.reduce_motion);
+    }
+}
+
+#[cfg(test)]
+mod download_rules_tests {
+    use super::DownloadRules;
+
+    #[test]
+    fn hours_may_pass_midnight() {
+        let r = |a, b| DownloadRules {
+            hours: Some((a, b)),
+            ..Default::default()
+        };
+        assert!(DownloadRules::default().hour_allowed(15));
+        assert!(r(1, 7).hour_allowed(3) && !r(1, 7).hour_allowed(7));
+        assert!(r(22, 8).hour_allowed(23) && r(22, 8).hour_allowed(2));
+        assert!(!r(22, 8).hour_allowed(12));
     }
 }

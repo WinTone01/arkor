@@ -556,8 +556,88 @@ impl Library {
         out
     }
 
+    /// Why downloads wait, and when they may run.
+    fn download_rules(&mut self, cx: &mut Context<Self>) -> Div {
+        use arkor_launch::downloads::Hold;
+        let rules = self.global.download_rules.clone();
+        let mut card =
+            widgets::section(self.tr("When downloads run", "İndirmeler ne zaman çalışır"));
+        if let Some(h) = self.downloads_hold {
+            let why = match h {
+                Hold::Offline => self.tr(
+                    "Waiting: no network. Downloads go on by themselves when it is back.",
+                    "Bekliyor: ağ yok. Ağ gelince indirmeler kendiliğinden sürer.",
+                ),
+                Hold::Metered => self.tr(
+                    "Waiting: the connection is metered.",
+                    "Bekliyor: bağlantı ölçülü (kotalı).",
+                ),
+                Hold::Hours => self.tr(
+                    "Waiting for the download hours.",
+                    "İndirme saatleri bekleniyor.",
+                ),
+            };
+            card = card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(pal::warning())
+                    .child(style::icon("pause", 14., pal::warning()))
+                    .child(why),
+            );
+        }
+        let metered = rules.not_metered;
+        card = card.child(widgets::setting_row(
+            self.tr("Not on metered connections", "Ölçülü bağlantıda indirme"),
+            self.tr(
+                "A phone's hotspot or a mobile line, as NetworkManager marks them.",
+                "Telefonun erişim noktası ya da mobil hat; NetworkManager'ın işaretlediği gibi.",
+            ),
+            widgets::switch(metered)
+                .id("dl-metered")
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.global.download_rules.not_metered = !metered;
+                    this.save_global_rules(cx);
+                })),
+        ));
+        let choices: [(&'static str, Option<(u8, u8)>); 4] = [
+            (self.tr("Any time", "Her zaman"), None),
+            (self.tr("At night (1–7)", "Gece (1–7)"), Some((1, 7))),
+            (
+                self.tr("Evening and night (22–8)", "Akşam ve gece (22–8)"),
+                Some((22, 8)),
+            ),
+            (
+                self.tr("Working hours (9–17)", "Mesai (9–17)"),
+                Some((9, 17)),
+            ),
+        ];
+        let mut row = div().flex().flex_wrap().gap_1();
+        for (ix, (label, hours)) in choices.into_iter().enumerate() {
+            row = row.child(
+                widgets::chip(("dl-hours", ix), label, rules.hours == hours).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.global.download_rules.hours = hours;
+                        this.save_global_rules(cx);
+                    },
+                )),
+            );
+        }
+        card.child(widgets::setting_row(self.tr("Hours", "Saatler"), "", row))
+    }
+
+    fn save_global_rules(&mut self, cx: &mut Context<Self>) {
+        let r = self.global.save();
+        self.report(r);
+        cx.notify();
+    }
+
     /// The overview: current download, up next, completed.
     pub(super) fn downloads_overview(&mut self, cx: &mut Context<Self>) -> Div {
+        self.check_hold(cx);
         let active = progress::list();
         let mut out = div().flex().flex_col().gap_5();
         // Real downloads first; parts only being checked come after.
@@ -614,6 +694,31 @@ impl Library {
                 true,
             )));
         }
-        out.child(self.up_next(cx)).child(self.completed(cx))
+        out.child(self.download_rules(cx))
+            .child(self.up_next(cx))
+            .child(self.completed(cx))
+    }
+
+    /// Asks again (in the background) why downloads wait, every few seconds while shown.
+    fn check_hold(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test)
+            || self
+                .downloads_hold_at
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5))
+        {
+            return;
+        }
+        self.downloads_hold_at = Some(std::time::Instant::now());
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let h = bg.spawn(async { arkor_launch::downloads::hold() }).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.downloads_hold != h {
+                    this.downloads_hold = h;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 }

@@ -188,6 +188,9 @@ pub struct Library {
     info: game_info::InfoUi,
     info_igdb: Option<bool>,
     stats_ui: stats_page::StatsUi,
+    /// Why downloads wait (asked every few seconds while the Downloads page shows).
+    downloads_hold: Option<arkor_launch::downloads::Hold>,
+    downloads_hold_at: Option<std::time::Instant>,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -279,6 +282,8 @@ impl Library {
             info: Default::default(),
             info_igdb: None,
             stats_ui: Default::default(),
+            downloads_hold: None,
+            downloads_hold_at: None,
             restore_pending: None,
             required: Default::default(),
         };
