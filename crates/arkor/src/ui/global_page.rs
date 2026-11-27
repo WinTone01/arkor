@@ -363,6 +363,7 @@ impl Library {
                         .child(sgdb),
                 )
                 .child(self.render_info_settings(cx))
+                .child(self.render_sync_settings(cx))
                 .child(self.render_sunshine(cx))
                 .child(
                     widgets::section("Discord")

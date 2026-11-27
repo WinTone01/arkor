@@ -434,6 +434,9 @@ pub struct Global {
     /// set, so older Arkor versions still read the file).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_save_backups: bool,
+    /// Keeping statuses, ratings, notes and play time the same on several computers.
+    #[serde(skip_serializing_if = "SyncSettings::is_off")]
+    pub sync: SyncSettings,
     /// How many games the user wants to beat in a year (0 = no goal).
     #[serde(skip_serializing_if = "is_zero")]
     pub beat_goal: u32,
@@ -1418,5 +1421,25 @@ mod theme_tests {
         assert_eq!(ConsoleTheme::import(&f).unwrap().layout, "shelves");
         std::fs::write(&f, "nope").unwrap();
         assert!(ConsoleTheme::import(&f).is_err());
+    }
+}
+
+/// Where the computers meet to sync (see `crate::sync`): a folder they share (Syncthing,
+/// Dropbox, a network drive, the other side of a dual boot), or an rclone remote.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncSettings {
+    pub folder: Option<PathBuf>,
+    /// `name:path` of a remote set up with `rclone config`.
+    pub rclone: Option<String>,
+}
+
+impl SyncSettings {
+    fn is_off(&self) -> bool {
+        self.folder.is_none() && self.rclone.is_none()
+    }
+
+    pub fn is_on(&self) -> bool {
+        !self.is_off()
     }
 }

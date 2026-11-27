@@ -1093,6 +1093,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.watch_nxm(cx);
                 lib.emu_watch(cx);
                 lib.info_fill_all(cx);
+                lib.sync_now(cx);
                 lib.friends_watch(cx);
                 lib.startup_updates(cx);
                 lib

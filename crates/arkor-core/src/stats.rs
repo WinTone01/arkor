@@ -179,6 +179,16 @@ pub fn add_note(game: &str, text: &str) -> anyhow::Result<()> {
     )
 }
 
+/// Adds a note as it is (from another computer).
+pub fn add_note_at(note: &Note) -> anyhow::Result<()> {
+    append_line("notes.jsonl", note)
+}
+
+/// Adds a status change as it is (from another computer).
+pub fn add_status_change(c: &StatusChange) -> anyhow::Result<()> {
+    append_line("status-history.jsonl", c)
+}
+
 /// Every note, oldest first.
 pub fn notes() -> Vec<Note> {
     read_lines("notes.jsonl")

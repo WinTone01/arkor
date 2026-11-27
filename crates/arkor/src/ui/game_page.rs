@@ -142,6 +142,7 @@ impl Library {
                 let failure = failure.filter(|_| !this.stopping.remove(&id.to_string()));
                 this.running.remove(&id.to_string());
                 this.stats_forget();
+                this.sync_now(cx);
                 this.saves_after(&id, cx);
                 this.trouble_ended(&id, ended, cx);
                 this.quick_over(&id.id, cx);

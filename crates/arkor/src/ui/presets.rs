@@ -192,4 +192,122 @@ impl Library {
         }
         card
     }
+
+    /// Syncs with the other computers in the background, when a place is set.
+    pub(super) fn sync_now(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) || !self.global.sync.is_on() {
+            return;
+        }
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let r = bg.spawn(async { arkor_launch::sync::run() }).await;
+            let _ = this.update(cx, |this, cx| {
+                match r {
+                    Ok(Some(rep)) if rep.games + rep.sessions + rep.notes > 0 => {
+                        if let Ok(lib) = arkor_core::library::Library::load() {
+                            this.library = lib;
+                            this.reload_games();
+                            this.apply_filter();
+                        }
+                        this.stats_forget();
+                        this.status = Some(
+                            format!(
+                                "{}: {} {} · {} {}",
+                                this.tr("Synced", "Eşitlendi"),
+                                rep.games,
+                                this.tr("games", "oyun"),
+                                rep.sessions,
+                                this.tr("sessions", "oturum")
+                            )
+                            .into(),
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        this.status = Some(format!("{}: {e:#}", this.tr("Sync", "Eşitleme")).into())
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Settings → Integrations: where the computers meet.
+    pub(super) fn render_sync_settings(&mut self, cx: &mut Context<Self>) -> Div {
+        let folder = self
+            .global
+            .sync
+            .folder
+            .as_ref()
+            .map(|f| f.display().to_string())
+            .unwrap_or_else(|| self.tr("No folder chosen", "Klasör seçilmedi").to_string());
+        let remote = self.field(
+            "sync-rclone",
+            |this| this.global.sync.rclone.clone().unwrap_or_default(),
+            "gdrive:arkor",
+            cx,
+            |this, text| {
+                let t = text.trim();
+                this.global.sync.rclone = (!t.is_empty()).then(|| t.to_string());
+                let r = this.global.save();
+                this.report(r);
+            },
+        );
+        widgets::section(self.tr("Sync between computers", "Bilgisayarlar arası eşitleme"))
+            .child(widgets::label(self.tr(
+                "Statuses, ratings, favourites, categories, journal notes and play time stay the same on all your computers (or both sides of a dual boot). Each computer writes one file into a shared place and reads the others'. Your games and saves are not copied.",
+                "Durumlar, puanlar, favoriler, kategoriler, günlük notları ve oynama süresi bütün bilgisayarlarında aynı kalır (ya da çift önyüklemenin iki tarafında). Her bilgisayar ortak bir yere bir dosya yazar ve diğerlerininkini okur. Oyunların ve kayıtların kopyalanmaz.",
+            )))
+            .child(widgets::setting_row(
+                self.tr("Shared folder", "Ortak klasör"),
+                self.tr(
+                    "A folder every computer sees: Syncthing, Dropbox, Nextcloud, a network drive.",
+                    "Her bilgisayarın gördüğü bir klasör: Syncthing, Dropbox, Nextcloud, ağ sürücüsü.",
+                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_sm().text_color(pal::muted()).child(folder))
+                    .child(
+                        widgets::chip("sync-folder", self.tr("Choose…", "Seç…"), false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                let title = this.tr("The shared folder", "Ortak klasör");
+                                this.prompt_path(true, title, cx, |this, dir, cx| {
+                                    this.global.sync.folder = Some(dir);
+                                    let r = this.global.save();
+                                    this.report(r);
+                                    this.sync_now(cx);
+                                    cx.notify();
+                                });
+                            }),
+                        ),
+                    )
+                    .children(self.global.sync.folder.is_some().then(|| {
+                        widgets::chip("sync-folder-off", self.tr("Stop", "Kapat"), false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.global.sync.folder = None;
+                                let r = this.global.save();
+                                this.report(r);
+                                cx.notify();
+                            }),
+                        )
+                    })),
+            ))
+            .child(widgets::setting_row(
+                self.tr("Or a cloud (rclone)", "Ya da bir bulut (rclone)"),
+                self.tr(
+                    "A remote set up with `rclone config` and a folder in it, like gdrive:arkor. Used when no shared folder is chosen.",
+                    "`rclone config` ile kurulmuş bir uzak alan ve içinde bir klasör, ör. gdrive:arkor. Ortak klasör seçili değilse kullanılır.",
+                ),
+                div().w(px(240.)).child(remote),
+            ))
+            .child(
+                div().flex().child(
+                    widgets::chip("sync-now", self.tr("Sync now", "Şimdi eşitle"), false)
+                        .on_click(cx.listener(|this, _, _, cx| this.sync_now(cx))),
+                ),
+            )
+    }
 }

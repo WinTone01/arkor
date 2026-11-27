@@ -38,6 +38,8 @@ usage:
   arkor optiscaler download [--edge] | install <id> <dir> [proxy] | remove <id>
                   | optipatcher <id> [remove] | fsr4 <id> <dll|remove> | fakenvapi
                                           OptiScaler
+  arkor sync                              sync statuses, ratings, notes and play time
+                                          with your other computers
   arkor preset list | save <id> <name> | apply <name> <id>… | remove <name>
                                           launch presets (a game's settings, for others)
   arkor anr download | install <id> <dir> [dxgi|winmm|version] | update <id> | remove <id>
@@ -414,6 +416,18 @@ fn main() -> anyhow::Result<()> {
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
         Some("anr") => anr(&args[1..]),
         Some("preset") => preset(&args[1..]),
+        Some("sync") => {
+            match arkor_launch::sync::run()? {
+                Some(r) => println!(
+                    "synced with {} other computers: {} games, {} sessions, {} notes taken in",
+                    r.machines, r.games, r.sessions, r.notes
+                ),
+                None => {
+                    println!("no sync folder or rclone remote is set (Settings → Integrations)")
+                }
+            }
+            Ok(())
+        }
         Some("reshade") => reshade(&args[1..]),
         Some("saves") => saves(&args[1..]),
         // Saves the running game's last moments; said in a notification, as a key started it.

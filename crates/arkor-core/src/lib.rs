@@ -12,6 +12,7 @@ pub mod mangohud;
 pub mod paths;
 pub mod profile;
 pub mod stats;
+pub mod sync;
 pub mod tweaks;
 pub mod vkbasalt;
 
