@@ -712,7 +712,6 @@ impl Library {
             let bg = cx.background_executor().clone();
             cx.background_executor()
                 .spawn(async move {
-                    // It shows itself once its page is drawn (up to five seconds).
                     for wait in [250, 700, 1500, 3000, 5500] {
                         bg.timer(Duration::from_millis(wait)).await;
                         super::desk::show_process(pid);

@@ -39,7 +39,7 @@ enum Done {
     Line(String),
     /// A page that asked for a window of its own: shown here instead.
     Open(String),
-    /// The first page is drawn (or has had long enough): the window comes up.
+    /// A page is drawn: the gamepad's pointer goes on it.
     Ready,
     /// A button of the gamepad, from Arkor.
     Nav(String),
@@ -169,9 +169,9 @@ fn run(
         } else {
             LogicalSize::new(520.0, 760.0)
         })
-        .with_always_on_top(!browse)
-        // Not shown blank: it comes up once the page is there.
-        .with_visible(false);
+        // Shown at once: a window that starts hidden is never drawn by WebKit on some machines
+        // (it stayed grey on NVIDIA). The page's dark background covers the wait instead.
+        .with_always_on_top(!browse);
     if console {
         builder = builder.with_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
     }
@@ -220,18 +220,13 @@ fn run(
         WebViewBuilder::new()
     };
     let ready_proxy = event_loop.create_proxy();
-    let late_proxy = event_loop.create_proxy();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        let _ = late_proxy.send_event(Done::Ready);
-    });
     let line_proxy = event_loop.create_proxy();
     let open_proxy = event_loop.create_proxy();
     let builder = builder
         // Dark until the page draws itself (no white flash).
         .with_background_color((12, 11, 18, 255))
         .with_on_page_load_handler(move |event, _| {
-            // Every page: the first brings the window up, each one gets the pointer drawn.
+            // Every page gets the pointer drawn.
             if matches!(event, wry::PageLoadEvent::Finished) {
                 let _ = ready_proxy.send_event(Done::Ready);
             }
@@ -333,7 +328,6 @@ fn run(
             ));
         },
     );
-    let mut shown = false;
     // The page's keyboard has the gamepad.
     let mut keyboard = false;
     event_loop.run(move |event, _, flow| {
@@ -375,10 +369,6 @@ fn run(
                 }
             }
             Event::UserEvent(Done::Ready) => {
-                if !std::mem::replace(&mut shown, true) {
-                    window.set_visible(true);
-                    window.set_focus();
-                }
                 // Console mode: the pointer is there from the start, in the middle.
                 if console && !keyboard {
                     if pointer.out() {
