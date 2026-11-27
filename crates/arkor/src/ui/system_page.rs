@@ -350,7 +350,7 @@ impl Library {
                                 .font_family("monospace")
                                 .text_color(pal::text_soft())
                                 .truncate()
-                                .child(format!("sudo pacman -S --needed {}", repo.join(" "))),
+                                .child(arkor_launch::pkg::install_line(&repo).unwrap_or_default()),
                         )
                         .child(if self.system.installing {
                             widgets::label(self.tr("Installing…", "Kuruluyor…")).into_any_element()
@@ -380,6 +380,11 @@ impl Library {
                             this.install_missing(pkgs.clone(), true, cx)
                         }))
                         .into_any_element(),
+                    None if !tools::has_aur() => widgets::label(self.tr(
+                        "Not in this distribution's packages: install them from their own sites or Flatpak.",
+                        "Bu dağıtımın paketlerinde yok: kendi sitelerinden ya da Flatpak ile kur.",
+                    ))
+                    .into_any_element(),
                     None => widgets::label(self.tr(
                         "Install an AUR helper (paru or yay) to download these here.",
                         "Bunları buradan indirmek için bir AUR yardımcısı (paru ya da yay) kur.",
@@ -393,10 +398,14 @@ impl Library {
                         .gap_3()
                         .child(div().flex_1().min_w_0().child(widgets::label(format!(
                             "{} {}",
-                            self.tr(
-                                "From the AUR (a terminal opens to build it; confirm there):",
-                                "AUR'dan (derlemek için bir terminal açılır; orada onayla):"
-                            ),
+                            if tools::has_aur() {
+                                self.tr(
+                                    "From the AUR (a terminal opens to build it; confirm there):",
+                                    "AUR'dan (derlemek için bir terminal açılır; orada onayla):",
+                                )
+                            } else {
+                                self.tr("Not packaged here:", "Bu dağıtımda paketi yok:")
+                            },
                             other.join(", ")
                         ))))
                         .child(action),

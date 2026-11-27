@@ -23,6 +23,25 @@ fi
 [ "$(uname -m)" = "x86_64" ] || die "Arkor releases are built for x86_64."
 for tool in curl tar; do command -v "$tool" >/dev/null || die "$tool is needed."; done
 
+# Releases are built against glibc 2.35 (Ubuntu 22.04); older systems cannot run them.
+glibc=$(ldd --version 2>/dev/null | head -n1 | grep -o '[0-9]\+\.[0-9]\+$' || true)
+if [ -n "$glibc" ] && [ "$(printf '%s\n2.35\n' "$glibc" | sort -V | head -n1)" != "2.35" ]; then
+  die "Arkor needs glibc 2.35 or newer (this system has $glibc)."
+fi
+
+# The command that installs a package here, by the distribution's family.
+install_hint() {
+  local id
+  id=$(. /etc/os-release 2>/dev/null; echo "${ID:-} ${ID_LIKE:-}")
+  case " $id " in
+    *" arch "*|*" cachyos "*|*" manjaro "*|*" endeavouros "*) echo "sudo pacman -S --needed $1" ;;
+    *" debian "*|*" ubuntu "*) echo "sudo apt install $2" ;;
+    *" fedora "*|*" rhel "*) echo "sudo dnf install $3" ;;
+    *" suse "*|*" opensuse "*) echo "sudo zypper install $4" ;;
+    *) echo "your package manager: WebKitGTK 4.1" ;;
+  esac
+}
+
 say "Looking up the latest release…"
 api=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest") || die "could not reach GitHub."
 url=$(printf '%s' "$api" | grep -o '"browser_download_url": *"[^"]*x86_64-linux\.tar\.gz"' | head -n1 | sed 's/.*"\(https[^"]*\)"/\1/')
@@ -56,4 +75,10 @@ command -v update-desktop-database >/dev/null && update-desktop-database -q "$pr
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qtf "$prefix/share/icons/hicolor" 2>/dev/null || true
 
 say "Arkor $tag is installed. Start it from the app menu or run: $bin"
+# Store logins and the mod browser open in a window of their own, which needs WebKitGTK 4.1
+# (without it they open in the web browser).
+if command -v ldconfig >/dev/null && ! ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1.so.0'; then
+  echo "   For store logins in Arkor's own window, install WebKitGTK:"
+  echo "   $(install_hint webkit2gtk-4.1 libwebkit2gtk-4.1-0 webkit2gtk4.1 libwebkit2gtk-4_1-0)"
+fi
 case ":$PATH:" in *":$prefix/bin:"*) ;; *) echo "   ($prefix/bin is not on your PATH; the app menu entry works anyway.)";; esac

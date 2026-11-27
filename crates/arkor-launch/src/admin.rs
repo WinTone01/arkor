@@ -47,15 +47,24 @@ pub fn check_password(password: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Installs repository packages with pacman. Blocking.
+/// Installs repository packages (Arch's names) with the distribution's package manager.
+/// Blocking.
 pub fn install_packages(packages: &[&str], password: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!packages.is_empty(), "nothing to install");
-    let mut cmd = vec!["pacman", "-S", "--needed", "--noconfirm", "--"];
-    cmd.extend(packages);
+    let m = crate::pkg::manager().context("no package manager Arkor knows was found")?;
+    let (names, missing) = crate::pkg::translate(packages);
+    anyhow::ensure!(
+        !names.is_empty(),
+        "not packaged for this distribution: {}",
+        missing.join(", ")
+    );
+    let cmd = m.install_command(&names);
+    let cmd: Vec<&str> = cmd.iter().map(String::as_str).collect();
     let out = sudo(password, &cmd)?;
     anyhow::ensure!(
         out.status.success(),
-        "pacman failed: {}",
+        "{} failed: {}",
+        m.program(),
         String::from_utf8_lossy(&out.stderr)
             .lines()
             .filter(|l| l.contains("error"))

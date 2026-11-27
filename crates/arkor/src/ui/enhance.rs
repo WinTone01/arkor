@@ -1960,9 +1960,10 @@ impl Library {
             .on_click(cx.listener(|this, _, _, cx| this.edit_vkb(cx, |v| v.enabled = !v.enabled))),
         );
         if !self.tools.vkbasalt_installed {
-            card = card.child(warning(self.tr(
-                "vkBasalt is not installed: sudo pacman -S vkbasalt",
-                "vkBasalt kurulu değil: sudo pacman -S vkbasalt",
+            let line = arkor_launch::pkg::install_line(&["vkbasalt"]).unwrap_or_default();
+            card = card.child(warning(format!(
+                "{} {line}",
+                self.tr("vkBasalt is not installed:", "vkBasalt kurulu değil:")
             )));
         }
         if !v.enabled {

@@ -323,18 +323,9 @@ fn layer_installed(json: &str) -> bool {
     })
 }
 
+/// The installed version of a package (Arch's name), from this distribution's packages.
 fn pacman_version(pkg: &str) -> Option<String> {
-    let out = std::process::Command::new("pacman")
-        .args(["-Q", pkg])
-        .output()
-        .ok()?;
-    out.status.success().then(|| {
-        String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("")
-            .to_string()
-    })
+    crate::pkg::version(pkg)
 }
 
 /// Status of every external tool Arkor integrates with.
@@ -636,15 +627,20 @@ pub fn http_get_json(url: &str, token: &str) -> anyhow::Result<Option<String>> {
     }
 }
 
-/// Splits `packages` into those in the configured pacman repositories and the rest (AUR or
-/// not packaged for this distribution).
+/// Splits `packages` (Arch's names) into those in this distribution's repositories and the
+/// rest (the AUR on Arch, or not packaged here).
 pub fn split_repo_packages<'a>(packages: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
-    packages.iter().partition(|p| {
-        std::process::Command::new("pacman")
-            .args(["-Si", "--", p])
-            .output()
-            .is_ok_and(|o| o.status.success())
-    })
+    let Some(m) = crate::pkg::manager() else {
+        return (Vec::new(), packages.to_vec());
+    };
+    packages
+        .iter()
+        .partition(|p| m.name(p).is_some_and(|n| m.in_repos(&n)))
+}
+
+/// Whether the AUR is this distribution's (Arch and its family).
+pub fn has_aur() -> bool {
+    crate::pkg::manager() == Some(crate::pkg::Manager::Pacman)
 }
 
 /// What pacman would download for `packages` (dependencies included): the start of each
@@ -707,6 +703,11 @@ fn pacman_cached(targets: &[(String, u64)]) -> u64 {
 pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
     use anyhow::Context;
     anyhow::ensure!(!packages.is_empty(), "nothing to install");
+    match crate::pkg::manager() {
+        Some(crate::pkg::Manager::Pacman) => {}
+        Some(m) => return install_with(m, packages),
+        None => anyhow::bail!("no package manager Arkor knows was found"),
+    }
     let targets = pacman_targets(packages);
     let already = pacman_cached(&targets);
     let total = targets
@@ -743,6 +744,33 @@ pub fn install_packages(packages: &[&str]) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_file(&log);
     anyhow::ensure!(status.success(), "{}", pacman_failure(status.code(), &text));
+    Ok(())
+}
+
+/// Installs packages (Arch's names) with apt, dnf or zypper through pkexec. Blocking.
+fn install_with(m: crate::pkg::Manager, packages: &[&str]) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let (names, missing) = crate::pkg::translate(packages);
+    anyhow::ensure!(
+        !names.is_empty(),
+        "not packaged for this distribution: {}",
+        missing.join(", ")
+    );
+    let out = std::process::Command::new("pkexec")
+        .args(m.install_command(&names))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("running pkexec (is polkit installed?)")?;
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    anyhow::ensure!(
+        out.status.success(),
+        "{}",
+        pacman_failure(out.status.code(), &log).replace("pacman", m.program())
+    );
     Ok(())
 }
 
@@ -881,6 +909,9 @@ pub(crate) fn run_in_terminal_and_wait(script: &str) -> anyhow::Result<()> {
 
 /// The command that installs AUR `packages` with the helper (shown when no terminal is found).
 pub fn aur_command(packages: &[&str]) -> Option<String> {
+    if !has_aur() {
+        return None;
+    }
     Some(format!(
         "{} -S --needed {}",
         aur_helper()?,

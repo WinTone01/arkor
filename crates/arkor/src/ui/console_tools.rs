@@ -434,8 +434,12 @@ impl Library {
                 None if self.system.installing => (Act::Nothing, "—".into()),
                 None if aur.contains(&t.package) => (
                     Act::Nothing,
-                    self.tr("AUR · on the desktop", "AUR · masaüstünden")
-                        .to_string(),
+                    if arkor_launch::tools::has_aur() {
+                        self.tr("AUR · on the desktop", "AUR · masaüstünden")
+                    } else {
+                        self.tr("not packaged here", "bu dağıtımda paketi yok")
+                    }
+                    .to_string(),
                 ),
                 None => (
                     Act::InstallTools(vec![t.package.to_string()]),
