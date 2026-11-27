@@ -150,6 +150,66 @@ pub fn install(
     crate::optiscaler::install_files(Mod::ReShade, id, version, files, target_dir, &dll)
 }
 
+/// Keys ReShade's menu can open with: (Windows key code, name).
+pub const MENU_KEYS: [(u32, &str); 8] = [
+    (36, "Home"),
+    (35, "End"),
+    (45, "Insert"),
+    (46, "Delete"),
+    (33, "Page Up"),
+    (34, "Page Down"),
+    (113, "F2"),
+    (120, "F9"),
+];
+
+/// `ini` with its menu key set to `code` (the line is added when missing).
+fn with_menu_key(ini: &str, code: u32) -> String {
+    let line = format!("KeyOverlay={code},0,0,0");
+    let mut out = Vec::new();
+    let (mut in_input, mut done, mut has_input) = (false, false, false);
+    for l in ini.lines() {
+        let t = l.trim();
+        if t.starts_with('[') {
+            if in_input && !done {
+                out.push(line.clone());
+                done = true;
+            }
+            in_input = t.eq_ignore_ascii_case("[INPUT]");
+            has_input |= in_input;
+        }
+        if in_input && t.to_ascii_lowercase().starts_with("keyoverlay=") {
+            out.push(line.clone());
+            done = true;
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    if !done {
+        if !has_input {
+            out.push(String::new());
+            out.push("[INPUT]".into());
+        }
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
+/// The key code ReShade's menu opens with in a game it is installed in.
+pub fn menu_key(m: &Manifest) -> Option<u32> {
+    let ini = std::fs::read_to_string(m.target_dir.join("ReShade.ini")).ok()?;
+    ini.lines()
+        .find_map(|l| l.trim().strip_prefix("KeyOverlay="))
+        .and_then(|v| v.split(',').next()?.trim().parse().ok())
+}
+
+/// Sets the key ReShade's menu opens with in a game it is installed in.
+pub fn set_menu_key(m: &Manifest, code: u32) -> anyhow::Result<()> {
+    let path = m.target_dir.join("ReShade.ini");
+    let ini = std::fs::read_to_string(&path).unwrap_or_default();
+    std::fs::write(&path, with_menu_key(&ini, code))
+        .with_context(|| format!("writing {}", path.display()))
+}
+
 pub fn uninstall(id: &GameId) -> anyhow::Result<()> {
     crate::optiscaler::uninstall_mod(Mod::ReShade, id)
 }
@@ -173,4 +233,20 @@ pub fn effects() -> Vec<PathBuf> {
         .unwrap_or_default();
     fx.sort();
     fx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sets_the_menu_key() {
+        let changed = with_menu_key(&ini(), 45);
+        assert!(changed.contains("[INPUT]\nKeyOverlay=45,0,0,0\n"));
+        assert!(!changed.contains("KeyOverlay=36"));
+        let added = with_menu_key("[GENERAL]\nA=1\n", 35);
+        assert!(added.ends_with("[INPUT]\nKeyOverlay=35,0,0,0\n"));
+        let between = with_menu_key("[INPUT]\nKeyScreenshot=44\n[OTHER]\nB=2\n", 33);
+        assert!(between.contains("KeyScreenshot=44\nKeyOverlay=33,0,0,0\n[OTHER]"));
+    }
 }

@@ -15,6 +15,9 @@ pub(super) struct BenchState {
     runs: Option<Vec<PathBuf>>,
     selected: Vec<PathBuf>,
     parsed: HashMap<PathBuf, Result<Run, String>>,
+    /// The log being renamed.
+    renaming: Option<PathBuf>,
+    error: Option<String>,
 }
 
 const CHART_H: f32 = 140.;
@@ -68,8 +71,8 @@ impl Library {
         let mut page = div().child(Self::header(
             self.tr("Benchmarks", "Benchmark'lar"),
             self.tr(
-                "In game, press the logging key (Shift_L+F2 by default) to record; runs appear here.",
-                "Oyunda loglama tuşuna (varsayılan Shift_L+F2) basarak kaydet; kayıtlar burada görünür.",
+                "Measure how smoothly a game runs. In the game, press Left Shift + F2 to start recording and again to stop (MangoHud must be on). Each recording appears here; pick two or more to compare them, e.g. before and after turning on a setting.",
+                "Bir oyunun ne kadar akıcı çalıştığını ölç. Oyunda kaydı başlatmak için Sol Shift + F2'ye bas, durdurmak için yine bas (MangoHud açık olmalı). Her kayıt burada görünür; ikisini ya da daha fazlasını seçip karşılaştır, ör. bir ayarı açmadan önce ve sonra.",
             ),
         ));
 
@@ -77,40 +80,93 @@ impl Library {
         if runs.is_empty() {
             list = list.child(widgets::label(self.tr("No logs yet.", "Henüz log yok.")));
         }
+        if let Some(err) = &self.bench.error {
+            list = list.child(widgets::label(format!("⚠ {err}")));
+        }
         for (ix, path) in runs.iter().enumerate() {
             let selected = self.bench.selected.contains(path);
-            let (p1, p2) = (path.clone(), path.clone());
+            let (p1, p2, p3) = (path.clone(), path.clone(), path.clone());
             let name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            list =
-                list.child(
+            if self.bench.renaming.as_ref() == Some(path) {
+                let from = path.clone();
+                let input = self.submit_field(
+                    "bench-rename",
+                    self.tr("New name, then Enter", "Yeni ad, sonra Enter"),
+                    cx,
+                    move |this, text, cx| {
+                        match bench::rename(&from, text) {
+                            Ok(to) => {
+                                for p in this.bench.selected.iter_mut() {
+                                    if *p == from {
+                                        *p = to.clone();
+                                    }
+                                }
+                                this.bench.parsed.remove(&from);
+                                this.bench.error = None;
+                            }
+                            Err(e) => this.bench.error = Some(format!("{e:#}")),
+                        }
+                        this.bench.renaming = None;
+                        this.fields.remove("bench-rename");
+                        this.rescan_bench();
+                        cx.notify();
+                    },
+                );
+                list = list.child(
                     div()
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(widgets::chip(("bench-run", ix), name, selected).on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                if !this.bench.selected.contains(&p1) {
-                                    this.bench.selected.push(p1.clone());
-                                } else {
-                                    this.bench.selected.retain(|p| p != &p1);
-                                }
-                                cx.notify();
-                            }),
-                        ))
+                        .child(div().w(px(360.)).child(input))
                         .child(
-                            widgets::chip(("bench-del", ix), "✕", false).on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    let _ = std::fs::remove_file(&p2);
-                                    this.bench.parsed.remove(&p2);
-                                    this.rescan_bench();
+                            widgets::chip(("bench-rename-cancel", ix), self.tr("Cancel", "Vazgeç"), false)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.bench.renaming = None;
+                                    this.fields.remove("bench-rename");
                                     cx.notify();
-                                },
-                            )),
+                                })),
                         ),
                 );
+                continue;
+            }
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(widgets::chip(("bench-run", ix), name, selected).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            if !this.bench.selected.contains(&p1) {
+                                this.bench.selected.push(p1.clone());
+                            } else {
+                                this.bench.selected.retain(|p| p != &p1);
+                            }
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        widgets::chip(("bench-ren", ix), self.tr("Rename", "Yeniden adlandır"), false)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.fields.remove("bench-rename");
+                                this.bench.renaming = Some(p3.clone());
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        widgets::chip(("bench-del", ix), self.tr("Delete", "Sil"), false).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.bench.error =
+                                    bench::remove(&p2).err().map(|e| format!("{e:#}"));
+                                this.bench.parsed.remove(&p2);
+                                this.rescan_bench();
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            );
         }
         list = list.child(
             div()

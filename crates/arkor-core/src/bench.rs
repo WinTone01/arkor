@@ -156,6 +156,38 @@ pub fn list(dir: &Path) -> Vec<PathBuf> {
     files.into_iter().map(|(_, p)| p).collect()
 }
 
+/// Gives a log another name (its `_summary.csv` too); the new path. Blocking.
+pub fn rename(path: &Path, name: &str) -> anyhow::Result<PathBuf> {
+    let name = name.trim().trim_end_matches(".csv").trim();
+    anyhow::ensure!(
+        !name.is_empty() && !name.contains(['/', '\\']) && !name.starts_with('.'),
+        "`{name}` cannot be a file name"
+    );
+    let dir = path.parent().context("the log has no folder")?;
+    let to = dir.join(format!("{name}.csv"));
+    if to == path {
+        return Ok(to);
+    }
+    anyhow::ensure!(!to.exists(), "a log named `{name}` already exists");
+    std::fs::rename(path, &to).with_context(|| format!("renaming {}", path.display()))?;
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        let summary = dir.join(format!("{stem}_summary.csv"));
+        if summary.is_file() {
+            let _ = std::fs::rename(summary, dir.join(format!("{name}_summary.csv")));
+        }
+    }
+    Ok(to)
+}
+
+/// Deletes a log (and its `_summary.csv`). Blocking.
+pub fn remove(path: &Path) -> anyhow::Result<()> {
+    std::fs::remove_file(path).with_context(|| format!("deleting {}", path.display()))?;
+    if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) {
+        let _ = std::fs::remove_file(dir.join(format!("{stem}_summary.csv")));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +222,26 @@ mod tests {
         assert_eq!(run.name(), "game_2026");
         assert_eq!(run.downsample(10).len(), 10);
         assert_eq!(run.downsample(10)[9], 50.0, "downsampling keeps spikes");
+    }
+
+    #[test]
+    fn renames_and_removes_with_the_summary() {
+        let dir = std::env::temp_dir().join(format!("arkor-bench-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("Game_2026-11-27_20-00-00.csv");
+        std::fs::write(&log, "x").unwrap();
+        std::fs::write(dir.join("Game_2026-11-27_20-00-00_summary.csv"), "y").unwrap();
+        std::fs::write(dir.join("taken.csv"), "z").unwrap();
+        assert!(rename(&log, "a/b").is_err());
+        assert!(rename(&log, "taken").is_err());
+        let to = rename(&log, "With OptiScaler.csv").unwrap();
+        assert_eq!(to, dir.join("With OptiScaler.csv"));
+        assert!(dir.join("With OptiScaler_summary.csv").is_file());
+        assert_eq!(list(&dir).len(), 2);
+        remove(&to).unwrap();
+        assert!(!dir.join("With OptiScaler_summary.csv").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

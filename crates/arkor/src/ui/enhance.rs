@@ -1828,6 +1828,35 @@ impl Library {
         .detach();
     }
 
+    /// The key that opens ReShade's menu in the game.
+    fn reshade_menu_key(&self, m: &arkor_launch::optiscaler::Manifest, cx: &mut Context<Self>) -> Div {
+        let current = arkor_launch::reshade::menu_key(m).unwrap_or(36);
+        let mut keys = div().flex().flex_wrap().gap_2();
+        for (ix, (code, name)) in arkor_launch::reshade::MENU_KEYS.into_iter().enumerate() {
+            let m = m.clone();
+            keys = keys.child(
+                widgets::chip(("rs-key", ix), name, current == code).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        if let Err(e) = arkor_launch::reshade::set_menu_key(&m, code) {
+                            this.tools.error = Some(format!("{e:#}"));
+                        }
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(widgets::subheading(self.tr("Menu key", "Menü tuşu")))
+            .child(widgets::label(self.tr(
+                "Press this key in the game to open ReShade's menu and pick effects. Choose another if the game already uses it.",
+                "Oyunda ReShade menüsünü açıp efekt seçmek için bu tuşa bas. Oyun bu tuşu zaten kullanıyorsa başkasını seç.",
+            )))
+            .child(keys)
+    }
+
     pub(super) fn render_reshade(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.t();
         let mut card = widgets::section("ReShade");
@@ -1839,6 +1868,7 @@ impl Library {
                         .child(format!("{} · {} · {}", t.opti_installed, m.version, m.dll)),
                 )
                 .child(widgets::label(m.target_dir.display().to_string()))
+                .child(self.reshade_menu_key(&m, cx))
                 .child(
                     div()
                         .flex()
