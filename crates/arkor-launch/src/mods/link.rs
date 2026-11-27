@@ -134,8 +134,9 @@ pub struct Candidate {
     pub configured: bool,
     pub game_path: Option<String>,
     pub steam_app_ids: Vec<String>,
-    /// Mods for it can come from Nexus Mods or Thunderstore.
-    pub nexus: bool,
+    /// Mods for it can come from Nexus Mods (the site's names for it, first the main one)
+    /// or Thunderstore.
+    pub nexus: Vec<String>,
     pub thunderstore: bool,
 }
 
@@ -169,7 +170,14 @@ fn candidate(v: &Value) -> Option<Candidate> {
                     .collect()
             })
             .unwrap_or_default(),
-        nexus: v["features"]["nexus"].as_bool().unwrap_or(false),
+        nexus: v["nexus_domains"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         thunderstore: v["features"]["thunderstore"].as_bool().unwrap_or(false),
     })
 }
@@ -270,7 +278,7 @@ mod tests {
             configured: false,
             game_path: None,
             steam_app_ids: appids.iter().map(|s| s.to_string()).collect(),
-            nexus: true,
+            nexus: vec!["x".into()],
             thunderstore: false,
         }
     }
@@ -301,7 +309,7 @@ mod tests {
     fn reads_amethysts_games() {
         let v: Value = serde_json::from_str(
             r#"{"games":[
-              {"id":"Valheim","name":"Valheim","configured":true,"game_path":"/g/V","steam_app_ids":["892970"],"features":{"nexus":true,"thunderstore":true}},
+              {"id":"Valheim","name":"Valheim","configured":true,"game_path":"/g/V","steam_app_ids":["892970"],"nexus_domains":["valheim"],"features":{"nexus":true,"thunderstore":true}},
               {"id":"gone","name":"Gone","unavailable_reason":"handler failed"},
               {"id":"bg3","name":"Baldur's Gate 3","configured":false,"game_path":null,"steam_app_ids":[1086940],"features":{"nexus":true}}
             ]}"#,
@@ -316,6 +324,7 @@ mod tests {
         assert_eq!(list.len(), 2, "an unavailable handler is left out");
         assert_eq!(list[0].game_path.as_deref(), Some("/g/V"));
         assert!(list[0].thunderstore);
+        assert_eq!(list[0].nexus, ["valheim"]);
         assert_eq!(list[1].steam_app_ids, ["1086940"]);
         assert!(!list[1].configured);
     }

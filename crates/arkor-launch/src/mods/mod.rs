@@ -7,6 +7,7 @@
 
 pub mod amethyst;
 pub mod link;
+pub mod nexus;
 pub mod rpc;
 
 use std::path::Path;
@@ -289,6 +290,11 @@ mod tests {
             "{dlls:?}"
         );
         remove(&mut c, &link, "ArkorTest").unwrap();
+        assert!(!nexus::signed_in(&mut c).unwrap());
+        assert_eq!(nexus::account(&mut c).unwrap(), None);
+        let page = nexus::login_start(&mut c).unwrap();
+        assert!(page.starts_with("https://"), "{page}");
+        nexus::login_cancel(&mut c).unwrap();
         assert_eq!(list(&mut c, &link).unwrap().len(), 1);
         restore(&mut c, &link).unwrap();
     }
