@@ -1077,7 +1077,7 @@ impl Library {
                 Filter::Favorites => g.favorite,
                 _ => true,
             })
-            .filter(|g| needle.is_empty() || g.name.to_lowercase().contains(&needle))
+            .filter(|g| needle.is_empty() || arkor_core::fuzzy::matches(&needle, &g.name))
             .map(|g| self.game_item(g))
             .collect();
         let mut rows = vec![Row::new(Kind::Pills, pills)];

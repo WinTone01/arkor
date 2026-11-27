@@ -4,6 +4,7 @@
 pub mod backup;
 pub mod bench;
 pub mod fs_guard;
+pub mod fuzzy;
 pub mod game;
 pub mod layers;
 pub mod library;

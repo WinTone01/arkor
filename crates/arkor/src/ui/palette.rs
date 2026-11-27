@@ -131,10 +131,22 @@ impl Library {
                 }
             }
         } else {
-            lines.retain(|(_, text, _)| {
-                let t = fold(text);
-                words.iter().all(|w| t.contains(w))
-            });
+            // Every word somewhere in the line, or close to it (typos forgiven); best first.
+            let mut scored: Vec<(usize, (&'static str, String, Do))> = lines
+                .into_iter()
+                .filter_map(|l| {
+                    let t = fold(&l.1);
+                    let exact = words.iter().all(|w| t.contains(w));
+                    let s = if exact {
+                        Some(0)
+                    } else {
+                        arkor_core::fuzzy::score(&query, &l.1).map(|s| s + 1)
+                    };
+                    s.map(|s| (s, l))
+                })
+                .collect();
+            scored.sort_by_key(|(s, _)| *s);
+            lines = scored.into_iter().map(|(_, l)| l).collect();
         }
         lines.truncate(12);
         lines

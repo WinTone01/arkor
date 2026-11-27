@@ -438,7 +438,7 @@ impl Library {
                     && category_ok
                     && smart_ok
                     && self.only_matches(&game.id.id)
-                    && (needle.is_empty() || game.name.to_lowercase().contains(&needle))
+                    && (needle.is_empty() || arkor_core::fuzzy::matches(&needle, &game.name))
             })
             .collect();
         match self.filter.sort {
@@ -449,6 +449,12 @@ impl Library {
             Sort::Playtime => {
                 rows.sort_by_key(|&ix| std::cmp::Reverse(self.playtime(&self.games[ix].id).0))
             }
+        }
+        // While searching, the closest matches come first.
+        if !needle.trim().is_empty() {
+            rows.sort_by_key(|&ix| {
+                arkor_core::fuzzy::score(&needle, &self.games[ix].name).unwrap_or(usize::MAX)
+            });
         }
         self.visible = rows;
     }

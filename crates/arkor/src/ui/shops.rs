@@ -272,7 +272,7 @@ impl ShopsState {
             .flat_map(|s| (0..self.owned(s).len()).map(move |i| (s, i)))
             .filter(|(s, i)| {
                 let g = &self.owned(*s)[*i];
-                (needle.is_empty() || g.title.to_lowercase().contains(&needle))
+                (needle.is_empty() || arkor_core::fuzzy::matches(&needle, &g.title))
                     && (!self.only_installed || self.is_installed(*s, &g.id))
             })
             .collect();
