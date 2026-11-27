@@ -374,6 +374,32 @@ impl Gamescope {
 }
 
 /// Settings that apply to every game unless the game's profile overrides them.
+/// A saved view of the library: a name and the filters, grouping and order it had. Every
+/// part is optional; its games are whichever match when it is opened.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedView {
+    pub name: String,
+    /// A ready-made shelf's key (`favorites`, `never-played`, `steam`…).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shelf: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<crate::library::PlayStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// A group's value to show only (`(kind, value)`, e.g. `("year", "2017")`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub only: Option<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub search: String,
+}
+
 /// Stored as `~/.config/arkor/global.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -428,6 +454,13 @@ pub struct Global {
     /// The library shows a list instead of covers.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub library_list: bool,
+    /// How the library is grouped: `status`, `store`, `genre`, `series`, `year`, `tag`,
+    /// `category`; `None` = not grouped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_group: Option<String>,
+    /// Views of the library the user saved (filters that stay current by themselves).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<SavedView>,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).

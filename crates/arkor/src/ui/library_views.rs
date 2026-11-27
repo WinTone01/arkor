@@ -28,6 +28,25 @@ pub(super) enum Smart {
 }
 
 impl Smart {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Smart::Favorites => "favorites",
+            Smart::NeverPlayed => "never-played",
+            Smart::Recent => "recent",
+            Smart::LongPlayed => "long-played",
+            Smart::Steam => "steam",
+            Smart::Epic => "epic",
+            Smart::Gog => "gog",
+            Smart::Amazon => "amazon",
+            Smart::Programs => "programs",
+            Smart::Emulated => "emulated",
+        }
+    }
+
+    pub(super) fn from_key(k: &str) -> Option<Smart> {
+        Smart::ALL.into_iter().find(|s| s.key() == k)
+    }
+
     const ALL: [Smart; 10] = [
         Smart::Favorites,
         Smart::Recent,
@@ -444,7 +463,23 @@ impl Library {
                 .child(head(self.tr("Played", "Süre"), 90.))
                 .child(head(self.tr("Last played", "Son oynanma"), 110.)),
         );
-        for &ix in &self.visible.clone() {
+        let groups = self.library_groups();
+        let starts: Vec<(usize, String, usize)> = groups
+            .iter()
+            .enumerate()
+            .filter_map(|(gix, (t, rows))| Some((rows.first().copied()?, t.clone()?, gix)))
+            .collect();
+        let sizes: Vec<usize> = groups.iter().map(|(_, r)| r.len()).collect();
+        let order: Vec<usize> = groups.into_iter().flat_map(|(_, r)| r).collect();
+        for &ix in &order {
+            if let Some((_, title, gix)) = starts.iter().find(|(first, ..)| *first == ix) {
+                list = list.child(div().px_3().pt_4().pb_1().child(self.group_header(
+                    *gix,
+                    title,
+                    sizes[*gix],
+                    cx,
+                )));
+            }
             let Some(game) = self.games.get(ix).cloned() else {
                 continue;
             };

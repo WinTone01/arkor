@@ -265,7 +265,10 @@ impl Library {
                 .child(title)
                 .child(self.render_empty_library(cx));
         }
-        let toolbar = self.library_toolbar(cx).child(self.library_shelves(cx));
+        let toolbar = self
+            .library_toolbar(cx)
+            .child(self.library_shelves(cx))
+            .child(self.render_views_bar(cx));
         let bar = self.picked_bar(cx);
         let offer = self.render_copies_offer(cx);
         if self.global.library_list {
@@ -299,86 +302,101 @@ impl Library {
         let tile_w = ((available - gap * f32::from(cols - 1)) / f32::from(cols)).floor();
         let cover_w = tile_w - 6.;
         let cover_h = cover_w * 1.5;
-        let mut tiles = div().flex().flex_wrap().gap(px(gap));
-        for &ix in &self.visible {
-            let game = &self.games[ix];
-            let played = self.playtime(&game.id).0;
-            let running = self.running.contains_key(&game.id.to_string());
-            let source = self
-                .library
-                .get(&game.id.id)
-                .map(|g| self.kind_label(g))
-                .unwrap_or_default();
-            let hidden = self.library.get(&game.id.id).is_some_and(|g| g.hidden);
-            let picked = self.is_picked(ix);
-            tiles = tiles.child(
+        let mut sections = div().flex().flex_col().gap_6();
+        for (gix, (gtitle, gixs)) in self.library_groups().into_iter().enumerate() {
+            let mut tiles = div().flex().flex_wrap().gap(px(gap));
+            for &ix in &gixs {
+                let game = &self.games[ix];
+                let played = self.playtime(&game.id).0;
+                let running = self.running.contains_key(&game.id.to_string());
+                let source = self
+                    .library
+                    .get(&game.id.id)
+                    .map(|g| self.kind_label(g))
+                    .unwrap_or_default();
+                let hidden = self.library.get(&game.id.id).is_some_and(|g| g.hidden);
+                let picked = self.is_picked(ix);
+                tiles = tiles.child(
+                    div()
+                        .id(("tile", ix))
+                        .w(px(tile_w))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .cursor_pointer()
+                        .group("tile")
+                        .when(hidden, |d| d.opacity(0.55))
+                        .on_click(cx.listener(move |this, e, _, cx| this.library_click(ix, e, cx)))
+                        .child(
+                            div()
+                                .relative()
+                                .rounded(px(14.))
+                                .p(px(2.))
+                                .border_1()
+                                .border_color(if picked {
+                                    pal::accent()
+                                } else if running {
+                                    pal::success().opacity(0.7)
+                                } else {
+                                    gpui::transparent_black()
+                                })
+                                .group_hover("tile", |s| s.border_color(pal::accent().opacity(0.7)))
+                                .child(self.cover_fill(&game.id.id, &game.name, cover_h))
+                                .when(running, |d| {
+                                    d.child(
+                                        div().absolute().top_2().left_2().child(
+                                            style::tag(
+                                                self.tr("Running", "Çalışıyor"),
+                                                pal::success(),
+                                            )
+                                            .bg(pal::bg().opacity(0.85)),
+                                        ),
+                                    )
+                                }),
+                        )
+                        .child(
+                            div()
+                                .px_1()
+                                .truncate()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(pal::text())
+                                .child(game.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .px_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .text_xs()
+                                .text_color(pal::muted())
+                                .child(source)
+                                .child("·")
+                                .child(if played > 0 {
+                                    arkor_core::stats::format_duration(played)
+                                } else {
+                                    self.tr("Not played yet", "Henüz oynanmadı").to_string()
+                                }),
+                        ),
+                );
+            }
+            let header = gtitle.map(|t| self.group_header(gix, &t, gixs.len(), cx));
+            sections = sections.child(
                 div()
-                    .id(("tile", ix))
-                    .w(px(tile_w))
-                    .flex_none()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .cursor_pointer()
-                    .group("tile")
-                    .when(hidden, |d| d.opacity(0.55))
-                    .on_click(cx.listener(move |this, e, _, cx| this.library_click(ix, e, cx)))
-                    .child(
-                        div()
-                            .relative()
-                            .rounded(px(14.))
-                            .p(px(2.))
-                            .border_1()
-                            .border_color(if picked {
-                                pal::accent()
-                            } else if running {
-                                pal::success().opacity(0.7)
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .group_hover("tile", |s| s.border_color(pal::accent().opacity(0.7)))
-                            .child(self.cover_fill(&game.id.id, &game.name, cover_h))
-                            .when(running, |d| {
-                                d.child(
-                                    div().absolute().top_2().left_2().child(
-                                        style::tag(self.tr("Running", "Çalışıyor"), pal::success())
-                                            .bg(pal::bg().opacity(0.85)),
-                                    ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .px_1()
-                            .truncate()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(pal::text())
-                            .child(game.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .px_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(pal::muted())
-                            .child(source)
-                            .child("·")
-                            .child(if played > 0 {
-                                arkor_core::stats::format_duration(played)
-                            } else {
-                                self.tr("Not played yet", "Henüz oynanmadı").to_string()
-                            }),
-                    ),
+                    .gap_3()
+                    .children(header)
+                    .child(tiles),
             );
         }
         if self.visible.is_empty() {
-            tiles = tiles.child(div().py_8().text_color(pal::muted()).child(self.tr(
+            sections = sections.child(div().py_8().text_color(pal::muted()).child(self.tr(
                 "No game matches the search or filter.",
                 "Aramaya ya da filtreye uyan oyun yok.",
             )));
@@ -391,6 +409,6 @@ impl Library {
             .children(offer)
             .child(toolbar)
             .children(bar)
-            .child(tiles)
+            .child(sections)
     }
 }

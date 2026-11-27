@@ -40,6 +40,7 @@ mod i18n;
 mod icons;
 mod intro;
 mod kwin;
+mod library_groups;
 mod library_views;
 mod loader;
 mod mods_page;
@@ -127,6 +128,8 @@ struct ListFilter {
     /// A genre or way of playing (from what is known about the games).
     genre: Option<String>,
     status: Option<arkor_core::library::PlayStatus>,
+    /// Only the games of one group (`Group by`'s "only these").
+    only: Option<(library_groups::Facet, String)>,
 }
 
 pub struct Library {
@@ -168,6 +171,8 @@ pub struct Library {
     /// Rows of the sidebar list: indices into `games` after search/category/hidden/sort.
     visible: Vec<usize>,
     search: Option<(gpui::Entity<text_input::TextInput>, gpui::Subscription)>,
+    /// "Save this view" asks for a name.
+    views_naming: bool,
     search_text: String,
     focus: Option<gpui::FocusHandle>,
     backup_prefixes: bool,
@@ -263,6 +268,7 @@ impl Library {
             filter: ListFilter::default(),
             visible: Vec::new(),
             search: None,
+            views_naming: false,
             search_text: String::new(),
             focus: None,
             covers: HashMap::new(),
@@ -428,6 +434,7 @@ impl Library {
                 (self.filter.show_hidden || !hidden)
                     && category_ok
                     && smart_ok
+                    && self.only_matches(&game.id.id)
                     && (needle.is_empty() || game.name.to_lowercase().contains(&needle))
             })
             .collect();
@@ -689,6 +696,13 @@ impl Library {
         });
         self.search = Some((input.clone(), sub));
         input
+    }
+
+    /// Puts `text` in the library's search box (and searches for it).
+    fn set_search(&mut self, text: String, cx: &mut Context<Self>) {
+        let input = self.search_input(cx);
+        input.update(cx, |i, cx| i.set_text(text.clone(), cx));
+        self.search_text = text;
     }
 
     fn toggle_hidden(&mut self, cx: &mut Context<Self>) {

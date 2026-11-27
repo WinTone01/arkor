@@ -64,6 +64,46 @@ pub struct GameInfo {
     /// How long it takes to finish.
     #[serde(default)]
     pub beat: Option<Beat>,
+    /// The series it belongs to (IGDB's franchises and collections).
+    #[serde(default)]
+    pub series: Vec<String>,
+    /// The tags Steam players gave it, most voted first.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl GameInfo {
+    /// The year it came out, from `release` in any of the sources' forms.
+    pub fn year(&self) -> Option<i32> {
+        self.release
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|p| p.len() == 4)
+            .and_then(|p| p.parse().ok())
+            .filter(|y| (1950..=2200).contains(y))
+    }
+}
+
+/// The tags Steam players gave a game, from SteamSpy (most voted first, at most ten).
+pub fn steam_tags(appid: u64) -> Vec<String> {
+    get(&format!(
+        "https://steamspy.com/api.php?request=appdetails&appid={appid}"
+    ))
+    .ok()
+    .and_then(|b| serde_json::from_str::<serde_json::Value>(&b).ok())
+    .map(|v| tags_from_steamspy(&v))
+    .unwrap_or_default()
+}
+
+fn tags_from_steamspy(v: &serde_json::Value) -> Vec<String> {
+    let Some(tags) = v["tags"].as_object() else {
+        return Vec::new();
+    };
+    let mut t: Vec<(&String, u64)> = tags
+        .iter()
+        .map(|(k, n)| (k, n.as_u64().unwrap_or(0)))
+        .collect();
+    t.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    t.into_iter().take(10).map(|(k, _)| k.clone()).collect()
 }
 
 /// How long a game takes to finish, in minutes: the main story, with extras, everything.
@@ -338,7 +378,9 @@ pub fn steam(appid: u64) -> anyhow::Result<Option<GameInfo>> {
     if d["success"] != true {
         return Ok(None);
     }
-    Ok(Some(steam_info(appid, &d["data"])))
+    let mut info = steam_info(appid, &d["data"]);
+    info.tags = steam_tags(appid);
+    Ok(Some(info))
 }
 
 pub(crate) fn steam_info(appid: u64, d: &serde_json::Value) -> GameInfo {
@@ -423,6 +465,8 @@ pub(crate) fn steam_info(appid: u64, d: &serde_json::Value) -> GameInfo {
         score: d["metacritic"]["score"].as_u64().map(|s| s as u32),
         hours: None,
         beat: None,
+        series: Vec::new(),
+        tags: Vec::new(),
     }
 }
 
@@ -530,6 +574,8 @@ pub(crate) fn vndb_info(vn: &serde_json::Value) -> GameInfo {
             .as_u64()
             .map(|m| ((m + 30) / 60) as u32),
         beat: None,
+        series: Vec::new(),
+        tags: Vec::new(),
     }
 }
 
@@ -595,7 +641,7 @@ fn igdb_token(a: &IgdbAccount) -> anyhow::Result<String> {
         .context("no token from Twitch")
 }
 
-const IGDB_FIELDS: &str = "id,name,summary,first_release_date,genres.name,game_modes.name,involved_companies.company.name,involved_companies.developer,screenshots.image_id,videos.video_id,videos.name,url,age_ratings.organization.name,age_ratings.rating_category.rating,aggregated_rating";
+const IGDB_FIELDS: &str = "id,name,franchises.name,collections.name,summary,first_release_date,genres.name,game_modes.name,involved_companies.company.name,involved_companies.developer,screenshots.image_id,videos.video_id,videos.name,url,age_ratings.organization.name,age_ratings.rating_category.rating,aggregated_rating";
 
 /// The IGDB game of exactly this name.
 pub fn igdb(account: &IgdbAccount, name: &str) -> anyhow::Result<Option<GameInfo>> {
@@ -663,6 +709,15 @@ pub(crate) fn igdb_info(g: &serde_json::Value) -> GameInfo {
         description: g["summary"].as_str().unwrap_or_default().to_string(),
         genres: names(&g["genres"]),
         modes: names(&g["game_modes"]),
+        series: {
+            let mut v = names(&g["franchises"]);
+            for c in names(&g["collections"]) {
+                if !v.contains(&c) {
+                    v.push(c);
+                }
+            }
+            v
+        },
         developers: g["involved_companies"]
             .as_array()
             .map(|a| {
@@ -721,6 +776,7 @@ pub(crate) fn igdb_info(g: &serde_json::Value) -> GameInfo {
         score: g["aggregated_rating"].as_f64().map(|r| r.round() as u32),
         hours: None,
         beat: None,
+        tags: Vec::new(),
     }
 }
 
@@ -797,6 +853,13 @@ pub fn lookup(game: &LibraryGame) -> anyhow::Result<Option<GameInfo>> {
     {
         info.beat = heroic_beat(&game.name);
     }
+    if let Some(info) = found.as_mut()
+        && info.tags.is_empty()
+        && let GameKind::Steam { appid } = &game.kind
+        && let Ok(appid) = appid.parse()
+    {
+        info.tags = steam_tags(appid);
+    }
     if let Some(d) = dir() {
         let _ = std::fs::create_dir_all(&d);
         let _ = std::fs::write(
@@ -813,6 +876,19 @@ pub fn lookup(game: &LibraryGame) -> anyhow::Result<Option<GameInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_steamspy_tags_and_years() {
+        let v = serde_json::json!({"tags": {"Roguelike": 500, "Action": 900, "Indie": 500}});
+        assert_eq!(tags_from_steamspy(&v), ["Action", "Indie", "Roguelike"]);
+        let mut i = GameInfo {
+            release: "24 Feb, 2017".into(),
+            ..Default::default()
+        };
+        assert_eq!(i.year(), Some(2017));
+        i.release = "2020-09-17".into();
+        assert_eq!(i.year(), Some(2020));
+    }
 
     #[test]
     fn reads_heroics_cached_times() {

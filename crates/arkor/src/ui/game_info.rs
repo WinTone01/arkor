@@ -20,7 +20,7 @@ type Picture = (PathBuf, String, bool);
 #[derive(Default)]
 pub(super) struct InfoUi {
     /// What is known, by library entry (an error as text).
-    known: HashMap<String, Result<Option<GameInfo>, String>>,
+    pub(super) known: HashMap<String, Result<Option<GameInfo>, String>>,
     pictures: HashMap<String, Vec<Picture>>,
     /// What GOG counted for GOG games: minutes and achievements (an error as text).
     gog: HashMap<String, Result<(u64, Vec<arkor_launch::shops::gog::Achievement>), String>>,
