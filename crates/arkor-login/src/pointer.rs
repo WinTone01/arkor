@@ -142,11 +142,14 @@ struct State {
 #[derive(Clone)]
 pub struct Pointer {
     page: gtk::Widget,
+    /// A see-through layer over the page that the pointer is drawn on: a page drawn by the
+    /// graphics card (WebKit's own compositing) would cover anything drawn on it directly.
+    canvas: gtk::Widget,
     state: Rc<RefCell<State>>,
 }
 
 impl Pointer {
-    pub fn new(page: gtk::Widget) -> Self {
+    pub fn new(page: gtk::Widget, canvas: gtk::Widget) -> Self {
         let state = Rc::new(RefCell::new(State {
             at: (0., 0.),
             out: false,
@@ -157,7 +160,7 @@ impl Pointer {
         }));
         // Drawn by the window itself over the page: no waiting for the page's script.
         let s = state.clone();
-        page.connect_local("draw", true, move |args| {
+        canvas.connect_local("draw", true, move |args| {
             let state = s.borrow();
             if state.out
                 && let Ok(cr) = args[1].get::<gtk::cairo::Context>()
@@ -166,7 +169,11 @@ impl Pointer {
             }
             Some(false.to_value())
         });
-        Self { page, state }
+        Self {
+            page,
+            canvas,
+            state,
+        }
     }
 
     pub fn out(&self) -> bool {
@@ -181,7 +188,7 @@ impl Pointer {
             }
             (s.at, s.frame, s.pad_held, s.last) = ((x, y), None, 0., None);
         }
-        self.page.queue_draw();
+        self.canvas.queue_draw();
         send(&self.page, What::Move, (x, y), false);
         let me = self.clone();
         // With every refresh of the screen, as long as it is out.
@@ -197,7 +204,7 @@ impl Pointer {
     pub fn hide(&self) {
         self.press(false);
         self.state.borrow_mut().out = false;
-        self.page.queue_draw();
+        self.canvas.queue_draw();
     }
 
     /// One frame: moves and scrolls by how the sticks are held.
@@ -249,7 +256,7 @@ impl Pointer {
         };
         if from != to {
             for (x, y) in [from, to] {
-                self.page
+                self.canvas
                     .queue_draw_area(x as i32 - 12, y as i32 - 12, 48, 52);
             }
             send(&self.page, What::Move, to, down);
@@ -266,7 +273,7 @@ impl Pointer {
             s.down = down;
             s.at
         };
-        self.page.queue_draw();
+        self.canvas.queue_draw();
         send(
             &self.page,
             if down { What::Press } else { What::Release },

@@ -39,6 +39,8 @@ enum Done {
     Line(String),
     /// A page that asked for a window of its own: shown here instead.
     Open(String),
+    /// The first page is drawn (or has had long enough): the window comes up.
+    Ready,
     /// A button of the gamepad, from Arkor.
     Nav(String),
     /// The pointer is wanted, here.
@@ -178,7 +180,9 @@ fn run(
         } else {
             LogicalSize::new(520.0, 760.0)
         })
-        .with_always_on_top(!browse);
+        .with_always_on_top(!browse)
+        // Not shown blank: it comes up once the page is there.
+        .with_visible(false);
     if console {
         builder = builder.with_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
     }
@@ -226,9 +230,22 @@ fn run(
     } else {
         WebViewBuilder::new()
     };
+    let ready_proxy = event_loop.create_proxy();
+    let late_proxy = event_loop.create_proxy();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let _ = late_proxy.send_event(Done::Ready);
+    });
     let line_proxy = event_loop.create_proxy();
     let open_proxy = event_loop.create_proxy();
     let builder = builder
+        // Dark until the page draws itself (no white flash).
+        .with_background_color((12, 11, 18, 255))
+        .with_on_page_load_handler(move |event, _| {
+            if matches!(event, wry::PageLoadEvent::Finished) {
+                let _ = ready_proxy.send_event(Done::Ready);
+            }
+        })
         .with_url(url)
         .with_initialization_script(&script)
         .with_initialization_script(if console {
@@ -296,20 +313,28 @@ fn run(
         builder
     };
 
-    #[cfg(target_os = "linux")]
-    let webview = {
+    // The page, with a see-through layer over it for the gamepad's pointer.
+    let (webview, canvas) = {
+        use gtk::prelude::*;
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
         let vbox = window.default_vbox().ok_or("no window box")?;
-        builder.build_gtk(vbox)?
+        let overlay = gtk::Overlay::new();
+        vbox.pack_start(&overlay, true, true, 0);
+        let canvas = gtk::DrawingArea::new();
+        overlay.add_overlay(&canvas);
+        overlay.set_overlay_pass_through(&canvas, true);
+        let webview = builder.build_gtk(&overlay)?;
+        overlay.show_all();
+        (webview, canvas)
     };
-    #[cfg(not(target_os = "linux"))]
-    let webview = builder.build(&window)?;
 
     let pointer_proxy = event_loop.create_proxy();
-    let pointer = pointer::Pointer::new(gtk::prelude::Cast::upcast(wry::WebViewExtUnix::webview(
-        &webview,
-    )));
+    let pointer = pointer::Pointer::new(
+        gtk::prelude::Cast::upcast(wry::WebViewExtUnix::webview(&webview)),
+        gtk::prelude::Cast::upcast(canvas),
+    );
+    let mut shown = false;
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
         // The page shows the pointer's hints while it is out.
@@ -349,6 +374,12 @@ fn run(
             Event::UserEvent(Done::Pointer(x, y)) => {
                 pointer.show(x, y);
                 hints(true);
+            }
+            Event::UserEvent(Done::Ready) => {
+                if !std::mem::replace(&mut shown, true) {
+                    window.set_visible(true);
+                    window.set_focus();
+                }
             }
             Event::UserEvent(Done::Line(line)) => {
                 let mut out = std::io::stdout();
