@@ -28,6 +28,7 @@ mod emulators;
 mod enhance;
 mod features;
 mod fields;
+mod game_info;
 mod game_page;
 mod gamepad;
 mod global_page;
@@ -177,6 +178,9 @@ pub struct Library {
     emu: emulators::EmuUi,
     /// Games picked in the library (Ctrl/Shift+click), by entry id, for batch actions.
     picked: Vec<String>,
+    /// What is known about games (description, screenshots…), and whether IGDB is set up.
+    info: game_info::InfoUi,
+    info_igdb: Option<bool>,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -265,6 +269,8 @@ impl Library {
             console: Default::default(),
             emu: Default::default(),
             picked: Vec::new(),
+            info: Default::default(),
+            info_igdb: None,
             restore_pending: None,
             required: Default::default(),
         };

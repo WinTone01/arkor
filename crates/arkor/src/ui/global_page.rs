@@ -362,6 +362,7 @@ impl Library {
                     widgets::section(self.tr("Cover art (SteamGridDB)", "Kapak resimleri (SteamGridDB)"))
                         .child(sgdb),
                 )
+                .child(self.render_info_settings(cx))
                 .child(
                     widgets::section("Discord")
                         .child(widgets::setting_row(

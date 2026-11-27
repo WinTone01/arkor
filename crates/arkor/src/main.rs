@@ -53,6 +53,7 @@ usage:
               | places <id> | backup <id>
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
+  arkor info <id>                         what is known about a game (Steam, VNDB, IGDB)
   arkor clip                              save a clip of the running game (bind it to a key)
   arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
                                           folder); --add puts them in the library
@@ -374,6 +375,18 @@ fn main() -> anyhow::Result<()> {
         Some("roms") => roms(&args[1..]),
         Some("emulators") => emulators(&args[1..]),
         Some("achievements") => achievements(&args[1..]),
+        // What the game page shows about a game (Steam, VNDB, IGDB).
+        Some("info") => {
+            let id: GameId = arg(&args, 1)?.parse()?;
+            let library = Library::load()?;
+            let game = library.get(&id.id).context("not in the library")?;
+            arkor_launch::info::forget(&game.id);
+            match arkor_launch::info::lookup(game)? {
+                Some(i) => println!("{i:#?}"),
+                None => println!("nothing found for {}", game.name),
+            }
+            Ok(())
+        }
         Some("trouble") => {
             use arkor_launch::trouble;
             let id: GameId = arg(&args, 1)?.parse()?;

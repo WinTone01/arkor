@@ -1342,7 +1342,8 @@ impl Library {
         if tab == GameTab::Overview {
             content = content
                 .child(self.render_quick(cx))
-                .child(self.render_summary(&entry, cx));
+                .child(self.render_summary(&entry, cx))
+                .children(self.render_about(cx));
         }
         let mut in_tab: Vec<&'static Feature> =
             applicable.into_iter().filter(|f| f.tab == tab).collect();

@@ -68,6 +68,33 @@ pub struct LibraryGame {
     /// Cover image shown in the library.
     #[serde(default)]
     pub cover: Option<PathBuf>,
+    /// The user's rating, 1 to 5 stars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<u8>,
+    /// Where the user is with the game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<PlayStatus>,
+}
+
+/// Where the user is with a game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayStatus {
+    PlanToPlay,
+    Playing,
+    OnHold,
+    Beaten,
+    Abandoned,
+}
+
+impl PlayStatus {
+    pub const ALL: [PlayStatus; 5] = [
+        PlayStatus::PlanToPlay,
+        PlayStatus::Playing,
+        PlayStatus::OnHold,
+        PlayStatus::Beaten,
+        PlayStatus::Abandoned,
+    ];
 }
 
 impl LibraryGame {
@@ -211,6 +238,8 @@ impl Library {
                     hidden: false,
                     favorite: false,
                     cover: None,
+                    rating: None,
+                    status: None,
                 })
                 .collect(),
         };
@@ -282,6 +311,8 @@ impl Library {
             hidden: false,
             favorite: false,
             cover: None,
+            rating: None,
+            status: None,
         });
         id
     }

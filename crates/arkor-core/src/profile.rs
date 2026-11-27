@@ -406,6 +406,9 @@ pub struct Global {
     /// own options. Written only when changed.
     #[serde(skip_serializing_if = "Emulators::is_default")]
     pub emulators: Emulators,
+    /// No look-ups of games' descriptions, screenshots and the like.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_game_info: bool,
     /// The library shows a list instead of covers.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub library_list: bool,
