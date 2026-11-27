@@ -324,6 +324,17 @@ pub fn run(
         (g.width, g.height) = (Some(w), Some(h));
         g.fullscreen = true;
     }
+    // Mods kept out of the game folder go in now (before the overrides they need are read).
+    let mods_placed = if trial.plain {
+        None
+    } else {
+        let folder = arkor_core::library::Library::load()
+            .ok()
+            .and_then(|l| l.get(&id.id).cloned())
+            .and_then(|g| mods::link::place(&g, &global.prefixes_dir()))
+            .map(|p| p.game_dir);
+        mods::play::before(id, folder.as_deref())
+    };
     let game_dir = paths::game_config_dir(id)?;
     let plan = plan(&profile, &global, &Host::detect(id), &game_dir, command)?;
 
@@ -396,6 +407,7 @@ pub fn run(
     if let Some(mut extra) = extra_child {
         let _ = extra.kill();
     }
+    drop(mods_placed);
     upload_saves(id);
     if !profile.post_launch.trim().is_empty() {
         shell(&profile.post_launch, &shell_env, working_dir)?;

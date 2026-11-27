@@ -1,13 +1,15 @@
 //! Mods, through Amethyst Mod Manager running as a headless service: Arkor's own screens on
 //! top, Amethyst's knowledge of each game (where mods go, its installers, its loaders' DLL
-//! overrides) underneath. Mods are placed into the game folder as links (`deploy`) whenever
-//! they change, so the game itself still starts the way Arkor starts it.
+//! overrides) underneath. Mods are placed into the game folder as links (`deploy`) just
+//! before `arkor run` starts the game and taken out when it ends (`play`), or, when the game
+//! does not start through Arkor or that is turned off, whenever they change.
 //!
 //! Everything here is blocking: call it off the UI thread.
 
 pub mod amethyst;
 pub mod link;
 pub mod nexus;
+pub mod play;
 pub mod rpc;
 
 use std::path::Path;
@@ -121,17 +123,17 @@ fn params(link: &Link, extra: Value) -> Value {
     p
 }
 
-/// Switches a mod on or off, then places the mods in the game folder again.
+/// Switches a mod on or off, then settles the game folder ([`settle`]).
 pub fn set_enabled(c: &mut Client, link: &Link, name: &str, on: bool) -> anyhow::Result<()> {
     c.job(
         "mods.set_enabled.start",
         params(link, json!({"changes": [{"name": name, "enabled": on}]})),
         |_| {},
     )?;
-    deploy(c, link)
+    settle(c, link)
 }
 
-/// Moves a mod one place up (higher priority) or down, then places the mods again.
+/// Moves a mod one place up (higher priority) or down, then settles the game folder.
 pub fn shift(c: &mut Client, link: &Link, name: &str, up: bool) -> anyhow::Result<()> {
     let mods = list(c, link)?;
     let Some(at) = mods.iter().position(|m| m.name == name) else {
@@ -150,7 +152,7 @@ pub fn shift(c: &mut Client, link: &Link, name: &str, up: bool) -> anyhow::Resul
         params(link, json!({"mods": [name], "position": position})),
         |_| {},
     )?;
-    deploy(c, link)
+    settle(c, link)
 }
 
 /// Removes a mod for good (its files leave the game folder too).
@@ -160,7 +162,7 @@ pub fn remove(c: &mut Client, link: &Link, name: &str) -> anyhow::Result<()> {
         params(link, json!({"mods": [name], "confirm": true})),
         |_| {},
     )?;
-    deploy(c, link)
+    settle(c, link)
 }
 
 /// What an archive's installer asks before it installs (a FOMOD's steps, BAIN packages,
@@ -217,7 +219,7 @@ pub fn install(
     }
     match c.job("downloads.install.start", p, |_| {}) {
         Ok(result) => {
-            deploy(c, link)?;
+            settle(c, link)?;
             let name = result["mod"]["name"]
                 .as_str()
                 .or_else(|| result["mods"][0]["name"].as_str())
@@ -278,7 +280,7 @@ pub fn install_thunderstore(
         ),
         |_| {},
     )?;
-    deploy(c, link)?;
+    settle(c, link)?;
     Ok(format!("{namespace}-{name}"))
 }
 
@@ -318,6 +320,16 @@ pub fn deploy(c: &mut Client, link: &Link) -> anyhow::Result<()> {
         |_| {},
     )?;
     Ok(())
+}
+
+/// After the mods changed: placed in the game folder again, or, when they are there only
+/// while the game runs, kept out of it.
+pub fn settle(c: &mut Client, link: &Link) -> anyhow::Result<()> {
+    if link.while_playing {
+        restore(c, link)
+    } else {
+        deploy(c, link)
+    }
 }
 
 /// Takes every mod out of the game folder again (the mods stay installed). Blocking.
@@ -379,6 +391,32 @@ mod tests {
 
         let got = install(&mut c, &link, Path::new("/home/user/ArkorTest.zip"), None).unwrap();
         assert_eq!(got, Installed::Done("ArkorTest".into()));
+        // Mods only while playing (the default): installed, but not in the game folder until
+        // a launch places them; the folder is seen from outside with `ARKOR_TEST_AMETHYST_HOME`.
+        assert!(link.while_playing);
+        if let Ok(home) = std::env::var("ARKOR_TEST_AMETHYST_HOME") {
+            let plugins = Path::new(&home).join("Games/Valheim/BepInEx/plugins");
+            let placed = || {
+                std::fs::read_dir(&plugins)
+                    .map(|d| {
+                        d.flatten()
+                            .any(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                    })
+                    .unwrap_or(false)
+            };
+            assert!(!placed(), "out of the folder after the install");
+            deploy(&mut c, &link).unwrap();
+            assert!(placed(), "placed for a launch");
+            settle(&mut c, &link).unwrap();
+            assert!(!placed(), "out again after it");
+            let always = Link {
+                while_playing: false,
+                ..link.clone()
+            };
+            settle(&mut c, &always).unwrap();
+            assert!(placed(), "always in the folder when turned off");
+            settle(&mut c, &link).unwrap();
+        }
         let Installed::Asks(choices) =
             install(&mut c, &link, Path::new("/home/user/FomodTest.zip"), None).unwrap()
         else {

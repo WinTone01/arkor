@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use arkor_core::GameId;
 use arkor_launch::mods::nexus::{self, Account, Login};
-use arkor_launch::mods::{self, Answer, Choices, Installed, Link, Mod, amethyst, link};
+use arkor_launch::mods::{self, Answer, Choices, Installed, Link, Mod, amethyst, link, play};
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, PathPromptOptions, div, prelude::*, px};
 use serde_json::{Value, json};
@@ -36,6 +36,8 @@ pub(super) enum Known {
         loader: Option<&'static str>,
         /// Its community on Thunderstore, when its mods come from there.
         thunderstore: Option<String>,
+        /// The game starts through `arkor run` (else its mods stay in the folder).
+        through: bool,
     },
     Failed(String),
 }
@@ -117,14 +119,30 @@ impl Library {
                             if ask_account && domain.is_some() {
                                 account = nexus::account(c).ok();
                             }
+                            let through = play::through_arkor(&id, &game);
+                            if !through {
+                                // Steam starts it without Arkor: its mods stay in the folder.
+                                link.while_playing = false;
+                            }
+                            let list = mods::list(c, &link)?;
+                            // With the mods out of the folder, the loader they lacked when
+                            // they were last placed (unless one is installed since).
+                            let has_bepinex = list.iter().any(|m| m.name.starts_with("BepInEx"));
                             let loader = link::place(&game, &prefixes)
-                                .and_then(|p| mods::missing_loader(&p.game_dir));
+                                .and_then(|p| mods::missing_loader(&p.game_dir))
+                                .or_else(|| {
+                                    (link.while_playing
+                                        && !has_bepinex
+                                        && link.loader_missing.as_deref() == Some("BepInEx"))
+                                    .then_some("BepInEx")
+                                });
                             return Ok(Known::Linked {
-                                mods: mods::list(c, &link)?,
+                                mods: list,
                                 link,
                                 domain,
                                 loader,
                                 thunderstore,
+                                through,
                             });
                         }
                         let place = link::place(&game, &prefixes);
@@ -847,6 +865,7 @@ impl Library {
                 mods,
                 domain,
                 loader,
+                through,
                 ..
             } => {
                 if let Some(loader) = loader {
@@ -855,10 +874,67 @@ impl Library {
                 if let Some(domain) = &domain {
                     card = card.child(self.render_nexus(domain, &link, cx));
                 }
+                card = card.child(self.render_while_playing(&link, through, running, cx));
                 card = card.child(self.render_mods_list(link, mods, running, cx));
             }
         }
         Some(card)
+    }
+
+    /// "Only while playing": the setting, and what it means for this game.
+    fn while_playing_text(&self, through: bool) -> &'static str {
+        if through {
+            self.tr(
+                "Arkor puts the mods in the game folder just before the game starts and takes them out when it ends, so store updates and file checks never see them.",
+                "Arkor modları oyun başlamadan hemen önce oyun klasörüne koyar, oyun kapanınca geri alır; böylece mağaza güncellemeleri ve dosya doğrulamaları onları hiç görmez.",
+            )
+        } else {
+            self.tr(
+                "Steam starts this game without Arkor (its launch options are not Arkor's), so its mods stay in the game folder.",
+                "Steam bu oyunu Arkor olmadan başlatıyor (başlatma seçenekleri Arkor'un değil), bu yüzden modları oyun klasöründe kalır.",
+            )
+        }
+    }
+
+    fn render_while_playing(
+        &self,
+        link: &Link,
+        through: bool,
+        running: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let on = link.while_playing;
+        widgets::setting_row(
+            self.tr("Mods only while playing", "Modlar yalnızca oyun açıkken"),
+            self.while_playing_text(through),
+            widgets::switch(on).id("mods-while-playing").when(
+                through && !running && self.mods.busy.is_none(),
+                |s| {
+                    s.cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.mods_while_playing(!on, cx);
+                            cx.notify();
+                        }))
+                },
+            ),
+        )
+    }
+
+    /// Turns "only while playing" on or off and puts the game folder in its state.
+    fn mods_while_playing(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_id() else { return };
+        let Known::Linked { through, .. } = self.mods.known else {
+            return;
+        };
+        self.mods_do(
+            if on {
+                self.tr("Taking the mods out…", "Modlar klasörden alınıyor…")
+            } else {
+                self.tr("Placing the mods…", "Modlar yerleştiriliyor…")
+            },
+            cx,
+            move |_| play::set(&id, on, through),
+        );
     }
 
     fn render_mods_unlinked(
@@ -1405,11 +1481,12 @@ impl Library {
                 )),
             },
             Known::Linked {
+                link,
                 mods,
                 domain,
                 loader,
                 thunderstore,
-                ..
+                through,
             } => {
                 if let Some(loader) = loader {
                     rows.push(line(
@@ -1419,6 +1496,16 @@ impl Library {
                         Shown::Text(self.tr("install it", "kurmak için seç").to_string()),
                     ));
                 }
+                rows.push(line(
+                    Act::ModsWhilePlaying,
+                    "clock",
+                    self.tr("Mods only while playing", "Modlar yalnızca oyun açıkken"),
+                    if *through {
+                        Shown::Switch(link.while_playing)
+                    } else {
+                        Shown::Text(self.tr("Steam starts it", "Steam başlatıyor").to_string())
+                    },
+                ));
                 if let Some(d) = domain {
                     rows.push(line(
                         Act::ModsBrowse(nexus::mods_page(d)),
@@ -1602,6 +1689,7 @@ impl Library {
         let changes = matches!(
             act,
             Act::ModsToggle(_)
+                | Act::ModsWhilePlaying
                 | Act::ModsMenu(_)
                 | Act::ModsMove(..)
                 | Act::ModsAskRemove(_)
@@ -1638,6 +1726,17 @@ impl Library {
                     self.mods_do(self.tr("Saving…", "Kaydediliyor…"), cx, move |c| {
                         mods::set_enabled(c, &link, &name, !on)
                     });
+                }
+            }
+            Act::ModsWhilePlaying => {
+                if let Known::Linked {
+                    link,
+                    through: true,
+                    ..
+                } = &self.mods.known
+                {
+                    let on = !link.while_playing;
+                    self.mods_while_playing(on, cx);
                 }
             }
             Act::ModsMenu(name) => {

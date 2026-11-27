@@ -234,6 +234,8 @@ pub(super) enum Act {
     ModsReload,
     ModsLink,
     ModsToggle(String),
+    /// Mods in the game folder only while the game runs: on or off.
+    ModsWhilePlaying,
     ModsMenu(String),
     ModsMove(String, bool),
     ModsAskRemove(String),
@@ -3495,6 +3497,7 @@ impl Library {
             | Act::ModsReload
             | Act::ModsLink
             | Act::ModsToggle(_)
+            | Act::ModsWhilePlaying
             | Act::ModsMenu(_)
             | Act::ModsMove(..)
             | Act::ModsAskRemove(_)

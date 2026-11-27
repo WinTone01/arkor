@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use super::rpc::Client;
 
 /// An Arkor game's place in Amethyst.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
     /// Amethyst's game id (`Valheim`, `skyrim_se`…).
     pub game: String,
@@ -24,6 +24,31 @@ pub struct Link {
     /// them to Wine itself: Proton may rewrite the prefix's registry (its first start does).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dll_overrides: BTreeMap<String, String>,
+    /// The mods are in the game folder only while the game runs (placed by `arkor run`
+    /// before it starts, taken out when it ends), so the folder is otherwise the store's
+    /// own: its updates and file checks see no mods. On unless turned off.
+    #[serde(default = "yes")]
+    pub while_playing: bool,
+    /// The mod loader the mods needed but the game folder lacked when they were last
+    /// placed (`BepInEx`): with the mods out of the folder it cannot be seen otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loader_missing: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Link {
+    fn default() -> Self {
+        Link {
+            game: String::new(),
+            profile: String::new(),
+            dll_overrides: BTreeMap::new(),
+            while_playing: true,
+            loader_missing: None,
+        }
+    }
 }
 
 fn file(id: &GameId) -> anyhow::Result<PathBuf> {
@@ -298,6 +323,20 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mods_are_kept_out_unless_told_otherwise() {
+        // A link written by Arkor 0.16 and older has no such setting.
+        let old: Link = toml::from_str("game = \"Valheim\"\nprofile = \"default\"\n").unwrap();
+        assert!(old.while_playing);
+        assert_eq!(old.loader_missing, None);
+        let off = Link {
+            while_playing: false,
+            ..old
+        };
+        let back: Link = toml::from_str(&toml::to_string(&off).unwrap()).unwrap();
+        assert_eq!(back, off);
+    }
 
     #[test]
     fn shortens_load_orders() {
