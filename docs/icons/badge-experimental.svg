@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="116" height="24" viewBox="0 0 116 24">
+  <rect width="116" height="24" rx="12" fill="#b45309"/>
+  <circle cx="14" cy="12" r="6.5" fill="#fff" fill-opacity="0.22"/>
+  <g transform="translate(4 2)" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 6.6h2.8M9.2 6.6v2.6l-2 3.6a.6.6 0 0 0 .5.9h4.6a.6.6 0 0 0 .5-.9l-2-3.6V6.6"/></g>
+  <text x="69" y="16.2" text-anchor="middle" font-family="-apple-system, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#fff">Experimental</text>
+</svg>

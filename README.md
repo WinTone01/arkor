@@ -227,12 +227,12 @@ console mode. Steam games still start from Steam, with Arkor's settings written 
 Arkor's window runs on any Linux desktop. Console mode also has to bring itself over a
 running game, which every desktop allows in its own way:
 
-| Desktop | Console mode | Notes |
+| Desktop | Console&nbsp;mode | Notes |
 | --- | --- | --- |
-| **KDE Plasma** | <img src="docs/icons/status-full.svg" width="16" align="center">&nbsp; Full | Made and tested here |
-| **Hyprland**, **Sway**, **niri** | <img src="docs/icons/status-experimental.svg" width="16" align="center">&nbsp; Experimental | Uses `hyprctl`, `swaymsg`, `niri msg`; not yet tested on real setups |
-| **GNOME** | <img src="docs/icons/status-limited.svg" width="16" align="center">&nbsp; Limited | The middle button cannot bring Arkor over a game yet |
-| **Others** (XFCE, Cinnamon, X11…) | <img src="docs/icons/status-untested.svg" width="16" align="center">&nbsp; Untested | Reports welcome |
+| **KDE Plasma** | <img src="docs/icons/badge-full.svg" height="22" alt="Full"> | Made and tested here |
+| **Hyprland**, **Sway**, **niri** | <img src="docs/icons/badge-experimental.svg" height="22" alt="Experimental"> | Uses `hyprctl`, `swaymsg`, `niri msg`; not yet tested on real setups |
+| **GNOME** | <img src="docs/icons/badge-limited.svg" height="22" alt="Limited"> | The middle button cannot bring Arkor over a game yet |
+| **Others** (XFCE, Cinnamon, X11…) | <img src="docs/icons/badge-untested.svg" height="22" alt="Untested"> | Reports welcome |
 
 <table>
   <tr>
