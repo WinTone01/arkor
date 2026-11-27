@@ -463,6 +463,7 @@ impl Library {
                         )
                         .child(cats),
                 )
+                .children(self.picked_presets(cx))
                 .child({
                     let mut row = div().flex().flex_wrap().items_center().gap_2().child(
                         div()

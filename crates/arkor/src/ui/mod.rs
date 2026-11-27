@@ -45,6 +45,7 @@ mod library_views;
 mod loader;
 mod mods_page;
 mod palette;
+mod presets;
 mod protons;
 mod save_backups;
 mod saves;

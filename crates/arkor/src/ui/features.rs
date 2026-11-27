@@ -752,6 +752,21 @@ pub(super) const FEATURES: &[Feature] = &[
         },
     },
     Feature {
+        id: "presets",
+        tab: GameTab::Launch,
+        group: "",
+        icon: "bookmark",
+        name: ("Presets", "Şablonlar"),
+        desc: (
+            "Save this game's settings under a name and give them to other games.",
+            "Bu oyunun ayarlarını bir adla kaydet ve başka oyunlara ver.",
+        ),
+        keywords: "preset şablon template copy settings kopyala ayarlar",
+        applies: always,
+        active: None,
+        render: |l, cx| Some(l.render_presets(cx)),
+    },
+    Feature {
         id: "env",
         tab: GameTab::Launch,
         group: "",

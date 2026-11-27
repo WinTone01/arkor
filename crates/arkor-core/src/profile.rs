@@ -1181,3 +1181,114 @@ mod download_rules_tests {
         assert!(!r(22, 8).hour_allowed(12));
     }
 }
+
+/// A launch preset: the settings of a game saved under a name, to give other games the same
+/// (`~/.config/arkor/presets/<name>.toml`). What only fits the game it came from (its umu id,
+/// its Steam settings, cloud saves, a second program, the processes frame generation
+/// follows) is not taken over.
+pub mod presets {
+    use super::Profile;
+    use anyhow::Context;
+    use std::path::PathBuf;
+
+    fn dir() -> anyhow::Result<PathBuf> {
+        Ok(crate::paths::config_dir()?.join("presets"))
+    }
+
+    fn file_name(name: &str) -> String {
+        let safe: String = name
+            .trim()
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("{}.toml", safe.trim())
+    }
+
+    /// Every preset as (name, settings), by name.
+    pub fn list() -> Vec<(String, Profile)> {
+        let Ok(rd) = dir().and_then(|d| Ok(std::fs::read_dir(d)?)) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, Profile)> = rd
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+            .filter_map(|e| {
+                let name = e.path().file_stem()?.to_string_lossy().into_owned();
+                let text = std::fs::read_to_string(e.path()).ok()?;
+                Some((name, toml::from_str(&text).ok()?))
+            })
+            .collect();
+        out.sort_by_key(|(n, _)| n.to_lowercase());
+        out
+    }
+
+    /// Saves `profile`'s settings as the preset `name` (replacing one of that name).
+    pub fn save(name: &str, profile: &Profile) -> anyhow::Result<()> {
+        anyhow::ensure!(!name.trim().is_empty(), "a preset needs a name");
+        let mut p = profile.clone();
+        p.forget_game();
+        let path = dir()?.join(file_name(name));
+        super::write_toml(&path, &p).with_context(|| format!("saving {}", path.display()))
+    }
+
+    pub fn remove(name: &str) -> anyhow::Result<()> {
+        std::fs::remove_file(dir()?.join(file_name(name)))?;
+        Ok(())
+    }
+}
+
+impl Profile {
+    /// Leaves out what belongs to one game only.
+    fn forget_game(&mut self) {
+        self.umu_id = None;
+        self.steam = SteamSettings::default();
+        self.cloud_saves = None;
+        self.extra_app = ExtraApp::default();
+        self.lsfg.processes.clear();
+    }
+
+    /// Takes a preset's settings; what belongs to this game only stays.
+    pub fn apply_preset(&mut self, preset: &Profile) {
+        let keep = self.clone();
+        *self = preset.clone();
+        self.umu_id = keep.umu_id;
+        self.steam = keep.steam;
+        self.cloud_saves = keep.cloud_saves;
+        self.extra_app = keep.extra_app;
+        self.lsfg.processes = keep.lsfg.processes;
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+
+    #[test]
+    fn a_preset_keeps_what_belongs_to_the_game() {
+        let mut from = Profile {
+            launch_options: "-dx11".into(),
+            umu_id: Some("umu-1".into()),
+            no_sleep: true,
+            ..Default::default()
+        };
+        from.tweaks.insert("hdr".into());
+        let mut p = from.clone();
+        p.forget_game();
+        assert!(p.umu_id.is_none() && p.tweaks.contains("hdr"));
+        let mut other = Profile {
+            umu_id: Some("umu-2".into()),
+            proton_log: true,
+            ..Default::default()
+        };
+        other.apply_preset(&p);
+        assert_eq!(other.umu_id.as_deref(), Some("umu-2"));
+        assert_eq!(other.launch_options, "-dx11");
+        assert!(other.no_sleep && !other.proton_log);
+    }
+}

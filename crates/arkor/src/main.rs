@@ -38,6 +38,8 @@ usage:
   arkor optiscaler download [--edge] | install <id> <dir> [proxy] | remove <id>
                   | optipatcher <id> [remove] | fsr4 <id> <dll|remove> | fakenvapi
                                           OptiScaler
+  arkor preset list | save <id> <name> | apply <name> <id>… | remove <name>
+                                          launch presets (a game's settings, for others)
   arkor anr download | install <id> <dir> [dxgi|winmm|version] | update <id> | remove <id>
                                           ANR FG frame generation (with Apex's OptiScaler)
   arkor dlss-enabler download | install <id> <dir> | remove <id>
@@ -411,6 +413,7 @@ fn main() -> anyhow::Result<()> {
         Some("optiscaler") => optiscaler(&args[1..]),
         Some("dlss-enabler") => dlss_enabler(&args[1..]),
         Some("anr") => anr(&args[1..]),
+        Some("preset") => preset(&args[1..]),
         Some("reshade") => reshade(&args[1..]),
         Some("saves") => saves(&args[1..]),
         // Saves the running game's last moments; said in a notification, as a key started it.
@@ -745,6 +748,43 @@ fn dlss_enabler(args: &[String]) -> anyhow::Result<()> {
         }
         Some("remove") => {
             de::uninstall(&arg(args, 1)?.parse()?)?;
+            println!("removed");
+        }
+        _ => anyhow::bail!(USAGE),
+    }
+    Ok(())
+}
+
+fn preset(args: &[String]) -> anyhow::Result<()> {
+    use arkor_core::profile::presets;
+    match args.first().map(String::as_str) {
+        Some("list") | None => {
+            for (name, _) in presets::list() {
+                println!("{name}");
+            }
+        }
+        Some("save") => {
+            let id: GameId = arg(args, 1)?.parse()?;
+            let name = args[2..].join(" ");
+            presets::save(&name, &arkor_core::Profile::load(&id)?)?;
+            println!("saved {name}");
+        }
+        Some("apply") => {
+            let name = arg(args, 1)?;
+            let (_, p) = presets::list()
+                .into_iter()
+                .find(|(n, _)| n == name)
+                .with_context(|| format!("no preset {name}"))?;
+            for id in &args[2..] {
+                let id: GameId = id.parse()?;
+                let mut prof = arkor_core::Profile::load(&id)?;
+                prof.apply_preset(&p);
+                prof.save(&id)?;
+                println!("{id}: {name}");
+            }
+        }
+        Some("remove") => {
+            presets::remove(&args[1..].join(" "))?;
             println!("removed");
         }
         _ => anyhow::bail!(USAGE),
