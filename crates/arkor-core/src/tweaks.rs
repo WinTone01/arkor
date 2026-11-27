@@ -189,6 +189,26 @@ pub const TWEAKS: &[Tweak] = &[
         None,
     ),
     t(
+        "smooth_motion",
+        Gpu,
+        &[("NVPRESENT_ENABLE_SMOOTH_MOTION", "1")],
+        "NVIDIA Smooth Motion (frame generation by the driver)",
+        "NVIDIA Smooth Motion (sürücünün kare üretimi)",
+        Some("NVIDIA driver 570+, RTX 40/50"),
+    ),
+    t(
+        "big_shader_cache",
+        Gpu,
+        &[
+            ("MESA_SHADER_CACHE_MAX_SIZE", "10G"),
+            ("__GL_SHADER_DISK_CACHE_SIZE", "10737418240"),
+            ("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "1"),
+        ],
+        "10 GB shader cache (fewer stutters after updates)",
+        "10 GB shader önbelleği (güncellemeden sonra daha az takılma)",
+        None,
+    ),
+    t(
         "shader_cache",
         Compatibility,
         &[("PROTON_LOCAL_SHADER_CACHE", "1")],
@@ -403,7 +423,7 @@ pub fn gpu_need(id: &str) -> Option<GpuNeed> {
         "antilag" | "radv_rt" | "radv_nofastclears" | "hide_amd" | "staging_shm" | "zluda" => {
             Some(GpuNeed::Amd)
         }
-        "dlss_rr" | "nvapi" | "hide_nvidia" => Some(GpuNeed::Nvidia),
+        "dlss_rr" | "nvapi" | "hide_nvidia" | "smooth_motion" => Some(GpuNeed::Nvidia),
         _ => None,
     }
 }

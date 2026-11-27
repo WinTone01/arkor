@@ -1033,6 +1033,48 @@ impl Library {
         card
     }
 
+    /// The graphics card the game renders on.
+    pub(super) fn render_gpu_choice(&mut self, cx: &mut Context<Self>) -> Div {
+        let current = self.profile.gpu.clone();
+        let mut row = div().flex().flex_wrap().gap_2().child(
+            widgets::chip(
+                ("gpu", 0usize),
+                self.tr("Automatic", "Otomatik"),
+                current.is_none(),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.profile.gpu = None;
+                this.save();
+                cx.notify();
+            })),
+        );
+        for (ix, card) in self.tools.cards.clone().into_iter().enumerate() {
+            let label = if card.boot {
+                format!("{} · {}", card.label(), self.tr("screen", "ekran"))
+            } else {
+                card.label()
+            };
+            let slot = card.slot.clone();
+            row = row.child(
+                widgets::chip(("gpu", ix + 1), label, current.as_deref() == Some(&slot)).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.profile.gpu = Some(slot.clone());
+                        this.save();
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        widgets::section(self.tr("Graphics card", "Ekran kartı")).child(widgets::setting_row(
+            self.tr("Render on", "Çalıştığı kart"),
+            self.tr(
+                "Laptops start games on the power-saving card unless told otherwise; pick the dedicated one for more frames.",
+                "Dizüstüler oyunları aksi söylenmedikçe tasarruflu kartta açar; daha çok kare için ayrı kartı seç.",
+            ),
+            row,
+        ))
+    }
+
     pub(super) fn render_runtime(&mut self, cx: &mut Context<Self>) -> Div {
         use arkor_core::profile::NO_RUNTIME;
         let current = self.profile.linux_runtime.clone().filter(|r| !r.is_empty());

@@ -34,6 +34,8 @@ pub(super) struct GameTools {
     pub(super) ls_dir: Option<PathBuf>,
     /// GPU makers in this computer (AMD-only tools are hidden without an AMD card).
     pub(super) gpus: tools::Gpus,
+    /// The graphics cards, to choose one per game when there is more than one.
+    pub(super) cards: Vec<arkor_launch::gpu::Gpu>,
     pub(super) manifest: Option<Manifest>,
     pub(super) downloaded: Option<(String, PathBuf)>,
     pub(super) de_manifest: Option<Manifest>,
@@ -101,6 +103,11 @@ impl GameTools {
             lsfg_info: tools::lsfg_layer_quick(),
             ls_dir: tools::lossless_scaling_dir(),
             gpus: tools::gpus(),
+            cards: if cfg!(test) {
+                Vec::new()
+            } else {
+                arkor_launch::gpu::list()
+            },
             manifest: None,
             downloaded: None,
             de_manifest: None,

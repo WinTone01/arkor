@@ -17,6 +17,7 @@ pub mod dlss_enabler;
 pub mod downloads;
 pub mod ea_fix;
 pub mod emu;
+pub mod gpu;
 pub mod launchers;
 pub mod layers;
 pub mod mods;
@@ -72,6 +73,8 @@ pub struct Host {
     pub mod_dll_overrides: Vec<(String, String)>,
     /// Folder for Proton's own logs when the profile asks for them.
     pub log_dir: Option<PathBuf>,
+    /// What makes the game render on the card its profile chose.
+    pub gpu_env: Vec<(String, String)>,
     pub anticheat: tools::AntiCheat,
 }
 
@@ -94,6 +97,11 @@ impl Host {
                 .ok()
                 .and_then(|p| p.parent().map(Path::to_path_buf)),
             anticheat: tools::anticheat(),
+            gpu_env: Profile::load(id)
+                .ok()
+                .and_then(|p| p.gpu)
+                .map(|slot| gpu::env_for(&slot))
+                .unwrap_or_default(),
         }
     }
 }
@@ -209,6 +217,7 @@ pub fn plan(
     if let Some(umu_id) = profile.umu_id.as_ref().filter(|id| !id.is_empty()) {
         env.insert("GAMEID".into(), umu_id.clone());
     }
+    env.extend(host.gpu_env.iter().cloned());
     env.extend(profile.tweaks_env());
     env.extend(profile.layers.env(host.lossless_dll.as_deref()));
     if profile.layers.afmf.enabled && profile.gamescope.enabled {

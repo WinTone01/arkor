@@ -44,6 +44,8 @@ pub(super) enum GameOpt {
     LinuxRuntime,
     /// The emulator an emulator game plays with.
     Emulator,
+    /// The graphics card the game renders on.
+    Gpu,
     Winecfg,
     Winetricks,
     Tweak(&'static str),
@@ -307,6 +309,9 @@ impl Library {
                 .entry()
                 .map(|e| self.emu_game_choices(e))
                 .unwrap_or_default(),
+            GameOpt::Gpu => std::iter::once((s(self.tr("Automatic", "Otomatik")), String::new()))
+                .chain(self.tools.cards.iter().map(|c| (c.label(), c.slot.clone())))
+                .collect(),
             GameOpt::LinuxRuntime => std::iter::once((
                 s(self.tr("Steam Runtime 4 (default)", "Steam Runtime 4 (varsayılan)")),
                 String::new(),
@@ -377,6 +382,7 @@ impl Library {
             GameOpt::HudAlpha => (self.hud().background_alpha / 10 * 10).to_string(),
             GameOpt::Cas => (p.vkbasalt.cas_sharpness / 10 * 10).to_string(),
             GameOpt::LinuxRuntime => p.linux_runtime.clone().unwrap_or_default(),
+            GameOpt::Gpu => p.gpu.clone().unwrap_or_default(),
             GameOpt::Emulator => match self.entry().map(|e| &e.kind) {
                 Some(GameKind::Emulated { emulator, .. }) => emulator.clone().unwrap_or_default(),
                 _ => String::new(),
@@ -574,6 +580,7 @@ impl Library {
             GameOpt::LinuxRuntime => {
                 self.profile.linux_runtime = Some(key.to_string()).filter(|k| !k.is_empty())
             }
+            GameOpt::Gpu => self.profile.gpu = Some(key.to_string()).filter(|k| !k.is_empty()),
             GameOpt::Emulator => {
                 if let Some(e) = self.entry_mut()
                     && let GameKind::Emulated { emulator, .. } = &mut e.kind
@@ -879,6 +886,9 @@ impl Library {
                 }
                 if matches!(g.kind, GameKind::Emulated { .. }) {
                     v.push(o(GameOpt::Emulator, "joystick", t("Emulator", "Emülatör")));
+                }
+                if self.tools.cards.len() > 1 {
+                    v.push(o(GameOpt::Gpu, "cpu", t("Graphics card", "Ekran kartı")));
                 }
                 if linux {
                     v.push(o(

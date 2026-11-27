@@ -52,6 +52,10 @@ pub struct Profile {
     pub steam: SteamSettings,
     /// Whether the game's saves follow the store's cloud. `None` = as in Settings.
     pub cloud_saves: Option<bool>,
+    /// The graphics card the game renders on, by its PCI address (`0000:03:00.0`), on
+    /// computers with more than one. `None` = the system's choice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<String>,
 }
 
 /// What Arkor writes into Steam's own settings for a Steam game (Steam starts it).

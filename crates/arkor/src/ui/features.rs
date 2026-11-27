@@ -332,6 +332,20 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| Some(l.render_protonfix(cx)),
     },
     Feature {
+        id: "gpu",
+        tab: GameTab::Runtime,
+        icon: "cpu",
+        name: ("Graphics card", "Ekran kartı"),
+        desc: (
+            "Which card the game renders on, on computers with more than one.",
+            "Birden çok ekran kartı olan bilgisayarlarda oyunun hangisinde çalışacağı.",
+        ),
+        keywords: "gpu prime dri_prime optimus nvidia amd intel laptop dizüstü ekran kartı",
+        applies: |l, _| l.tools.cards.len() > 1,
+        active: Some(|l| l.profile.gpu.is_some()),
+        render: |l, cx| Some(l.render_gpu_choice(cx)),
+    },
+    Feature {
         id: "linux-runtime",
         tab: GameTab::Runtime,
         icon: "box",
