@@ -46,9 +46,11 @@ usage:
                                           newer Streamline / DLSS DLLs
   arkor shortcut <id> menu | desktop | steam | remove | command
                                           launch the game from elsewhere
-  arkor bundle download <helixsr|dlssnr-rdna4|dlssnr-rdna3>
+  arkor bundle download <helixsr|dlssnr-rdna4|dlssnr-rdna3|dlssnr-rdna4-i686>
              | helixsr <game dir> [remove]   (opens HelixSR's setup in a terminal)
-             | dlssnr <id> <game dir> <nvngx_dlssnr file> [model] | dlssnr-remove <id>
+             | dlssnr <id> <game dir> <nvngx_dlssnr file|-> [network] [route] [--32]
+             | dlssnr-remove <id>        routes: optiscaler, reshade-feeder,
+                                          reshade-feeder-vulkan, reshade-feeder-dx9
                                           AMD upscaler bundles (HelixSR, DLSS-NR)
   arkor update [--check]                  update Arkor itself from its GitHub releases
   arkor layer list | install <vksumi|vknemu|mako> | remove <id>
@@ -813,6 +815,7 @@ fn bundle(args: &[String]) -> anyhow::Result<()> {
             "helixsr" => Bundle::HelixSr,
             "dlssnr-rdna4" => Bundle::DlssNrRdna4,
             "dlssnr-rdna3" => Bundle::DlssNrRdna3,
+            "dlssnr-rdna4-i686" | "dlssnr-32" => Bundle::DlssNrRdna4X32,
             other => anyhow::bail!("unknown bundle {other}"),
         })
     };
@@ -840,21 +843,40 @@ fn bundle(args: &[String]) -> anyhow::Result<()> {
             println!("opened in a terminal");
         }
         Some("dlssnr") => {
+            // arkor bundle dlssnr <id> <game dir> <nvngx file | -> [network] [route] [--32]
             let id: GameId = arg(args, 1)?.parse()?;
-            let b = [Bundle::DlssNrRdna4, Bundle::DlssNrRdna3]
-                .into_iter()
+            let bits32 = args.iter().any(|a| a == "--32");
+            let wanted: &[Bundle] = if bits32 {
+                &[Bundle::DlssNrRdna4X32]
+            } else {
+                &[Bundle::DlssNrRdna4, Bundle::DlssNrRdna3]
+            };
+            let b = wanted
+                .iter()
+                .copied()
                 .find(|b| !bundles::downloaded(*b).is_empty())
-                .context("run `arkor bundle download dlssnr-rdna4` (or -rdna3) first")?;
+                .context("run `arkor bundle download dlssnr-rdna4` (-rdna3, -rdna4-i686) first")?;
             let (v, dir) = ready(b)?;
-            let model = args.get(4).map_or("CC_SMALL_FP8", String::as_str);
+            let dll = arg(args, 3)?;
+            let model = args
+                .get(4)
+                .filter(|a| !a.starts_with("--"))
+                .map_or("CC_SMALL_FP8", String::as_str);
+            let route = match args.get(5).filter(|a| !a.starts_with("--")) {
+                Some(r) => bundles::NrRoute::from_arg(r)
+                    .with_context(|| format!("unknown route {r}"))?,
+                None if bits32 => bundles::NrRoute::ReshadeFeederVulkan,
+                None => bundles::NrRoute::Optiscaler,
+            };
             let out = bundles::dlssnr_install(
                 &id,
                 b,
                 &v,
                 &dir,
                 Path::new(arg(args, 2)?),
-                Path::new(arg(args, 3)?),
+                (dll != "-").then(|| Path::new(dll)),
                 model,
+                route,
             )?;
             println!("{out}");
         }

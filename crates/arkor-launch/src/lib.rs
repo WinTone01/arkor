@@ -79,6 +79,8 @@ pub struct Host {
     pub log_dir: Option<PathBuf>,
     /// What makes the game render on the card its profile chose.
     pub gpu_env: Vec<(String, String)>,
+    /// Variables a game-folder mod's installer asked for (DLSS-NR's Vulkan layer).
+    pub mod_env: Vec<(String, String)>,
     pub anticheat: tools::AntiCheat,
 }
 
@@ -101,6 +103,7 @@ impl Host {
                 .ok()
                 .and_then(|p| p.parent().map(Path::to_path_buf)),
             anticheat: tools::anticheat(),
+            mod_env: bundles::dlssnr(id).map(|d| d.env).unwrap_or_default(),
             gpu_env: Profile::load(id)
                 .ok()
                 .and_then(|p| p.gpu)
@@ -222,6 +225,7 @@ pub fn plan(
         env.insert("GAMEID".into(), umu_id.clone());
     }
     env.extend(host.gpu_env.iter().cloned());
+    env.extend(host.mod_env.iter().cloned());
     env.extend(profile.tweaks_env());
     env.extend(profile.layers.env(host.lossless_dll.as_deref()));
     if profile.layers.mako.enabled || profile.layers.mako.scaling {

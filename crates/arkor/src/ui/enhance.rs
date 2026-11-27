@@ -53,9 +53,12 @@ pub(super) struct GameTools {
     pub(super) sl_replaceable: usize,
     pub(super) fsr4: Option<Manifest>,
     /// Downloaded AMD bundles, per `bundles::Bundle::ALL`.
-    pub(super) bundles: [Option<(String, PathBuf)>; 3],
+    pub(super) bundles: [Option<(String, PathBuf)>; 4],
     pub(super) dlssnr: Option<arkor_launch::bundles::DlssNr>,
-    pub(super) dlssnr_model: &'static str,
+    /// The network a DLSS-NR install starts with, as an index of the package's list.
+    pub(super) dlssnr_model: usize,
+    pub(super) dlssnr_route: arkor_launch::bundles::NrRoute,
+    pub(super) dlssnr_32: bool,
     pub(super) optipatcher: bool,
     /// Implicit layers on the system that a variable switches on.
     pub(super) system_layers: Vec<arkor_launch::layers::SystemLayer>,
@@ -123,7 +126,9 @@ impl GameTools {
             fsr4: None,
             bundles: Default::default(),
             dlssnr: None,
-            dlssnr_model: arkor_launch::bundles::DLSSNR_MODELS[0],
+            dlssnr_model: 0,
+            dlssnr_route: arkor_launch::bundles::NrRoute::Optiscaler,
+            dlssnr_32: false,
             optipatcher: false,
             layer_tools: std::array::from_fn(|i| {
                 arkor_launch::layers::arkor_installed(arkor_launch::layers::TOOLS[i].id)
@@ -722,7 +727,7 @@ impl Library {
     }
 
     pub(super) fn render_amd_bundles(&self, cx: &mut Context<Self>) -> Div {
-        use arkor_launch::bundles::{self, Bundle, DLSSNR_MODELS};
+        use arkor_launch::bundles::{self, Bundle};
         let tools = &self.tools;
         let mut card = widgets::section(self.tr(
             "AMD upscalers: HelixSR, DLSS-NR",
@@ -820,14 +825,25 @@ impl Library {
         card = card.child(row);
 
         // DLSS-NR
-        card = card.child(div().text_sm().child("DLSS-NR — DLSS 5 neural rendering"));
+        card = card
+            .child(widgets::divider())
+            .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).child("DLSS-NR"))
+            .child(widgets::label(self.tr(
+                "Runs NVIDIA's DLSS 5 picture model on AMD cards, so the game looks sharper and more detailed. You need a copy of NVIDIA's nvngx_dlssnr.dll (310.9.16 or 310.8.0) the first time.",
+                "NVIDIA'nın DLSS 5 görüntü modelini AMD kartlarda çalıştırır; oyun daha keskin ve ayrıntılı görünür. İlk seferde NVIDIA'nın nvngx_dlssnr.dll dosyasının (310.9.16 ya da 310.8.0) bir kopyası gerekir.",
+            )));
         if let Some(d) = &tools.dlssnr {
+            let route = self.nr_route_name(d.route).0;
             return card
                 .child(div().text_sm().child(format!(
-                    "{} · {} {}",
+                    "{} · {} {} · {route}",
                     d.bundle.name(),
                     self.tr("installed", "kurulu"),
                     d.version
+                )))
+                .child(widgets::label(self.tr(
+                    "In the game: End opens NR Control (OptiScaler way), Home opens ReShade (ReShade ways). Ctrl+F11 switches the network.",
+                    "Oyunda: End NR Control'ü açar (OptiScaler yolu), Home ReShade'i açar (ReShade yolları). Ctrl+F11 ağı değiştirir.",
                 )))
                 .child(
                     div().flex().child(
@@ -849,8 +865,37 @@ impl Library {
                     ),
                 );
         }
+
+        // 1. 32 or 64 bit.
+        let bits32 = tools.dlssnr_32;
+        card = card
+            .child(widgets::subheading(self.tr("1. The game", "1. Oyun")))
+            .child(
+                div().flex().flex_wrap().gap_2().children([false, true].map(|b32| {
+                    widgets::chip(
+                        ("nr-bits", usize::from(b32)),
+                        if b32 {
+                            self.tr("32-bit (older games)", "32-bit (eski oyunlar)")
+                        } else {
+                            self.tr("64-bit (most games)", "64-bit (çoğu oyun)")
+                        },
+                        bits32 == b32,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tools.dlssnr_32 = b32;
+                        if b32 && this.tools.dlssnr_route == bundles::NrRoute::Optiscaler {
+                            this.tools.dlssnr_route = bundles::NrRoute::ReshadeFeederVulkan;
+                        }
+                        cx.notify();
+                    }))
+                })),
+            );
+
+        // 2. The package.
+        let candidates: &[usize] = if bits32 { &[3] } else { &[1, 2] };
         let mut dl = div().flex().flex_wrap().gap_2();
-        for (ix, b) in [(1usize, Bundle::DlssNrRdna4), (2, Bundle::DlssNrRdna3)] {
+        for &ix in candidates {
+            let b = Bundle::ALL[ix];
             dl = dl.child(match &tools.bundles[ix] {
                 Some((v, _)) => widgets::chip(("nr-have", ix), format!("{} {v} ✓", b.name()), true),
                 None => widgets::chip(
@@ -865,89 +910,198 @@ impl Library {
                 })),
             });
         }
-        card = card.child(dl);
-        if tools.bundles[1].is_some() || tools.bundles[2].is_some() {
-            let mut models = div().flex().flex_wrap().gap_1();
-            for (ix, m) in DLSSNR_MODELS.into_iter().enumerate() {
-                models = models.child(
-                    widgets::chip(("nr-model", ix), m, tools.dlssnr_model == m).on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.tools.dlssnr_model = m;
-                            cx.notify();
-                        }),
-                    ),
-                );
+        card = card
+            .child(widgets::subheading(self.tr("2. The package", "2. Paket")))
+            .child(widgets::label(if bits32 {
+                self.tr(
+                    "The 32-bit package works with Radeon RX 9000 cards.",
+                    "32-bit paket Radeon RX 9000 kartlarla çalışır.",
+                )
+            } else {
+                self.tr(
+                    "RDNA4 is for Radeon RX 9000 cards, RDNA3 for RX 7000.",
+                    "RDNA4 Radeon RX 9000 kartlar, RDNA3 RX 7000 kartlar içindir.",
+                )
+            }))
+            .child(dl);
+        let Some((bundle_ix, (version, dir))) = candidates
+            .iter()
+            .find_map(|&ix| tools.bundles[ix].clone().map(|b| (ix, b)))
+        else {
+            return card;
+        };
+        let bundle = Bundle::ALL[bundle_ix];
+
+        // 3. The way it hooks in.
+        let mut routes = div().flex().flex_wrap().gap_2();
+        for (ix, route) in bundles::NrRoute::ALL.into_iter().enumerate() {
+            if bits32 && route == bundles::NrRoute::Optiscaler {
+                continue;
             }
-            card = card
-                .child(widgets::label(self.tr(
-                    "Network the game starts with (can be switched in game):",
-                    "Oyunun başlayacağı ağ (oyunda değiştirilebilir):",
-                )))
-                .child(models)
-                .child(
-                    div().flex().child(
-                        widgets::chip(
-                            "nr-install",
-                            self.tr(
-                                "Choose nvngx_dlssnr file and install…",
-                                "nvngx_dlssnr dosyasını seç ve kur…",
-                            ),
-                            false,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let title = this.tr(
-                                "Choose NVIDIA's nvngx_dlssnr.dll or its zip",
-                                "NVIDIA'nın nvngx_dlssnr.dll dosyasını ya da zip'ini seç",
-                            );
-                            this.prompt_path(false, title, cx, |this, file, cx| {
-                                let Some(id) = this.selected_game().map(|g| g.id.clone()) else {
-                                    return;
-                                };
-                                let Some(game_dir) = this.bundle_game_dir() else {
-                                    return;
-                                };
-                                let Some((ix, (v, dir))) = [1usize, 2]
-                                    .into_iter()
-                                    .find_map(|ix| this.tools.bundles[ix].clone().map(|b| (ix, b)))
-                                else {
-                                    return;
-                                };
-                                let bundle = Bundle::ALL[ix];
-                                let model = this.tools.dlssnr_model;
-                                this.tools.busy = Some("Installing…");
-                                this.tools.error = None;
-                                cx.notify();
-                                let bg = cx.background_executor().clone();
-                                cx.spawn(async move |this, cx| {
-                                    let result = bg
-                                        .spawn({
-                                            let id = id.clone();
-                                            async move {
-                                                bundles::dlssnr_install(
-                                                    &id, bundle, &v, &dir, &game_dir, &file, model,
-                                                )
-                                            }
-                                        })
-                                        .await;
-                                    let _ = this.update(cx, |this, cx| {
-                                        this.tools.busy = None;
-                                        if let Err(e) = result {
-                                            this.tools.error = Some(format!("{e:#}"));
-                                            this.sound(super::sounds::Sound::Error);
-                                        } else {
-                                            this.sound(super::sounds::Sound::Done);
-                                        }
-                                        this.tools.dlssnr = bundles::dlssnr(&id);
-                                        cx.notify();
-                                    });
-                                })
-                                .detach();
-                            });
-                        })),
-                    ),
-                );
+            let (name, hint) = self.nr_route_name(route);
+            routes = routes.child(
+                widgets::choice_card(
+                    ("nr-route", ix),
+                    if route == bundles::NrRoute::Optiscaler {
+                        "scan-eye"
+                    } else {
+                        "wand-sparkles"
+                    },
+                    name,
+                    hint,
+                    tools.dlssnr_route == route,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.tools.dlssnr_route = route;
+                    cx.notify();
+                })),
+            );
         }
-        card
+        card = card
+            .child(widgets::subheading(self.tr("3. How it hooks in", "3. Nasıl bağlanacak")))
+            .child(routes);
+
+        // 4. The network it starts with.
+        let models = bundle.models();
+        let model_ix = tools.dlssnr_model.min(models.len() - 1);
+        let mut row = div().flex().flex_wrap().gap_1();
+        for (ix, m) in models.iter().enumerate() {
+            row = row.child(
+                widgets::chip(("nr-model", ix), *m, model_ix == ix).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.tools.dlssnr_model = ix;
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        card = card
+            .child(widgets::subheading(self.tr("4. Network", "4. Ağ")))
+            .child(widgets::label(self.tr(
+                "The model the game starts with. The first one is the default; the OPTIMIZED ones are faster. You can switch in the game too.",
+                "Oyunun başlayacağı model. İlki varsayılandır; OPTIMIZED olanlar daha hızlıdır. Oyunda da değiştirebilirsin.",
+            )))
+            .child(row);
+
+        let has_models = bundles::dlssnr_has_models(&dir);
+        let route = tools.dlssnr_route;
+        let model = models[model_ix];
+        let install = move |this: &mut Self, file: Option<PathBuf>, cx: &mut Context<Self>| {
+            let Some(id) = this.selected_game().map(|g| g.id.clone()) else {
+                return;
+            };
+            let Some(game_dir) = this.bundle_game_dir() else {
+                return;
+            };
+            let (v, dir) = (version.clone(), dir.clone());
+            this.tools.busy = Some("Installing…");
+            this.tools.error = None;
+            cx.notify();
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let result = bg
+                    .spawn({
+                        let id = id.clone();
+                        async move {
+                            bundles::dlssnr_install(
+                                &id,
+                                bundle,
+                                &v,
+                                &dir,
+                                &game_dir,
+                                file.as_deref(),
+                                model,
+                                route,
+                            )
+                        }
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.tools.busy = None;
+                    if let Err(e) = result {
+                        this.tools.error = Some(format!("{e:#}"));
+                        this.sound(super::sounds::Sound::Error);
+                    } else {
+                        this.sound(super::sounds::Sound::Done);
+                    }
+                    this.tools.dlssnr = bundles::dlssnr(&id);
+                    cx.notify();
+                });
+            })
+            .detach();
+        };
+        let install2 = install.clone();
+        let mut buttons = div().flex().flex_wrap().gap_2();
+        if has_models {
+            buttons = buttons.child(
+                widgets::primary_button("nr-install-now", self.tr("Install", "Kur")).on_click(
+                    cx.listener(move |this, _, _, cx| install(this, None, cx)),
+                ),
+            );
+        }
+        buttons = buttons.child(
+            widgets::chip(
+                "nr-install",
+                if has_models {
+                    self.tr(
+                        "Install with another nvngx_dlssnr file…",
+                        "Başka bir nvngx_dlssnr dosyasıyla kur…",
+                    )
+                } else {
+                    self.tr(
+                        "Choose nvngx_dlssnr file and install…",
+                        "nvngx_dlssnr dosyasını seç ve kur…",
+                    )
+                },
+                false,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let title = this.tr(
+                    "Choose NVIDIA's nvngx_dlssnr.dll or its zip",
+                    "NVIDIA'nın nvngx_dlssnr.dll dosyasını ya da zip'ini seç",
+                );
+                let install = install2.clone();
+                this.prompt_path(false, title, cx, move |this, file, cx| {
+                    install(this, Some(file), cx)
+                });
+            })),
+        );
+        card.child(buttons)
+    }
+
+    /// A DLSS-NR route's name and when to pick it.
+    fn nr_route_name(&self, r: arkor_launch::bundles::NrRoute) -> (&'static str, &'static str) {
+        use arkor_launch::bundles::NrRoute;
+        match r {
+            NrRoute::Optiscaler => (
+                self.tr("Through OptiScaler", "OptiScaler ile"),
+                self.tr(
+                    "The game has a DLSS, FSR or XeSS option. Best choice when it does.",
+                    "Oyunun DLSS, FSR ya da XeSS seçeneği var. Varsa en iyi seçim budur.",
+                ),
+            ),
+            NrRoute::ReshadeFeeder => (
+                self.tr("ReShade · DirectX 10-12", "ReShade · DirectX 10-12"),
+                self.tr(
+                    "Newer games without any upscaler option.",
+                    "Hiç ölçekleme seçeneği olmayan yeni oyunlar.",
+                ),
+            ),
+            NrRoute::ReshadeFeederVulkan => (
+                self.tr("ReShade · Vulkan / DirectX 9", "ReShade · Vulkan / DirectX 9"),
+                self.tr(
+                    "Vulkan games and DirectX 9 games.",
+                    "Vulkan oyunları ve DirectX 9 oyunları.",
+                ),
+            ),
+            NrRoute::ReshadeFeederDx9 => (
+                self.tr("ReShade · old DirectX 9", "ReShade · eski DirectX 9"),
+                self.tr(
+                    "Try this if an old DirectX 9 game looks wrong with the one before.",
+                    "Eski bir DirectX 9 oyunu bir öncekiyle yanlış görünürse bunu dene.",
+                ),
+            ),
+        }
     }
 
     fn toggle_optipatcher(&mut self, cx: &mut Context<Self>) {

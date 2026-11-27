@@ -3,6 +3,10 @@
 //! Arkor downloads them and drives their installers instead of copying their files itself.
 //! HelixSR's setup builds its networks on this PC from NVIDIA's and AMD's files after the
 //! user agrees to their terms, so it runs in a terminal where those questions can be answered.
+//!
+//! DLSSNR-AMD installs by one of four routes: through OptiScaler (games with a DLSS, FSR or
+//! XeSS option, 64-bit only) or through ReShade (DirectX 10-12 games without an upscaler,
+//! Vulkan and DirectX 9 games, old DirectX 9 games). 32-bit games take the i686 package.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,16 +23,24 @@ pub enum Bundle {
     DlssNrRdna4,
     /// The RDNA3 (RX 7000) port.
     DlssNrRdna3,
+    /// DLSSNR-AMD's i686 package, for 32-bit games (ReShade routes only).
+    DlssNrRdna4X32,
 }
 
 impl Bundle {
-    pub const ALL: [Bundle; 3] = [Bundle::HelixSr, Bundle::DlssNrRdna4, Bundle::DlssNrRdna3];
+    pub const ALL: [Bundle; 4] = [
+        Bundle::HelixSr,
+        Bundle::DlssNrRdna4,
+        Bundle::DlssNrRdna3,
+        Bundle::DlssNrRdna4X32,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Bundle::HelixSr => "HelixSR",
             Bundle::DlssNrRdna4 => "DLSS-NR (RDNA4)",
             Bundle::DlssNrRdna3 => "DLSS-NR (RDNA3)",
+            Bundle::DlssNrRdna4X32 => "DLSS-NR (RDNA4, 32-bit)",
         }
     }
 
@@ -42,7 +54,26 @@ impl Bundle {
             Bundle::HelixSr => "helixsr",
             Bundle::DlssNrRdna4 => "dlssnr-rdna4",
             Bundle::DlssNrRdna3 => "dlssnr-rdna3",
+            Bundle::DlssNrRdna4X32 => "dlssnr-rdna4-i686",
         }
+    }
+
+    /// The networks its installer takes (the RDNA3 port still has the older names).
+    pub fn models(self) -> &'static [&'static str] {
+        match self {
+            Bundle::DlssNrRdna3 => &[
+                "CC_SMALL_FP8",
+                "CC_SMALL_FP8_EXPERIMENTAL",
+                "CC_SILVER_AARDWOLD",
+                "CC_SILVER_AARDWOLD_OPTIMIZED",
+            ],
+            _ => &DLSSNR_MODELS,
+        }
+    }
+
+    /// Whether it is a package for 32-bit games.
+    pub fn is_32bit(self) -> bool {
+        self == Bundle::DlssNrRdna4X32
     }
 
     /// File inside the unpacked bundle that marks it complete.
@@ -110,7 +141,12 @@ pub fn latest(b: Bundle) -> anyhow::Result<(String, String)> {
                 n.contains("x86_64") && n.ends_with(".tar.gz")
             })
         }
-        Bundle::DlssNrRdna4 => {
+        Bundle::DlssNrRdna4 | Bundle::DlssNrRdna4X32 => {
+            let arch = if b == Bundle::DlssNrRdna4X32 {
+                "i686"
+            } else {
+                "x86_64"
+            };
             let json = crate::tools::http_get(
                 "https://gitlab.com/api/v4/projects/mochizuki0323%2FDLSSNR-AMD/releases?per_page=10",
             )?;
@@ -128,7 +164,7 @@ pub fn latest(b: Bundle) -> anyhow::Result<(String, String)> {
                     .collect()
             };
             pick(&json, "tag_name", &gitlab, &|n| {
-                n.contains("Linux") && n.contains("x86_64") && n.ends_with(".tar.gz")
+                n.contains("Linux") && n.contains(arch) && n.ends_with(".tar.gz")
             })
         }
     }
@@ -241,13 +277,51 @@ pub fn helixsr_installed(game_dir: &Path) -> bool {
     game_dir.join("HelixSR").is_dir() || game_dir.join("HelixSR-Scaler-remove.sh").is_file()
 }
 
-/// Networks DLSSNR-AMD can start with.
+/// Networks DLSSNR-AMD (0.1+) can start with.
 pub const DLSSNR_MODELS: [&str; 4] = [
     "CC_SMALL_FP8",
-    "CC_SMALL_FP8_EXPERIMENTAL",
+    "CC_SMALL_FP8_OPTIMIZED",
     "CC_SILVER_AARDWOLD",
     "CC_SILVER_AARDWOLD_OPTIMIZED",
 ];
+
+/// How DLSSNR-AMD hooks into a game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NrRoute {
+    /// The game has a DLSS, FSR or XeSS option: OptiScaler does the upscaling (64-bit only).
+    #[default]
+    Optiscaler,
+    /// DirectX 10/11/12 games without a usable upscaler, through ReShade.
+    ReshadeFeeder,
+    /// Vulkan games and DirectX 9 games (DXVK turns them into Vulkan), through ReShade.
+    ReshadeFeederVulkan,
+    /// As the Vulkan route, with the depth direction old DirectX 9 games use.
+    ReshadeFeederDx9,
+}
+
+impl NrRoute {
+    pub const ALL: [NrRoute; 4] = [
+        NrRoute::Optiscaler,
+        NrRoute::ReshadeFeeder,
+        NrRoute::ReshadeFeederVulkan,
+        NrRoute::ReshadeFeederDx9,
+    ];
+
+    /// The installer's name for it.
+    pub fn arg(self) -> &'static str {
+        match self {
+            NrRoute::Optiscaler => "optiscaler",
+            NrRoute::ReshadeFeeder => "reshade-feeder",
+            NrRoute::ReshadeFeederVulkan => "reshade-feeder-vulkan",
+            NrRoute::ReshadeFeederDx9 => "reshade-feeder-dx9",
+        }
+    }
+
+    pub fn from_arg(s: &str) -> Option<NrRoute> {
+        NrRoute::ALL.into_iter().find(|r| r.arg() == s)
+    }
+}
 
 /// What Arkor did with DLSSNR-AMD for a game: `~/.config/arkor/dlssnr/<store>-<id>.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -258,6 +332,11 @@ pub struct DlssNr {
     pub game_dir: PathBuf,
     /// DLL names the installer asked to load native first (e.g. `dxgi`).
     pub overrides: Vec<String>,
+    #[serde(default)]
+    pub route: NrRoute,
+    /// Other variables its launch line sets (the Vulkan layer of the ReShade routes).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 fn dlssnr_path(id: &GameId) -> anyhow::Result<PathBuf> {
@@ -286,30 +365,78 @@ fn parse_overrides(output: &str) -> Vec<String> {
         .collect()
 }
 
-/// Installs DLSSNR-AMD (OptiScaler route) into `game_dir` with the user's NVIDIA
-/// `nvngx_dlssnr` file. Returns the installer's output. Blocking.
+/// Variables other than `WINEDLLOVERRIDES` on the launch line the installer prints
+/// (`Steam launch options:  VK_ADD_LAYER_PATH="…" VK_INSTANCE_LAYERS=… WINEDLLOVERRIDES=…`).
+fn parse_launch_env(output: &str) -> Vec<(String, String)> {
+    let Some(line) = output
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Steam launch options:"))
+    else {
+        return Vec::new();
+    };
+    arkor_core::profile::shell_words(line)
+        .into_iter()
+        .take_while(|w| w != "%command%")
+        .filter_map(|w| {
+            let (k, v) = w.split_once('=')?;
+            (k != "WINEDLLOVERRIDES" && !k.is_empty()).then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// Whether the package already holds the networks taken from NVIDIA's file at an earlier
+/// install (then no file needs to be chosen again).
+pub fn dlssnr_has_models(dir: &Path) -> bool {
+    ["CC_SMALL_FP8.bin", "CC_SILVER_AARDWOLD.bin"]
+        .iter()
+        .any(|m| dir.join("dlssnr-amd").join(m).is_file())
+}
+
+/// Installs DLSSNR-AMD into `game_dir` by `route`, with the user's NVIDIA `nvngx_dlssnr`
+/// file (`None` when the package already holds the networks). Returns the installer's
+/// output. Blocking.
+#[allow(clippy::too_many_arguments)]
 pub fn dlssnr_install(
     id: &GameId,
     bundle: Bundle,
     version: &str,
     dir: &Path,
     game_dir: &Path,
-    nvidia_dll: &Path,
+    nvidia_dll: Option<&Path>,
     model: &str,
+    route: NrRoute,
 ) -> anyhow::Result<String> {
     anyhow::ensure!(bundle != Bundle::HelixSr, "not a DLSS-NR bundle");
-    anyhow::ensure!(DLSSNR_MODELS.contains(&model), "unknown network {model}");
+    anyhow::ensure!(bundle.models().contains(&model), "unknown network {model}");
     anyhow::ensure!(
-        crate::optiscaler::Manifest::load(id)?.is_none(),
-        "DLSS-NR brings its own OptiScaler: remove Arkor's OptiScaler from this game first"
+        !(bundle.is_32bit() && route == NrRoute::Optiscaler),
+        "the OptiScaler route is for 64-bit games; pick a ReShade route for a 32-bit game"
     );
+    anyhow::ensure!(
+        nvidia_dll.is_some() || dlssnr_has_models(dir),
+        "choose NVIDIA's nvngx_dlssnr.dll the first time"
+    );
+    if route == NrRoute::Optiscaler {
+        anyhow::ensure!(
+            crate::optiscaler::Manifest::load(id)?.is_none(),
+            "DLSS-NR brings its own OptiScaler: remove Arkor's OptiScaler from this game first"
+        );
+    } else {
+        anyhow::ensure!(
+            crate::reshade::manifest(id).is_none(),
+            "DLSS-NR brings its own ReShade: remove Arkor's ReShade from this game first"
+        );
+    }
     let installer = dir.join("install.sh");
-    let out = Command::new("bash")
-        .arg(&installer)
-        .arg(game_dir)
-        .arg("optiscaler")
-        .arg("--dll")
-        .arg(nvidia_dll)
+    let mut cmd = Command::new("bash");
+    cmd.arg(&installer).arg(game_dir).arg(route.arg());
+    if let Some(dll) = nvidia_dll {
+        cmd.arg("--dll").arg(dll);
+    }
+    if route != NrRoute::Optiscaler {
+        cmd.arg("--no-lumenite");
+    }
+    let out = cmd
         .args(["--model", model])
         .current_dir(dir)
         .stdin(std::process::Stdio::null())
@@ -338,6 +465,8 @@ pub fn dlssnr_install(
         installer,
         game_dir: game_dir.to_path_buf(),
         overrides: parse_overrides(&text),
+        route,
+        env: parse_launch_env(&text),
     };
     let path = dlssnr_path(id)?;
     std::fs::create_dir_all(path.parent().expect("has parent"))?;
@@ -389,6 +518,28 @@ mod tests {
             ["winmm", "version", "d3d12"]
         );
         assert!(parse_overrides("nothing here").is_empty());
+    }
+
+    #[test]
+    fn reads_the_vulkan_layer_of_the_launch_line() {
+        let out = "Steam launch options:  VK_ADD_LAYER_PATH=\"/g/My Game/dlssnr-amd/int4/layer\" VK_INSTANCE_LAYERS=VK_LAYER_DLSSNR_int4 WINEDLLOVERRIDES=\"d3d9=n,b\" %command%\n";
+        assert_eq!(
+            parse_launch_env(out),
+            [
+                (
+                    "VK_ADD_LAYER_PATH".to_string(),
+                    "/g/My Game/dlssnr-amd/int4/layer".to_string()
+                ),
+                (
+                    "VK_INSTANCE_LAYERS".to_string(),
+                    "VK_LAYER_DLSSNR_int4".to_string()
+                ),
+            ]
+        );
+        assert_eq!(parse_overrides(out), ["d3d9"]);
+        assert!(parse_launch_env("Steam launch options:  WINEDLLOVERRIDES=\"dxgi=n,b\" %command%").is_empty());
+        assert_eq!(NrRoute::from_arg("reshade-feeder-dx9"), Some(NrRoute::ReshadeFeederDx9));
+        assert!(Bundle::DlssNrRdna3.models().contains(&"CC_SMALL_FP8_EXPERIMENTAL"));
     }
 
     #[test]
