@@ -18,7 +18,10 @@ actions!(
         NextTab,
         PrevTab,
         PlayGame,
-        PickAll
+        PickAll,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset
     ]
 );
 
@@ -33,17 +36,32 @@ pub(super) fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PrevTab, Some("Arkor")),
         KeyBinding::new("ctrl-enter", PlayGame, Some("Arkor")),
         KeyBinding::new("ctrl-a", PickAll, Some("Arkor")),
+        KeyBinding::new("ctrl-=", ZoomIn, Some("Arkor")),
+        KeyBinding::new("ctrl-+", ZoomIn, Some("Arkor")),
+        KeyBinding::new("ctrl-shift-=", ZoomIn, Some("Arkor")),
+        KeyBinding::new("ctrl--", ZoomOut, Some("Arkor")),
+        KeyBinding::new("ctrl-0", ZoomReset, Some("Arkor")),
     ]);
 }
 
 /// Shortcut list for the Settings page: (keys, English, Turkish).
-pub(super) const SHORTCUTS: [(&str, &str, &str); 10] = [
+pub(super) const SHORTCUTS: [(&str, &str, &str); 12] = [
     (
         "Ctrl+F",
         "Search the library, or the open game's settings",
         "Kütüphanede ya da açık oyunun ayarlarında ara",
     ),
     ("Ctrl+L", "Library", "Kütüphane"),
+    (
+        "Ctrl+  +  −  0",
+        "Bigger, smaller, usual size",
+        "Büyüt, küçült, olağan boyut",
+    ),
+    (
+        "Ctrl+K",
+        "Command palette: a page, a game, play…",
+        "Komut paleti: bir sayfa, bir oyun, oyna…",
+    ),
     (
         "Ctrl+A · Ctrl/Shift+click",
         "Pick games in the library, for actions on all of them",
@@ -135,7 +153,7 @@ impl Library {
         }
     }
 
-    fn nav_title(&self, nav: Nav) -> &'static str {
+    pub(super) fn nav_title(&self, nav: Nav) -> &'static str {
         match nav {
             Nav::Library => self.tr("Library", "Kütüphane"),
             Nav::Add => self.tr("Add game", "Oyun ekle"),
@@ -204,7 +222,7 @@ impl Library {
     }
 
     /// The last played games, for one-click access from any page.
-    fn recent_games(&self) -> Vec<usize> {
+    pub(super) fn recent_games(&self) -> Vec<usize> {
         let mut played: Vec<(u64, usize)> = self
             .games
             .iter()
@@ -550,6 +568,22 @@ impl Library {
         cx.notify();
     }
 
+    /// Ctrl++ / Ctrl+- / Ctrl+0: the text size one step up, down, or back to the usual.
+    fn zoom(&mut self, step: i32, cx: &mut Context<Self>) {
+        use arkor_core::profile::Appearance;
+        let sizes = Appearance::FONT_SIZES;
+        let now = self.global.appearance.font_size();
+        let at = sizes.iter().position(|s| *s == now).unwrap_or(2) as i32;
+        let next = match step {
+            0 => None,
+            s => Some(sizes[(at + s).clamp(0, sizes.len() as i32 - 1) as usize]),
+        };
+        self.global.appearance.font_size = next;
+        let r = self.global.save();
+        self.report(r);
+        cx.notify();
+    }
+
     /// Ctrl+Tab / Ctrl+Shift+Tab on the game page (tabs without anything for the game are skipped).
     fn step_game_tab(&mut self, delta: i32, cx: &mut Context<Self>) {
         let Some(entry) = self.entry().cloned() else {
@@ -688,6 +722,14 @@ impl Render for Library {
             }))
             .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
             .on_action(cx.listener(|this, _: &PickAll, _, cx| this.library_pick_all(cx)))
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(1, cx)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(-1, cx)))
+            .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom(0, cx)))
+            .on_action(
+                cx.listener(|this, _: &super::palette::OpenPalette, w, cx| {
+                    this.open_palette(w, cx)
+                }),
+            )
             .children(bar)
             .child(
                 div()
@@ -731,6 +773,7 @@ impl Render for Library {
                     ),
             )
             .children(self.render_sgdb_picker(cx))
+            .children(self.render_palette(cx))
             .children(self.render_shop_windows(cx))
             .children(intro);
         if framed {

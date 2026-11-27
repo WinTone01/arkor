@@ -22,6 +22,7 @@ mod console_view;
 mod cover_art;
 mod defaults_page;
 mod desk;
+mod desktop_accent;
 mod downloads_page;
 mod downloads_queue;
 mod emulators;
@@ -41,6 +42,7 @@ mod kwin;
 mod library_views;
 mod loader;
 mod mods_page;
+mod palette;
 mod protons;
 mod save_backups;
 mod saves;
@@ -188,6 +190,10 @@ pub struct Library {
     info: game_info::InfoUi,
     info_igdb: Option<bool>,
     stats_ui: stats_page::StatsUi,
+    /// The desktop's accent colour and when it was read (for "follow the desktop").
+    desktop_accent: Option<(std::time::Instant, Option<u32>)>,
+    /// The command palette (Ctrl+K), when open.
+    palette: Option<palette::Palette>,
     /// Why downloads wait (asked every few seconds while the Downloads page shows).
     downloads_hold: Option<arkor_launch::downloads::Hold>,
     downloads_hold_at: Option<std::time::Instant>,
@@ -282,6 +288,8 @@ impl Library {
             info: Default::default(),
             info_igdb: None,
             stats_ui: Default::default(),
+            palette: None,
+            desktop_accent: None,
             downloads_hold: None,
             downloads_hold_at: None,
             restore_pending: None,
@@ -804,6 +812,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             cx.bind_keys([gpui::KeyBinding::new("ctrl-h", ToggleHidden, None)]);
             console::bind_keys(cx);
             shell::bind_keys(cx);
+            palette::bind_keys(cx);
             let main: std::rc::Rc<std::cell::RefCell<Option<MainWindow>>> = Default::default();
 
             // The tray icon is always there; the setting decides whether closing the window

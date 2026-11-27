@@ -2121,3 +2121,76 @@ fn library_shelves_lists_and_picked_games() {
     });
     cx.run_until_parked();
 }
+
+#[test]
+fn command_palette_goes_to_pages_and_games() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+        palette::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("library"));
+        lib
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("ctrl-k");
+    assert!(
+        view.read_with(cx, |l, _| l.palette.is_some()),
+        "Ctrl+K opens it"
+    );
+    cx.simulate_input("stat");
+    cx.simulate_keystrokes("enter");
+    assert!(view.read_with(cx, |l, _| l.palette.is_none()
+        && l.selection == Some(Selection::Stats)));
+    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_input("test game");
+    // "Play Test Game", then "Test Game" (open it).
+    cx.simulate_keystrokes("down enter");
+    assert!(matches!(
+        view.read_with(cx, |l, _| l.selection),
+        Some(Selection::Game(_))
+    ));
+    cx.simulate_keystrokes("ctrl-k escape");
+    assert!(
+        view.read_with(cx, |l, _| l.palette.is_none()),
+        "Esc closes it"
+    );
+}
+
+#[test]
+fn ctrl_plus_and_minus_change_the_text_size() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("library"));
+        lib
+    });
+    cx.run_until_parked();
+    let size = |cx: &mut gpui_test::VisualTestContext| {
+        view.read_with(cx, |l, _| l.global.appearance.font_size())
+    };
+    assert_eq!(size(cx), 14);
+    cx.simulate_keystrokes("ctrl-= ctrl-=");
+    assert_eq!(size(cx), 16);
+    cx.simulate_keystrokes("ctrl--");
+    assert_eq!(size(cx), 15);
+    cx.simulate_keystrokes("ctrl-0");
+    assert_eq!(size(cx), 14);
+}

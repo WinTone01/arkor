@@ -552,6 +552,9 @@ pub struct Appearance {
     pub reduce_motion: bool,
     /// Picture for `Backdrop::Image`.
     pub backdrop_image: Option<PathBuf>,
+    /// The accent follows the desktop's (KDE's, GNOME's, or a pywal/wallust palette).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub accent_desktop: bool,
 }
 
 /// What a new install looks like: dark, violet, Crystal panels over the Drift background,
@@ -568,12 +571,14 @@ impl Default for Appearance {
             font_size: None,
             reduce_motion: false,
             backdrop_image: None,
+            accent_desktop: false,
         }
     }
 }
 
 impl Appearance {
-    pub const FONT_SIZES: [u8; 4] = [13, 14, 15, 16];
+    /// From a little smaller than usual to twice the default (a TV across the room).
+    pub const FONT_SIZES: [u8; 10] = [12, 13, 14, 15, 16, 18, 20, 22, 24, 28];
 
     pub fn font_size(&self) -> u8 {
         self.font_size
