@@ -5,7 +5,7 @@
 use arkor_core::library::GameKind;
 use arkor_core::mangohud::{HudSettings, Metric, Orientation, Position, Preset};
 use arkor_core::profile::{Theme, UpdateInterval};
-use arkor_core::tweaks::{Category, TWEAKS};
+use arkor_core::tweaks::Category;
 use arkor_core::{HudMode, LsfgMode};
 use arkor_launch::shops::Shop;
 
@@ -79,21 +79,20 @@ type Setting = (GameOpt, &'static str, String);
 /// The categories of a game's settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum GameCat {
-    Overlay,
-    Performance,
+    /// More FPS, smoother motion, less delay (the desktop's "Smoother & faster").
+    Smooth,
     Picture,
-    Upscaling,
+    Overlay,
     Compatibility,
     Starting,
     Game,
 }
 
 impl GameCat {
-    pub(super) const ALL: [GameCat; 7] = [
-        GameCat::Overlay,
-        GameCat::Performance,
+    pub(super) const ALL: [GameCat; 6] = [
+        GameCat::Smooth,
         GameCat::Picture,
-        GameCat::Upscaling,
+        GameCat::Overlay,
         GameCat::Compatibility,
         GameCat::Starting,
         GameCat::Game,
@@ -644,12 +643,145 @@ impl Library {
         self.save();
     }
 
+    /// What a game setting does, in one short sentence (under its line).
+    fn game_opt_help(&self, o: GameOpt) -> &'static str {
+        let t = |en, tr| self.tr(en, tr);
+        match o {
+            GameOpt::Tweak(id) => arkor_core::tweaks::find(id).map_or("", |tw| {
+                if self.global.language == arkor_core::Language::Tr {
+                    tw.help_tr
+                } else {
+                    tw.help_en
+                }
+            }),
+            GameOpt::Hud => t(
+                "FPS, temperatures and usage on top of the game.",
+                "Oyunun üstünde FPS, sıcaklık ve kullanım.",
+            ),
+            GameOpt::HudPreset => t("How much it shows.", "Ne kadar bilgi gösterileceği."),
+            GameOpt::HudPosition => t("Where on the screen.", "Ekranın neresinde duracağı."),
+            GameOpt::HudOrientation => t("A column or a line.", "Sütun mu, satır mı."),
+            GameOpt::HudFont => t("How big the text is.", "Yazının ne kadar büyük olacağı."),
+            GameOpt::HudAlpha => t(
+                "How dark the box behind it is.",
+                "Arkasındaki kutunun ne kadar koyu olacağı.",
+            ),
+            GameOpt::FpsLimit => t(
+                "Caps the frame rate: less heat and noise, steadier motion.",
+                "Kare hızını sınırlar: daha az ısı ve gürültü, daha düzenli hareket.",
+            ),
+            GameOpt::Metric(_) => "",
+            GameOpt::Gamescope => t(
+                "Valve's game window: force a resolution, upscale, fullscreen, HDR.",
+                "Valve'ın oyun penceresi: çözünürlüğü zorla, ölçekle, tam ekran, HDR.",
+            ),
+            GameOpt::GsOutput => t(
+                "The size of the window on your screen.",
+                "Pencerenin ekrandaki boyutu.",
+            ),
+            GameOpt::GsGame => t(
+                "Lower than the output gives more FPS; it is scaled up.",
+                "Çıkıştan düşük olursa FPS artar; görüntü büyütülür.",
+            ),
+            GameOpt::GsRefresh => t(
+                "How many times a second the screen updates.",
+                "Ekranın saniyede kaç kez yenileneceği.",
+            ),
+            GameOpt::GsFilter => t(
+                "How the picture is scaled up (FSR is the sharpest).",
+                "Görüntünün nasıl büyütüleceği (en keskini FSR).",
+            ),
+            GameOpt::GsFullscreen => t("No window frame.", "Pencere çerçevesi olmadan."),
+            GameOpt::GsHdr => t("For HDR screens.", "HDR ekranlar için."),
+            GameOpt::Lsfg => t(
+                "Frame generation from the Lossless Scaling app (buy it on Steam).",
+                "Lossless Scaling uygulamasının kare üretimi (Steam'den satın alınır).",
+            ),
+            GameOpt::LsfgMultiplier => t(
+                "2x doubles the frame rate, 3x triples it.",
+                "2x kare hızını ikiye, 3x üçe katlar.",
+            ),
+            GameOpt::LsfgFlow => t(
+                "Lower is faster, higher looks better.",
+                "Düşük daha hızlı, yüksek daha güzel görünür.",
+            ),
+            GameOpt::LsfgPerformance => t(
+                "Lighter, for weaker graphics cards.",
+                "Daha hafif, zayıf ekran kartları için.",
+            ),
+            GameOpt::Mako => t(
+                "Free frame generation and upscaling.",
+                "Ücretsiz kare üretimi ve ölçekleme.",
+            ),
+            GameOpt::Afmf => t(
+                "AMD's frame generation for any game.",
+                "AMD'nin her oyunda çalışan kare üretimi.",
+            ),
+            GameOpt::NoSleep => t(
+                "The screen does not dim or sleep while you play.",
+                "Oynarken ekran kararmaz ya da uykuya geçmez.",
+            ),
+            GameOpt::VkBasalt => t(
+                "Sharpens the picture and adds effects (Vulkan and DXVK games).",
+                "Görüntüyü keskinleştirir ve efekt ekler (Vulkan ve DXVK oyunları).",
+            ),
+            GameOpt::Cas => t(
+                "How much sharper the picture gets.",
+                "Görüntünün ne kadar keskinleşeceği.",
+            ),
+            GameOpt::VkSumi => t(
+                "More vivid colours and contrast.",
+                "Daha canlı renkler ve kontrast.",
+            ),
+            GameOpt::Proton => t(
+                "What runs the Windows game. Automatic picks a good one.",
+                "Windows oyununu çalıştıran yazılım. Otomatik iyi bir tanesini seçer.",
+            ),
+            GameOpt::ProtonLog => t(
+                "Writes a detailed log, for finding problems.",
+                "Sorun bulmak için ayrıntılı kayıt tutar.",
+            ),
+            GameOpt::LinuxRuntime => t(
+                "A container that gives the game the libraries it expects.",
+                "Oyuna beklediği kütüphaneleri veren bir kap.",
+            ),
+            GameOpt::Emulator => t(
+                "Which emulator plays it.",
+                "Oyunu hangi emülatörün oynatacağı.",
+            ),
+            GameOpt::Gpu => t(
+                "Which graphics card the game uses.",
+                "Oyunun hangi ekran kartını kullanacağı.",
+            ),
+            GameOpt::Winecfg => t(
+                "Wine's own settings window.",
+                "Wine'ın kendi ayar penceresi.",
+            ),
+            GameOpt::Winetricks => t(
+                "Installs Windows parts some games need.",
+                "Bazı oyunların istediği Windows parçalarını kurar.",
+            ),
+            GameOpt::LaunchOptions => t(
+                "Extra words when the game starts, e.g. -dx11.",
+                "Oyun başlarken ek kelimeler, ör. -dx11.",
+            ),
+            GameOpt::PreLaunch => t(
+                "A command that runs before the game.",
+                "Oyundan önce çalışan bir komut.",
+            ),
+            GameOpt::PostLaunch => t(
+                "A command that runs after the game closes.",
+                "Oyun kapandıktan sonra çalışan bir komut.",
+            ),
+            GameOpt::Hidden | GameOpt::Category | GameOpt::Name | GameOpt::NewCategory => "",
+        }
+    }
+
     fn game_cat_title(&self, c: GameCat) -> (&'static str, &'static str) {
         match c {
-            GameCat::Overlay => ("gauge", self.tr("Overlay (MangoHud)", "Overlay (MangoHud)")),
-            GameCat::Performance => ("zap", self.tr("Performance", "Performans")),
-            GameCat::Picture => ("wand-sparkles", self.tr("Picture", "Görüntü")),
-            GameCat::Upscaling => ("scaling", self.tr("Upscaling", "Ölçekleme")),
+            GameCat::Smooth => ("zap", self.tr("Smoother & faster", "Daha akıcı ve hızlı")),
+            GameCat::Picture => ("palette", self.tr("Picture", "Görüntü")),
+            GameCat::Overlay => ("gauge", self.tr("Performance overlay", "Performans göstergesi")),
             GameCat::Compatibility => ("wine", self.tr("Compatibility", "Uyumluluk")),
             GameCat::Starting => ("terminal", self.tr("Starting", "Başlatma")),
             GameCat::Game => ("gamepad-2", self.tr("Game", "Oyun")),
@@ -729,24 +861,18 @@ impl Library {
         let t = |en, tr| self.tr(en, tr);
         let tr = self.global.language == arkor_core::Language::Tr;
         let gpus = self.tools.gpus;
-        let tweaks = |cats: &[Category]| -> Vec<(GameOpt, &'static str, String)> {
-            TWEAKS
-                .iter()
-                .filter(|tw| cats.contains(&tw.category))
-                .filter(|tw| match arkor_core::tweaks::gpu_need(tw.id) {
-                    Some(arkor_core::tweaks::GpuNeed::Amd) => gpus.amd,
-                    Some(arkor_core::tweaks::GpuNeed::Nvidia) => gpus.nvidia,
-                    None => true,
-                })
+        let tweaks = |c: Category| -> Vec<(GameOpt, &'static str, String)> {
+            self.tweaks_of(c)
+                .into_iter()
                 .map(|tw| {
                     let label = if tr { tw.label_tr } else { tw.label_en };
-                    let text = match tw.needs {
-                        Some(n) => format!("{label} ({n})"),
-                        None => label.to_string(),
-                    };
-                    (GameOpt::Tweak(tw.id), "toggle-right", text)
+                    (GameOpt::Tweak(tw.id), "toggle-right", label.to_string())
                 })
                 .collect()
+        };
+        // The title of a category, as on the desktop.
+        let gt = |key: &str| {
+            super::features::group(key).map(|g| self.tr(g.name.0, g.name.1).to_string())
         };
         let o = |opt: GameOpt, icon: &'static str, label: &str| (opt, icon, label.to_string());
         // (setting, icon, label) with the title of the group it begins.
@@ -791,10 +917,55 @@ impl Library {
                     ));
                 }
             }
-            GameCat::Performance => {
-                let mut v = vec![o(GameOpt::Gamescope, "monitor", "Gamescope")];
+            GameCat::Smooth => {
+                if prefix || steam {
+                    groups.push((gt("upscale"), tweaks(Category::Upscaling)));
+                }
+                let mut fg = vec![o(GameOpt::Lsfg, "layers", "Lossless Scaling (lsfg-vk)")];
+                if p.lsfg.mode == LsfgMode::On {
+                    fg.extend([
+                        o(GameOpt::LsfgMultiplier, "layers", t("Multiplier", "Çarpan")),
+                        o(GameOpt::LsfgFlow, "gauge", t("Flow scale", "Akış ölçeği")),
+                        o(
+                            GameOpt::LsfgPerformance,
+                            "zap",
+                            t("Performance mode", "Performans modu"),
+                        ),
+                    ]);
+                }
+                fg.push(o(GameOpt::Mako, "layers", "MAKO"));
+                if gpus.amd {
+                    fg.push(o(GameOpt::Afmf, "layers", "AFMF"));
+                }
+                fg.extend(tweaks(Category::FrameGen));
+                groups.push((gt("framegen"), fg));
+                groups.push((gt("latency"), tweaks(Category::Latency)));
+                let mut st = vec![o(
+                    GameOpt::NoSleep,
+                    "coffee",
+                    t("Keep the computer awake", "Uykuyu engelle"),
+                )];
+                st.extend(tweaks(Category::Stutter));
+                groups.push((gt("stutter"), st));
+            }
+            GameCat::Picture => {
+                let mut v = vec![o(GameOpt::VkBasalt, "wand-sparkles", "vkBasalt")];
+                if p.vkbasalt.enabled {
+                    v.push(o(
+                        GameOpt::Cas,
+                        "sparkles",
+                        t("Sharpening (CAS)", "Keskinleştirme (CAS)"),
+                    ));
+                }
+                v.push(o(
+                    GameOpt::VkSumi,
+                    "palette",
+                    t("Colour grading (vkSumi)", "Renk düzenleme (vkSumi)"),
+                ));
+                groups.push((gt("effects"), v));
+                let mut sc = vec![o(GameOpt::Gamescope, "monitor", "Gamescope")];
                 if p.gamescope.enabled {
-                    v.extend([
+                    sc.extend([
                         o(
                             GameOpt::GsOutput,
                             "monitor",
@@ -823,54 +994,10 @@ impl Library {
                         o(GameOpt::GsHdr, "sun", "HDR"),
                     ]);
                 }
-                groups.push((Some("Gamescope".into()), v));
-                let mut fg = vec![o(GameOpt::Lsfg, "layers", "lsfg-vk")];
-                if p.lsfg.mode == LsfgMode::On {
-                    fg.extend([
-                        o(GameOpt::LsfgMultiplier, "layers", t("Multiplier", "Çarpan")),
-                        o(GameOpt::LsfgFlow, "gauge", t("Flow scale", "Akış ölçeği")),
-                        o(
-                            GameOpt::LsfgPerformance,
-                            "zap",
-                            t("Performance mode", "Performans modu"),
-                        ),
-                    ]);
+                if prefix || steam {
+                    sc.extend(tweaks(Category::Display));
                 }
-                fg.push(o(GameOpt::Mako, "layers", "MAKO"));
-                if gpus.amd {
-                    fg.push(o(GameOpt::Afmf, "layers", "AFMF"));
-                }
-                groups.push((Some(t("Frame generation", "Kare üretimi").to_string()), fg));
-                let mut other = vec![o(
-                    GameOpt::NoSleep,
-                    "coffee",
-                    t("Keep the computer awake", "Uykuyu engelle"),
-                )];
-                other.extend(tweaks(&[Category::Latency, Category::Gpu]));
-                groups.push((Some(t("Other", "Diğer").to_string()), other));
-            }
-            GameCat::Picture => {
-                let mut v = vec![o(GameOpt::VkBasalt, "wand-sparkles", "vkBasalt")];
-                if p.vkbasalt.enabled {
-                    v.push(o(
-                        GameOpt::Cas,
-                        "sparkles",
-                        t("Sharpening (CAS)", "Keskinleştirme (CAS)"),
-                    ));
-                }
-                v.push(o(
-                    GameOpt::VkSumi,
-                    "palette",
-                    t("Colour grading (vkSumi)", "Renk düzenleme (vkSumi)"),
-                ));
-                v.extend(tweaks(&[Category::Display]));
-                groups.push((None, v));
-            }
-            GameCat::Upscaling => {
-                let v = tweaks(&[Category::Upscaling]);
-                if !v.is_empty() {
-                    groups.push((None, v));
-                }
+                groups.push((gt("screen"), sc));
             }
             GameCat::Compatibility => {
                 let mut v = Vec::new();
@@ -887,9 +1014,6 @@ impl Library {
                 if matches!(g.kind, GameKind::Emulated { .. }) {
                     v.push(o(GameOpt::Emulator, "joystick", t("Emulator", "Emülatör")));
                 }
-                if self.tools.cards.len() > 1 {
-                    v.push(o(GameOpt::Gpu, "cpu", t("Graphics card", "Ekran kartı")));
-                }
                 if linux {
                     v.push(o(
                         GameOpt::LinuxRuntime,
@@ -897,21 +1021,28 @@ impl Library {
                         t("Runtime", "Çalışma ortamı"),
                     ));
                 }
-                v.extend(tweaks(&[
-                    Category::Compatibility,
-                    Category::Input,
-                    Category::Other,
-                ]));
-                groups.push((None, v));
-                if prefix {
-                    groups.push((
-                        Some(t("Prefix tools", "Prefix araçları").to_string()),
-                        vec![
-                            o(GameOpt::Winecfg, "settings", "winecfg"),
-                            o(GameOpt::Winetricks, "wrench", "winetricks"),
-                        ],
-                    ));
+                groups.push((gt("proton"), v));
+                if prefix || steam {
+                    groups.push((gt("fixes"), tweaks(Category::Fixes)));
                 }
+                let mut gpu = Vec::new();
+                if self.tools.cards.len() > 1 {
+                    gpu.push(o(GameOpt::Gpu, "cpu", t("Graphics card", "Ekran kartı")));
+                }
+                gpu.extend(tweaks(Category::Gpu));
+                groups.push((gt("gpu"), gpu));
+                if prefix || steam {
+                    groups.push((gt("pads"), tweaks(Category::Input)));
+                }
+                let mut tools = Vec::new();
+                if prefix {
+                    tools.extend([
+                        o(GameOpt::Winecfg, "settings", "winecfg"),
+                        o(GameOpt::Winetricks, "wrench", "winetricks"),
+                    ]);
+                }
+                tools.extend(tweaks(Category::Sharing));
+                groups.push((gt("tools"), tools));
             }
             GameCat::Starting => groups.push((
                 None,
@@ -948,15 +1079,14 @@ impl Library {
         let mut rows = Vec::new();
         for (title, items) in groups {
             for (n, (opt, icon, label)) in items.into_iter().enumerate() {
-                let mut row = Row::new(
-                    Kind::Line,
-                    vec![Item::line(
-                        Act::Opt(Opt::Game(opt)),
-                        icon,
-                        label,
-                        self.game_opt_value(opt),
-                    )],
+                let mut item = Item::line(
+                    Act::Opt(Opt::Game(opt)),
+                    icon,
+                    label,
+                    self.game_opt_value(opt),
                 );
+                item.sub = self.game_opt_help(opt).to_string();
+                let mut row = Row::new(Kind::Line, vec![item]);
                 if n == 0 {
                     row.title = title.clone();
                 }

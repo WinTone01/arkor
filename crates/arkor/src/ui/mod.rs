@@ -495,7 +495,13 @@ impl Library {
             self.hud_tab = t;
         }
         self.global_hud_tab = matches!(tab, Some("advanced" | "mangohud"));
-        self.game_tab = tab.and_then(GameTab::from_name).unwrap_or_default();
+        // `#smooth/framegen`: an area and one of its categories.
+        let (area, group) = match tab.and_then(|t| t.split_once('/')) {
+            Some((a, g)) => (Some(a), Some(g)),
+            None => (tab, None),
+        };
+        self.game_tab = area.and_then(GameTab::from_name).unwrap_or_default();
+        let group = group.and_then(features::group).map(|g| g.key);
         // `#cover` opens the SteamGridDB cover picker too.
         self.sgdb_on_open = tab == Some("cover");
         // `#search=dlss` opens the game page with its settings search filled in.
@@ -571,6 +577,7 @@ impl Library {
             self.rescan_bench_all();
         }
         self.set_selection(selection);
+        self.game_ui.group = group;
     }
 
     fn select(&mut self, selection: Selection, cx: &mut Context<Self>) {

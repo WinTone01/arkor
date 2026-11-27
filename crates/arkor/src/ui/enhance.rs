@@ -281,12 +281,65 @@ impl Library {
         cx.notify();
     }
 
-    pub(super) fn render_tweaks(&mut self, cx: &mut Context<Self>) -> Div {
+    /// The switches of one category that this computer's cards can use.
+    pub(super) fn tweaks_of(
+        &self,
+        c: arkor_core::tweaks::Category,
+    ) -> Vec<&'static arkor_core::tweaks::Tweak> {
+        let gpus = self.tools.gpus;
+        arkor_core::tweaks::TWEAKS
+            .iter()
+            .filter(|t| t.category == c)
+            .filter(|t| match arkor_core::tweaks::gpu_need(t.id) {
+                Some(arkor_core::tweaks::GpuNeed::Amd) => gpus.amd,
+                Some(arkor_core::tweaks::GpuNeed::Nvidia) => gpus.nvidia,
+                None => true,
+            })
+            .collect()
+    }
+
+    /// Whether a category's switches are offered for `g` (Proton's switches only for
+    /// Windows games; graphics and Discord ones for every game).
+    pub(super) fn tweaks_apply(
+        &self,
+        c: arkor_core::tweaks::Category,
+        g: &arkor_core::library::LibraryGame,
+    ) -> bool {
+        use arkor_core::tweaks::Category::*;
+        let wine_only = matches!(c, Upscaling | Fixes | Input | Display);
+        !self.tweaks_of(c).is_empty()
+            && (!wine_only || g.needs_prefix() || matches!(g.kind, arkor_core::library::GameKind::Steam { .. }))
+    }
+
+    /// How many of a category's switches are on for this game.
+    pub(super) fn tweaks_on(&self, c: arkor_core::tweaks::Category) -> usize {
+        self.tweaks_of(c)
+            .iter()
+            .filter(|t| self.profile.tweaks.contains(t.id))
+            .count()
+    }
+
+    /// One category's switches, each with what it does.
+    pub(super) fn render_tweak_category(
+        &mut self,
+        c: arkor_core::tweaks::Category,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let selected = self.profile.tweaks.clone();
-        widgets::section(self.tr("Proton and driver switches", "Proton ve sürücü anahtarları"))
-            .child(self.tweak_list("tweak", &selected, cx, |this, id, cx| {
-                this.toggle_tweak(id, cx)
-            }))
+        let mut card = widgets::section(format!(
+            "{} · {} {}",
+            self.tr("Switches", "Anahtarlar"),
+            self.tweaks_on(c),
+            self.tr("on", "açık")
+        ));
+        for (ix, tw) in self.tweaks_of(c).into_iter().enumerate() {
+            let tid = tw.id;
+            card = card.child(
+                self.tweak_row(("tweak", ix), tw, selected.contains(tid))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_tweak(tid, cx))),
+            );
+        }
+        card
     }
 
     pub(super) fn render_gamescope(&mut self, cx: &mut Context<Self>) -> Div {

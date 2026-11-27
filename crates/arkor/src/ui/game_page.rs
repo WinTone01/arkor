@@ -16,8 +16,8 @@ use super::{Library, Selection};
 /// Page-local state of the game page (reset when another page is selected).
 #[derive(Default)]
 pub(super) struct GameUi {
-    /// Sub-tab of "Upscaling & frame gen" (index into `features::UPSCALE_GROUPS`).
-    pub(super) upscale_group: usize,
+    /// The category open in the current area (a key of `features::GROUPS`).
+    pub(super) group: Option<&'static str>,
     confirm_delete: bool,
     delete_prefix: bool,
     /// "Remove from library" for the picked games was pressed once.

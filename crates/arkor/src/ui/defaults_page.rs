@@ -10,6 +10,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, Context, Div, div, prelude::*, px};
 
 use super::style::{self, pal};
+use super::widgets::theme::*;
 use super::{Library, widgets};
 
 impl Library {
@@ -65,7 +66,65 @@ impl Library {
             })
     }
 
-    /// Every tweak as a check box, grouped by what it is about.
+    /// A switch as a line: its box, its name (and the Proton or driver it needs) and a
+    /// sentence on what it does.
+    pub(super) fn tweak_row(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        tw: &'static arkor_core::tweaks::Tweak,
+        on: bool,
+    ) -> gpui::Stateful<Div> {
+        use super::style::{self, pal};
+        let lang_tr = self.global.language == arkor_core::Language::Tr;
+        let (label, help) = if lang_tr {
+            (tw.label_tr, tw.help_tr)
+        } else {
+            (tw.label_en, tw.help_en)
+        };
+        div()
+            .id(id)
+            .flex()
+            .items_start()
+            .gap_3()
+            .px_3()
+            .py_2p5()
+            .rounded(px(10.))
+            .cursor_pointer()
+            .when(on, |d| d.bg(pal::accent().opacity(0.08)))
+            .hover(|s| s.bg(ROW_HOVER()))
+            .child(div().pt(px(2.)).child(widgets::checkbox(on)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(if on { TEXT() } else { pal::text_soft() })
+                                    .child(label),
+                            )
+                            .children(tw.needs.map(|n| {
+                                style::tag(
+                                    format!("{} {n}", self.tr("needs", "gerekir:")),
+                                    pal::faint(),
+                                )
+                            })),
+                    )
+                    .child(div().text_xs().text_color(pal::muted()).child(help)),
+            )
+    }
+
+    /// Every tweak, grouped by what it is for.
     pub(super) fn tweak_list(
         &self,
         id: &'static str,
@@ -74,29 +133,12 @@ impl Library {
         toggle: fn(&mut Self, &'static str, &mut Context<Self>),
     ) -> Div {
         use arkor_core::tweaks::{Category, TWEAKS};
-        let lang_tr = self.global.language == arkor_core::Language::Tr;
-        let title = |c: Category| match c {
-            Category::Upscaling => self.tr("Upscaling", "Ölçekleme"),
-            Category::Display => self.tr("Display", "Ekran"),
-            Category::Latency => self.tr("Latency", "Gecikme"),
-            Category::Compatibility => self.tr("Compatibility", "Uyumluluk"),
-            Category::Gpu => "GPU",
-            Category::Input => self.tr("Input", "Giriş"),
-            Category::Other => self.tr("Other", "Diğer"),
-        };
-        let mut list = div().flex().flex_col().gap_2();
+        let mut list = div().flex().flex_col().gap_1();
         for (ci, c) in Category::ALL.into_iter().enumerate() {
-            let gpus = self.tools.gpus;
-            let tweaks: Vec<_> = TWEAKS
+            let tweaks: Vec<(usize, &'static arkor_core::tweaks::Tweak)> = TWEAKS
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| t.category == c)
-                // Hidden when this computer has no GPU they work with.
-                .filter(|(_, t)| match arkor_core::tweaks::gpu_need(t.id) {
-                    Some(arkor_core::tweaks::GpuNeed::Amd) => gpus.amd,
-                    Some(arkor_core::tweaks::GpuNeed::Nvidia) => gpus.nvidia,
-                    None => true,
-                })
+                .filter(|(_, t)| self.tweaks_of(c).iter().any(|o| o.id == t.id))
                 .collect();
             if tweaks.is_empty() {
                 continue;
@@ -105,26 +147,18 @@ impl Library {
                 .iter()
                 .filter(|(_, t)| selected.contains(t.id))
                 .count();
-            let mut grid = div().flex().flex_wrap().gap_1();
-            for (ix, tw) in tweaks {
-                let label = if lang_tr { tw.label_tr } else { tw.label_en };
-                let text = match tw.needs {
-                    Some(n) => format!("{label} ({n})"),
-                    None => label.to_string(),
-                };
-                let tid = tw.id;
-                grid = grid.child(
-                    widgets::check_item((id, ix), text, selected.contains(tid))
-                        .w(px(330.))
-                        .on_click(cx.listener(move |this, _, _, cx| toggle(this, tid, cx))),
-                );
-            }
             if ci > 0 {
                 list = list.child(widgets::divider());
             }
-            list = list
-                .child(widgets::subheading(format!("{} · {on}", title(c))))
-                .child(grid);
+            let (en, tr) = c.name();
+            list = list.child(widgets::subheading(format!("{} · {on}", self.tr(en, tr))));
+            for (ix, tw) in tweaks {
+                let tid = tw.id;
+                list = list.child(
+                    self.tweak_row((id, ix), tw, selected.contains(tid))
+                        .on_click(cx.listener(move |this, _, _, cx| toggle(this, tid, cx))),
+                );
+            }
         }
         list
     }

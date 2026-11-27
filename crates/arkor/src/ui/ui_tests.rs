@@ -62,11 +62,11 @@ fn keyboard_shortcuts_and_console() {
     cx.simulate_keystrokes("ctrl-tab");
     assert_eq!(state(cx).1, GameTab::Game, "Ctrl+Tab: next tab");
     cx.simulate_keystrokes("ctrl-tab");
-    assert_eq!(state(cx).1, GameTab::Runtime);
+    assert_eq!(state(cx).1, GameTab::Smooth);
     cx.simulate_keystrokes("ctrl-shift-tab ctrl-shift-tab ctrl-shift-tab");
     assert_eq!(
         state(cx).1,
-        GameTab::Logs,
+        GameTab::Help,
         "Ctrl+Shift+Tab wraps around to the last tab"
     );
 
@@ -422,7 +422,7 @@ fn settings_overlay_and_hud_tabs_render() {
 }
 
 #[test]
-fn upscaling_subtabs_and_downloads_page_render() {
+fn area_categories_and_downloads_page_render() {
     let _lock = super::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -435,16 +435,30 @@ fn upscaling_subtabs_and_downloads_page_render() {
     });
     let (view, cx) = app.add_window_view(|_, _| {
         let mut lib = Library::new();
-        lib.open(Some("local:test-game#upscaling"));
+        lib.open(Some("local:test-game#smooth/framegen"));
         lib
     });
     cx.run_until_parked();
-    for group in 0..super::features::UPSCALE_GROUPS.len() {
+    assert_eq!(
+        view.read_with(cx, |l, _| (l.game_tab, l.game_ui.group)),
+        (GameTab::Smooth, Some("framegen")),
+        "`#area/category` opens a category"
+    );
+    // Every area, its category cards and every category's page draw.
+    for tab in GameTab::ALL {
         view.update(cx, |l, cx| {
-            l.game_ui.upscale_group = group;
+            l.game_tab = tab;
+            l.game_ui.group = None;
             cx.notify();
         });
         cx.run_until_parked();
+        for g in super::features::GROUPS.iter().filter(|g| g.tab == tab) {
+            view.update(cx, |l, cx| {
+                l.game_ui.group = Some(g.key);
+                cx.notify();
+            });
+            cx.run_until_parked();
+        }
     }
     view.update(cx, |l, cx| l.go(super::shell::Nav::Downloads, cx));
     cx.run_until_parked();
@@ -555,7 +569,7 @@ fn console_game_settings_change_the_profile() {
         view.read_with(cx, |l, _| l.console.screen()),
         Screen::GameSettings("test-game".into())
     );
-    // The categories first; Performance holds Gamescope.
+    // The categories first; Picture holds Gamescope.
     let cat = |cx: &mut gpui_test::VisualTestContext, c: GameCat| {
         view.read_with(cx, |l, _| {
             l.console_rows()
@@ -593,7 +607,7 @@ fn console_game_settings_change_the_profile() {
         HudMode::Custom
     );
     cx.simulate_keystrokes("escape");
-    open_cat(cx, GameCat::Performance);
+    open_cat(cx, GameCat::Picture);
     // Gamescope's own rows come with it.
     let gs = row_of(cx, GameOpt::Gamescope);
     go_to(cx, gs);

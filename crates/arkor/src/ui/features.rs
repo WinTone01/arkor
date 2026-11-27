@@ -9,65 +9,109 @@
 use arkor_core::HudMode;
 use arkor_core::library::{GameKind, LibraryGame};
 use arkor_core::profile::LsfgMode;
+use arkor_core::tweaks::Category;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use super::style::{self, pal};
 use super::{Library, widgets};
 
-/// Tabs of the game page, grouped by what the user wants to do.
+/// Areas of the game page, named after what the player wants (a smoother game, a nicer
+/// picture, a game that starts), not after the tools that do it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum GameTab {
     #[default]
     Overview,
     Game,
+    Smooth,
+    Picture,
+    Hud,
     Runtime,
     Launch,
-    Performance,
-    Upscaling,
-    Visuals,
     Mods,
-    Logs,
+    Help,
 }
 
 impl GameTab {
     pub(super) const ALL: [GameTab; 9] = [
         GameTab::Overview,
         GameTab::Game,
+        GameTab::Smooth,
+        GameTab::Picture,
+        GameTab::Hud,
         GameTab::Runtime,
         GameTab::Launch,
-        GameTab::Performance,
-        GameTab::Upscaling,
-        GameTab::Visuals,
         GameTab::Mods,
-        GameTab::Logs,
+        GameTab::Help,
     ];
 
-    fn icon(self) -> &'static str {
+    pub(super) fn icon(self) -> &'static str {
         match self {
             GameTab::Overview => "layout-dashboard",
             GameTab::Game => "gamepad-2",
-            GameTab::Launch => "rocket",
+            GameTab::Smooth => "zap",
+            GameTab::Picture => "palette",
+            GameTab::Hud => "gauge",
             GameTab::Runtime => "wine",
-            GameTab::Performance => "gauge",
-            GameTab::Upscaling => "sparkles",
-            GameTab::Visuals => "palette",
+            GameTab::Launch => "rocket",
             GameTab::Mods => "puzzle",
-            GameTab::Logs => "scroll-text",
+            GameTab::Help => "life-buoy",
         }
     }
 
-    fn name(self, lib: &Library) -> &'static str {
+    pub(super) fn name(self, lib: &Library) -> &'static str {
         match self {
             GameTab::Overview => lib.tr("Overview", "Genel bakış"),
             GameTab::Game => lib.tr("Game", "Oyun"),
-            GameTab::Launch => lib.tr("Launch", "Başlatma"),
+            GameTab::Smooth => lib.tr("Smoother & faster", "Daha akıcı ve hızlı"),
+            GameTab::Picture => lib.tr("Picture", "Görüntü"),
+            GameTab::Hud => lib.tr("Performance overlay", "Performans göstergesi"),
             GameTab::Runtime => lib.tr("Compatibility", "Uyumluluk"),
-            GameTab::Performance => lib.tr("Performance", "Performans"),
-            GameTab::Upscaling => lib.tr("Upscaling & frame gen", "Ölçekleme ve kare üretimi"),
-            GameTab::Visuals => lib.tr("Overlay & visuals", "Overlay ve görüntü"),
+            GameTab::Launch => lib.tr("Launch", "Başlatma"),
             GameTab::Mods => lib.tr("Mods", "Modlar"),
-            GameTab::Logs => lib.tr("Logs", "Kayıtlar"),
+            GameTab::Help => lib.tr("Troubleshooting", "Sorun giderme"),
+        }
+    }
+
+    /// One sentence under the area's title: what it is for.
+    pub(super) fn desc(self, lib: &Library) -> &'static str {
+        match self {
+            GameTab::Overview => lib.tr(
+                "The most used switches and how the game starts.",
+                "En çok kullanılan anahtarlar ve oyunun nasıl başladığı.",
+            ),
+            GameTab::Game => lib.tr(
+                "Its name, cover, files, saves and shortcuts.",
+                "Adı, kapağı, dosyaları, kayıtları ve kısayolları.",
+            ),
+            GameTab::Smooth => lib.tr(
+                "More FPS, smoother motion and quicker response. Pick what you want below.",
+                "Daha fazla FPS, daha akıcı hareket ve daha çabuk tepki. Aşağıdan ne istediğini seç.",
+            ),
+            GameTab::Picture => lib.tr(
+                "Sharpness, colours, resolution and HDR.",
+                "Keskinlik, renkler, çözünürlük ve HDR.",
+            ),
+            GameTab::Hud => lib.tr(
+                "Shows FPS, temperatures and usage on top of the game.",
+                "Oyunun üstünde FPS, sıcaklık ve kullanım değerlerini gösterir.",
+            ),
+            GameTab::Runtime => lib.tr(
+                "How a Windows game runs on Linux, and fixes for games that crash or will not start.",
+                "Bir Windows oyununun Linux'ta nasıl çalıştığı; çöken ya da açılmayan oyunlar için düzeltmeler.",
+            ),
+            GameTab::Launch => lib.tr(
+                "Extra options and commands when the game starts. For experienced users.",
+                "Oyun başlarken ek seçenekler ve komutlar. Deneyimli kullanıcılar için.",
+            ),
+            GameTab::Mods => lib.tr(
+                "Add, switch on and off and order mods.",
+                "Mod ekle, aç-kapat ve sırala.",
+            ),
+            GameTab::Help => lib.tr(
+                "Find out why the game did not start, and what happened at the last start.",
+                "Oyunun neden açılmadığını ve son başlatmada ne olduğunu öğren.",
+            ),
         }
     }
 
@@ -78,11 +122,11 @@ impl GameTab {
             "game" | "details" | "files" | "cover" => GameTab::Game,
             "launch" => GameTab::Launch,
             "runtime" | "compatibility" | "wine" | "proton" => GameTab::Runtime,
-            "performance" => GameTab::Performance,
-            "upscaling" | "framegen" => GameTab::Upscaling,
+            "smooth" | "performance" | "upscaling" | "framegen" | "fps" => GameTab::Smooth,
+            "picture" | "visuals" | "graphics" => GameTab::Picture,
+            "overlay" | "mangohud" | "hud" => GameTab::Hud,
             "mods" | "modding" => GameTab::Mods,
-            "visuals" | "overlay" | "mangohud" => GameTab::Visuals,
-            "logs" => GameTab::Logs,
+            "help" | "logs" | "trouble" => GameTab::Help,
             _ => return None,
         })
     }
@@ -93,6 +137,8 @@ type Render = fn(&mut Library, &mut Context<Library>) -> Option<Div>;
 pub(super) struct Feature {
     pub id: &'static str,
     pub tab: GameTab,
+    /// The category of its area it is in (a key of `GROUPS`), or "" for areas without them.
+    pub group: &'static str,
     pub icon: &'static str,
     pub name: (&'static str, &'static str),
     /// One sentence shown on the closed panel: what the feature does.
@@ -108,23 +154,141 @@ pub(super) struct Feature {
 fn always(_: &Library, _: &LibraryGame) -> bool {
     true
 }
-/// Sub-tabs of "Upscaling & frame gen", like Goverlay's pages: (icon, English, Turkish,
-/// feature ids). A sub-tab with nothing for this game or computer is left out.
-pub(super) const UPSCALE_GROUPS: [(&str, &str, &str, &[&str]); 3] = [
-    (
-        "layers",
-        "Frame generation",
-        "Kare üretimi",
-        &["lsfg", "mako", "afmf"],
-    ),
-    (
-        "scan-eye",
-        "Upscalers",
-        "Ölçekleyiciler",
-        &["optiscaler", "dlss-enabler", "streamline"],
-    ),
-    ("atom", "AMD", "AMD", &["amd-bundles"]),
+/// A category inside an area: what the player picks first, before the tools.
+pub(super) struct Group {
+    pub tab: GameTab,
+    pub key: &'static str,
+    pub icon: &'static str,
+    pub name: (&'static str, &'static str),
+    pub desc: (&'static str, &'static str),
+}
+
+pub(super) const GROUPS: &[Group] = &[
+    Group {
+        tab: GameTab::Smooth,
+        key: "upscale",
+        icon: "scan-eye",
+        name: ("Upscaling: more FPS", "Ölçekleme: daha fazla FPS"),
+        desc: (
+            "The game draws at a lower resolution and a smart upscaler (DLSS, FSR, XeSS) makes it sharp again.",
+            "Oyun daha düşük çözünürlükte çizer, akıllı bir ölçekleyici (DLSS, FSR, XeSS) görüntüyü yeniden netleştirir.",
+        ),
+    },
+    Group {
+        tab: GameTab::Smooth,
+        key: "framegen",
+        icon: "layers",
+        name: ("Frame generation: smoother motion", "Kare üretimi: daha akıcı hareket"),
+        desc: (
+            "Adds made-up frames between the real ones, so 60 FPS can look like 120. Works best when the game already runs well.",
+            "Gerçek karelerin arasına üretilmiş kareler ekler; 60 FPS 120 gibi görünebilir. Oyun zaten iyi çalışıyorsa en iyi sonucu verir.",
+        ),
+    },
+    Group {
+        tab: GameTab::Smooth,
+        key: "latency",
+        icon: "mouse-pointer-click",
+        name: ("Less input delay", "Daha az gecikme"),
+        desc: (
+            "The game reacts sooner to your mouse, keyboard and gamepad. Good for shooters and fighting games.",
+            "Oyun fareye, klavyeye ve kola daha çabuk tepki verir. Nişancı ve dövüş oyunları için iyidir.",
+        ),
+    },
+    Group {
+        tab: GameTab::Smooth,
+        key: "stutter",
+        icon: "activity",
+        name: ("Fewer stutters & power", "Takılma ve güç"),
+        desc: (
+            "Less hitching, a lower frame rate while you are away, and no sleep while you play.",
+            "Daha az takılma, sen başında değilken daha düşük kare hızı ve oynarken uykuya geçmeme.",
+        ),
+    },
+    Group {
+        tab: GameTab::Picture,
+        key: "effects",
+        icon: "wand-sparkles",
+        name: ("Sharpness & colours", "Keskinlik ve renkler"),
+        desc: (
+            "Make a blurry picture sharper, colours more vivid, or add ReShade effects.",
+            "Bulanık görüntüyü keskinleştir, renkleri canlandır ya da ReShade efektleri ekle.",
+        ),
+    },
+    Group {
+        tab: GameTab::Picture,
+        key: "screen",
+        icon: "monitor",
+        name: ("Resolution, window & HDR", "Çözünürlük, pencere ve HDR"),
+        desc: (
+            "Force a resolution or refresh rate, fullscreen, and HDR on HDR screens.",
+            "Çözünürlüğü ya da yenileme hızını zorla, tam ekran yap, HDR ekranda HDR aç.",
+        ),
+    },
+    Group {
+        tab: GameTab::Picture,
+        key: "layers",
+        icon: "layers-2",
+        name: ("Other layers", "Diğer katmanlar"),
+        desc: (
+            "Other picture add-ons installed on this computer.",
+            "Bu bilgisayarda kurulu diğer görüntü eklentileri.",
+        ),
+    },
+    Group {
+        tab: GameTab::Runtime,
+        key: "proton",
+        icon: "wine",
+        name: ("Proton & versions", "Proton ve sürümler"),
+        desc: (
+            "Proton lets Windows games run on Linux. Arkor picks one for you; change it only if the game has problems.",
+            "Proton, Windows oyunlarının Linux'ta çalışmasını sağlar. Arkor senin için birini seçer; yalnızca oyunda sorun varsa değiştir.",
+        ),
+    },
+    Group {
+        tab: GameTab::Runtime,
+        key: "fixes",
+        icon: "bandage",
+        name: ("Crash & start-up fixes", "Çökme ve açılma düzeltmeleri"),
+        desc: (
+            "Switches that help when a game crashes, freezes, shows a black screen or will not start.",
+            "Oyun çöktüğünde, donduğunda, siyah ekran verdiğinde ya da açılmadığında yardımcı olan anahtarlar.",
+        ),
+    },
+    Group {
+        tab: GameTab::Runtime,
+        key: "gpu",
+        icon: "cpu",
+        name: ("Graphics card", "Ekran kartı"),
+        desc: (
+            "Which card the game uses, and what it is told about it.",
+            "Oyunun hangi kartı kullandığı ve kart hakkında ona ne söylendiği.",
+        ),
+    },
+    Group {
+        tab: GameTab::Runtime,
+        key: "pads",
+        icon: "gamepad-2",
+        name: ("Gamepads", "Oyun kolları"),
+        desc: (
+            "Fixes for gamepads that are not found, have the wrong buttons or do not vibrate.",
+            "Bulunmayan, tuşları yanlış görünen ya da titreşmeyen kollar için düzeltmeler.",
+        ),
+    },
+    Group {
+        tab: GameTab::Runtime,
+        key: "tools",
+        icon: "wrench",
+        name: ("Tools & extras", "Araçlar ve ekler"),
+        desc: (
+            "Wine tools, Discord, recording and the Epic overlay.",
+            "Wine araçları, Discord, kayıt ve Epic katmanı.",
+        ),
+    },
 ];
+
+pub(super) fn group(key: &str) -> Option<&'static Group> {
+    GROUPS.iter().find(|g| g.key == key)
+}
 
 type Ready = fn(&Library) -> bool;
 type Start = fn(&mut Library, &mut Context<Library>);
@@ -218,6 +382,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "details",
         tab: GameTab::Game,
+        group: "",
         icon: "file-pen",
         name: ("Name, category and cover", "Ad, kategori ve kapak"),
         desc: (
@@ -232,6 +397,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "executable",
         tab: GameTab::Game,
+        group: "",
         icon: "file-terminal",
         name: ("Game files", "Oyun dosyaları"),
         desc: (
@@ -246,6 +412,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "saves",
         tab: GameTab::Game,
+        group: "",
         icon: "cloud",
         name: ("Saves", "Oyun kayıtları"),
         desc: (
@@ -260,6 +427,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "shortcuts",
         tab: GameTab::Game,
+        group: "",
         icon: "app-window",
         name: ("Shortcuts", "Kısayollar"),
         desc: (
@@ -275,6 +443,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "proton",
         tab: GameTab::Runtime,
+        group: "proton",
         icon: "wine",
         name: ("Proton version", "Proton sürümü"),
         desc: (
@@ -292,6 +461,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "steam-proton",
         tab: GameTab::Runtime,
+        group: "proton",
         icon: "wine",
         name: ("Steam: Proton and launch", "Steam: Proton ve başlatma"),
         desc: (
@@ -304,22 +474,144 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| Some(l.render_steam(cx)),
     },
     Feature {
-        id: "tweaks",
-        tab: GameTab::Runtime,
-        icon: "toggle-right",
-        name: ("Proton and driver switches", "Proton ve sürücü anahtarları"),
+        id: "tweaks-upscaling",
+        tab: GameTab::Smooth,
+        group: "upscale",
+        icon: "sparkles",
+        name: ("Upgrade the game's own upscaler", "Oyunun kendi ölçekleyicisini yükselt"),
         desc: (
-            "Wayland, HDR, DLSS/FSR upgrades, NTSYNC, WOW64 and more, one click each.",
-            "Wayland, HDR, DLSS/FSR yükseltme, NTSYNC, WOW64 ve fazlası, tek tıkla.",
+            "Newer DLSS, FSR 4 or XeSS in games that ship an older one. One click each.",
+            "Eski sürüm getiren oyunlarda daha yeni DLSS, FSR 4 ya da XeSS. Her biri tek tıkla.",
         ),
-        keywords: "dxvk vkd3d nvapi fsr esync fsync ntsync hdr wayland async cpu gpu shader cache wow64 reflex antilag dlss xess",
-        applies: always,
-        active: Some(|l| !l.profile.tweaks.is_empty()),
-        render: |l, cx| Some(l.render_tweaks(cx)),
+        keywords: "dlss fsr fsr4 xess upgrade yükselt ray reconstruction",
+        applies: |l, g| l.tweaks_apply(Category::Upscaling, g),
+        active: Some(|l| l.tweaks_on(Category::Upscaling) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Upscaling, cx)),
+    },
+    Feature {
+        id: "tweaks-framegen",
+        tab: GameTab::Smooth,
+        group: "framegen",
+        icon: "fast-forward",
+        name: ("Driver frame generation", "Sürücünün kare üretimi"),
+        desc: (
+            "Frame generation done by the graphics driver.",
+            "Ekran kartı sürücüsünün yaptığı kare üretimi.",
+        ),
+        keywords: "smooth motion nvidia frame generation kare üretimi",
+        applies: |l, g| l.tweaks_apply(Category::FrameGen, g),
+        active: Some(|l| l.tweaks_on(Category::FrameGen) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::FrameGen, cx)),
+    },
+    Feature {
+        id: "tweaks-latency",
+        tab: GameTab::Smooth,
+        group: "latency",
+        icon: "mouse-pointer-click",
+        name: ("Input delay switches", "Gecikme anahtarları"),
+        desc: (
+            "Reflex, Anti-Lag and low-latency modes.",
+            "Reflex, Anti-Lag ve düşük gecikme modları.",
+        ),
+        keywords: "latency gecikme reflex antilag anti-lag low input lag",
+        applies: |l, g| l.tweaks_apply(Category::Latency, g),
+        active: Some(|l| l.tweaks_on(Category::Latency) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Latency, cx)),
+    },
+    Feature {
+        id: "tweaks-stutter",
+        tab: GameTab::Smooth,
+        group: "stutter",
+        icon: "activity",
+        name: ("Stutter switches", "Takılma anahtarları"),
+        desc: (
+            "Bigger shader caches and a faster processor while playing.",
+            "Daha büyük shader önbelleği ve oynarken daha hızlı işlemci.",
+        ),
+        keywords: "shader cache önbellek stutter takılma cpu governor performance",
+        applies: |l, g| l.tweaks_apply(Category::Stutter, g),
+        active: Some(|l| l.tweaks_on(Category::Stutter) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Stutter, cx)),
+    },
+    Feature {
+        id: "tweaks-display",
+        tab: GameTab::Picture,
+        group: "screen",
+        icon: "sun",
+        name: ("HDR & window switches", "HDR ve pencere anahtarları"),
+        desc: (
+            "HDR, and drawing the window straight on Wayland.",
+            "HDR ve pencereyi doğrudan Wayland üzerinde çizme.",
+        ),
+        keywords: "hdr wayland display ekran",
+        applies: |l, g| l.tweaks_apply(Category::Display, g),
+        active: Some(|l| l.tweaks_on(Category::Display) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Display, cx)),
+    },
+    Feature {
+        id: "tweaks-fixes",
+        tab: GameTab::Runtime,
+        group: "fixes",
+        icon: "bandage",
+        name: ("Fix switches", "Düzeltme anahtarları"),
+        desc: (
+            "Each one fixes a kind of crash, freeze or start-up problem. Try one at a time.",
+            "Her biri bir tür çökme, donma ya da açılma sorununu düzeltir. Teker teker dene.",
+        ),
+        keywords: "ntsync wow64 wined3d large address aware laa heap crash çökme donma siyah ekran black screen steam deck zink vkd3d",
+        applies: |l, g| l.tweaks_apply(Category::Fixes, g),
+        active: Some(|l| l.tweaks_on(Category::Fixes) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Fixes, cx)),
+    },
+    Feature {
+        id: "tweaks-gpu",
+        tab: GameTab::Runtime,
+        group: "gpu",
+        icon: "cpu",
+        name: ("Graphics card switches", "Ekran kartı anahtarları"),
+        desc: (
+            "What the game is told about the graphics card, and driver options.",
+            "Oyuna ekran kartı hakkında ne söylendiği ve sürücü seçenekleri.",
+        ),
+        keywords: "nvapi nvidia amd hide gizle spoof zluda radv ray tracing",
+        applies: |l, g| l.tweaks_apply(Category::Gpu, g),
+        active: Some(|l| l.tweaks_on(Category::Gpu) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Gpu, cx)),
+    },
+    Feature {
+        id: "tweaks-input",
+        tab: GameTab::Runtime,
+        group: "pads",
+        icon: "gamepad-2",
+        name: ("Gamepad switches", "Kol anahtarları"),
+        desc: (
+            "SDL, Xbox buttons, PlayStation gamepads.",
+            "SDL, Xbox tuşları, PlayStation kolları.",
+        ),
+        keywords: "gamepad controller kol kumanda sdl xbox dualsense playstation sony haptics titreşim",
+        applies: |l, g| l.tweaks_apply(Category::Input, g),
+        active: Some(|l| l.tweaks_on(Category::Input) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Input, cx)),
+    },
+    Feature {
+        id: "tweaks-sharing",
+        tab: GameTab::Runtime,
+        group: "tools",
+        icon: "share-2",
+        name: ("Discord & recording", "Discord ve kayıt"),
+        desc: (
+            "Show your game on Discord, record it with OBS.",
+            "Oyununu Discord'da göster, OBS ile kaydet.",
+        ),
+        keywords: "discord rich presence obs capture kayıt yayın stream",
+        applies: |l, g| l.tweaks_apply(Category::Sharing, g),
+        active: Some(|l| l.tweaks_on(Category::Sharing) > 0),
+        render: |l, cx| Some(l.render_tweak_category(Category::Sharing, cx)),
     },
     Feature {
         id: "protonfixes",
         tab: GameTab::Runtime,
+        group: "proton",
         icon: "wrench",
         name: ("Protonfixes", "Protonfix'ler"),
         desc: (
@@ -334,6 +626,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "eos-overlay",
         tab: GameTab::Runtime,
+        group: "tools",
         icon: "users",
         name: ("Epic overlay", "Epic katmanı"),
         desc: (
@@ -348,6 +641,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "dxvk",
         tab: GameTab::Runtime,
+        group: "proton",
         icon: "layers",
         name: ("DXVK & VKD3D-Proton version", "DXVK ve VKD3D-Proton sürümü"),
         desc: (
@@ -362,6 +656,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "gpu",
         tab: GameTab::Runtime,
+        group: "gpu",
         icon: "cpu",
         name: ("Graphics card", "Ekran kartı"),
         desc: (
@@ -376,6 +671,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "linux-runtime",
         tab: GameTab::Runtime,
+        group: "proton",
         icon: "box",
         name: ("Steam Linux Runtime", "Steam Linux Runtime"),
         desc: (
@@ -390,6 +686,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "prefix-tools",
         tab: GameTab::Runtime,
+        group: "tools",
         icon: "folder-cog",
         name: ("Wine prefix tools", "Wine prefix araçları"),
         desc: (
@@ -405,6 +702,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "launch-options",
         tab: GameTab::Launch,
+        group: "",
         icon: "terminal",
         name: (
             "Launch options and commands",
@@ -431,6 +729,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "env",
         tab: GameTab::Launch,
+        group: "",
         icon: "variable",
         name: ("Environment variables", "Ortam değişkenleri"),
         desc: (
@@ -445,7 +744,8 @@ pub(super) const FEATURES: &[Feature] = &[
     // Performance
     Feature {
         id: "sleep",
-        tab: GameTab::Performance,
+        tab: GameTab::Smooth,
+        group: "stutter",
         icon: "coffee",
         name: ("Keep awake", "Uyku engelle"),
         desc: (
@@ -459,7 +759,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "gamescope",
-        tab: GameTab::Performance,
+        tab: GameTab::Picture,
+        group: "screen",
         icon: "monitor",
         name: ("Gamescope", "Gamescope"),
         desc: (
@@ -473,7 +774,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "vknemu",
-        tab: GameTab::Performance,
+        tab: GameTab::Smooth,
+        group: "stutter",
         icon: "moon",
         name: ("Idle FPS limit (vkNemu)", "Boşta FPS sınırı (vkNemu)"),
         desc: (
@@ -488,7 +790,8 @@ pub(super) const FEATURES: &[Feature] = &[
     // Upscaling & frame generation
     Feature {
         id: "lsfg",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "framegen",
         icon: "layers",
         name: (
             "Lossless Scaling frame gen (lsfg-vk)",
@@ -505,7 +808,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "mako",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "framegen",
         icon: "layers-2",
         name: ("MAKO frame gen & scaling", "MAKO kare üretimi ve ölçekleme"),
         desc: (
@@ -519,7 +823,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "afmf",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "framegen",
         icon: "fast-forward",
         name: ("AFMF frame gen", "AFMF kare üretimi"),
         desc: (
@@ -533,7 +838,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "optiscaler",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "upscale",
         icon: "scan-eye",
         name: ("OptiScaler", "OptiScaler"),
         desc: (
@@ -547,7 +853,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "dlss-enabler",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "upscale",
         icon: "cpu",
         name: ("DLSS Enabler", "DLSS Enabler"),
         desc: (
@@ -561,7 +868,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "streamline",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "upscale",
         icon: "refresh-cw",
         name: ("Streamline / DLSS update", "Streamline / DLSS güncelleme"),
         desc: (
@@ -575,7 +883,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "amd-bundles",
-        tab: GameTab::Upscaling,
+        tab: GameTab::Smooth,
+        group: "upscale",
         icon: "atom",
         name: ("HelixSR & DLSS-NR (AMD)", "HelixSR ve DLSS-NR (AMD)"),
         desc: (
@@ -590,7 +899,8 @@ pub(super) const FEATURES: &[Feature] = &[
     // Overlay & visuals
     Feature {
         id: "mangohud",
-        tab: GameTab::Visuals,
+        tab: GameTab::Hud,
+        group: "",
         icon: "gauge",
         name: ("MangoHud", "MangoHud"),
         desc: (
@@ -608,7 +918,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "vkbasalt",
-        tab: GameTab::Visuals,
+        tab: GameTab::Picture,
+        group: "effects",
         icon: "wand-sparkles",
         name: ("vkBasalt", "vkBasalt"),
         desc: (
@@ -622,7 +933,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "reshade",
-        tab: GameTab::Visuals,
+        tab: GameTab::Picture,
+        group: "effects",
         icon: "brush",
         name: ("ReShade", "ReShade"),
         desc: (
@@ -636,7 +948,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "vksumi",
-        tab: GameTab::Visuals,
+        tab: GameTab::Picture,
+        group: "effects",
         icon: "contrast",
         name: ("Colour grading (vkSumi)", "Renk ayarı (vkSumi)"),
         desc: ("Vibrance and contrast.", "Canlılık ve kontrast."),
@@ -647,7 +960,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "other-layers",
-        tab: GameTab::Visuals,
+        tab: GameTab::Picture,
+        group: "layers",
         icon: "layers-2",
         name: ("Other Vulkan layers", "Diğer Vulkan katmanları"),
         desc: (
@@ -663,6 +977,7 @@ pub(super) const FEATURES: &[Feature] = &[
     Feature {
         id: "mods",
         tab: GameTab::Mods,
+        group: "",
         icon: "puzzle",
         name: ("Mods", "Modlar"),
         desc: (
@@ -677,7 +992,8 @@ pub(super) const FEATURES: &[Feature] = &[
     // Logs
     Feature {
         id: "trouble",
-        tab: GameTab::Logs,
+        tab: GameTab::Help,
+        group: "",
         icon: "stethoscope",
         name: ("Why did it not start?", "Neden açılmadı?"),
         desc: (
@@ -691,7 +1007,8 @@ pub(super) const FEATURES: &[Feature] = &[
     },
     Feature {
         id: "logs",
-        tab: GameTab::Logs,
+        tab: GameTab::Help,
+        group: "",
         icon: "scroll-text",
         name: ("Launch log", "Başlatma kaydı"),
         desc: (
@@ -869,6 +1186,11 @@ impl Library {
     /// Goes to `tab` with `feature_id`'s panel open.
     fn open_feature(&mut self, tab: GameTab, feature_id: &'static str) {
         self.game_tab = tab;
+        self.game_ui.group = FEATURES
+            .iter()
+            .find(|f| f.id == feature_id)
+            .map(|f| f.group)
+            .filter(|g| !g.is_empty());
         self.feature_query.clear();
         self.fields.inputs.remove("feature-search");
         self.game_ui.expanded.insert(feature_id, true);
@@ -1052,18 +1374,23 @@ impl Library {
                         )),
                 )
                 .child(
-                    div().flex_1().min_w_0().flex().flex_col().gap_0p5().child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(self.feature_name(f))
-                            .child(widgets::hint_icon(
-                                ("panel-hint", id.len() * 131 + id.as_bytes()[0] as usize),
-                                self.tr(f.desc.0, f.desc.1),
-                            )),
-                    ),
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(self.feature_name(f)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(pal::muted())
+                                .child(self.tr(f.desc.0, f.desc.1)),
+                        ),
                 )
                 .when_some(download, |row, start| {
                     // Nothing to set up before it is downloaded: just the button.
@@ -1307,6 +1634,7 @@ impl Library {
                 cx,
                 move |this, i, cx| {
                     this.game_tab = nav_tabs[i];
+                    this.game_ui.group = None;
                     this.feature_query.clear();
                     this.fields.inputs.remove("feature-search");
                     cx.notify();
@@ -1342,7 +1670,10 @@ impl Library {
                 n => format!("{n} {}", self.tr("matching settings", "eşleşen ayar")),
             }));
             for f in hits {
-                let tab_name = f.tab.name(self);
+                let tab_name = match group(f.group) {
+                    Some(g) => format!("{} › {}", f.tab.name(self), self.tr(g.name.0, g.name.1)),
+                    None => f.tab.name(self).to_string(),
+                };
                 content = content.child(widgets::subheading(tab_name));
                 if let Some(card) = (f.render)(self, cx) {
                     content = content.child(card);
@@ -1352,20 +1683,49 @@ impl Library {
         }
 
         let tab = self.game_tab;
+        let mut in_tab: Vec<&'static Feature> =
+            applicable.into_iter().filter(|f| f.tab == tab).collect();
+        // The area's categories that have something for this game.
+        let groups: Vec<&'static Group> = GROUPS
+            .iter()
+            .filter(|g| g.tab == tab && in_tab.iter().any(|f| f.group == g.key))
+            .collect();
+        let current = self
+            .game_ui
+            .group
+            .and_then(group)
+            .filter(|g| groups.iter().any(|h| h.key == g.key))
+            .or_else(|| (groups.len() == 1).then(|| groups[0]));
+        let (icon, title, desc) = match current {
+            Some(g) => (g.icon, self.tr(g.name.0, g.name.1), self.tr(g.desc.0, g.desc.1)),
+            None => (tab.icon(), tab.name(self), tab.desc(self)),
+        };
+        if current.is_some() && groups.len() > 1 {
+            content = content.child(
+                div().flex().child(
+                    style::back_link("group-back", tab.name(self)).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.game_ui.group = None;
+                            cx.notify();
+                        },
+                    )),
+                ),
+            );
+        }
         content = content.child(
-            div().flex().flex_col().gap_1().child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(style::icon(tab.icon(), 18., pal::accent_light()))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(tab.name(self)),
-                    ),
-            ),
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(style::icon(icon, 18., pal::accent_light()))
+                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title)),
+                )
+                .child(div().text_sm().text_color(pal::muted()).child(desc)),
         );
         if tab == GameTab::Overview {
             content = content
@@ -1373,42 +1733,80 @@ impl Library {
                 .child(self.render_summary(&entry, cx))
                 .children(self.render_about(cx));
         }
-        let mut in_tab: Vec<&'static Feature> =
-            applicable.into_iter().filter(|f| f.tab == tab).collect();
-        if tab == GameTab::Upscaling {
-            // Sub-tabs at the top of the page, each with its own panels.
-            let groups: Vec<usize> = (0..UPSCALE_GROUPS.len())
-                .filter(|&g| in_tab.iter().any(|f| UPSCALE_GROUPS[g].3.contains(&f.id)))
-                .collect();
-            if !groups.is_empty() {
-                let current = if groups.contains(&self.game_ui.upscale_group) {
-                    self.game_ui.upscale_group
-                } else {
-                    groups[0]
-                };
-                let labels: Vec<(&'static str, &'static str)> = groups
-                    .iter()
-                    .map(|&g| {
-                        (
-                            UPSCALE_GROUPS[g].0,
-                            self.tr(UPSCALE_GROUPS[g].1, UPSCALE_GROUPS[g].2),
-                        )
-                    })
-                    .collect();
-                let selected = groups.iter().position(|&g| g == current).unwrap_or(0);
-                let map = groups.clone();
-                content = content.child(style::tab_strip(
-                    "upscale-group",
-                    &labels,
-                    selected,
-                    cx,
-                    move |this, i, cx| {
-                        this.game_ui.upscale_group = map[i];
-                        cx.notify();
-                    },
-                ));
-                in_tab.retain(|f| UPSCALE_GROUPS[current].3.contains(&f.id));
+        match current {
+            Some(g) => in_tab.retain(|f| f.group == g.key),
+            None if !groups.is_empty() => {
+                // The categories first; the tools come after a category is picked.
+                let mut grid = div().flex().flex_wrap().gap_3();
+                for (ix, g) in groups.iter().enumerate() {
+                    let on = in_tab
+                        .iter()
+                        .filter(|f| f.group == g.key && f.active.is_some_and(|a| a(self)))
+                        .count();
+                    let key = g.key;
+                    grid = grid.child(
+                        style::card()
+                            .id(("group-card", ix))
+                            .w(px(320.))
+                            .flex_grow(1.)
+                            .p_4()
+                            .flex()
+                            .gap_3()
+                            .cursor_pointer()
+                            .hover(|s| s.border_color(pal::accent().opacity(0.5)))
+                            .child(
+                                div()
+                                    .size(px(40.))
+                                    .flex_none()
+                                    .rounded(px(12.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(pal::accent().opacity(if on > 0 { 0.2 } else { 0.1 }))
+                                    .child(style::icon(g.icon, 20., pal::accent_light())),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(self.tr(g.name.0, g.name.1)),
+                                            )
+                                            .when(on > 0, |d| {
+                                                d.child(style::tag(
+                                                    format!("{on} {}", self.tr("on", "açık")),
+                                                    pal::accent_light(),
+                                                ))
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(pal::muted())
+                                            .child(self.tr(g.desc.0, g.desc.1)),
+                                    ),
+                            )
+                            .child(style::icon("chevron-right", 16., pal::faint()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.game_ui.group = Some(key);
+                                cx.notify();
+                            })),
+                    );
+                }
+                content = content.child(grid);
+                in_tab.retain(|f| f.group.is_empty());
             }
+            None => {}
         }
         // Few panels: all open. Otherwise the ones that are on (and the first, if it has no
         // on/off state) start open.
