@@ -328,6 +328,17 @@ impl Library {
             .get(&id.id)
             .and_then(|g| saves::cloud_game(g, &self.global))
         else {
+            // Any other game: a copy of its saves (also when Steam started it, which Arkor's
+            // launcher does not see end). A copy with the same contents is not made twice.
+            let (bg, of) = (cx.background_executor().clone(), id.clone());
+            cx.spawn(async move |this, cx| {
+                bg.spawn(async move { saves::backup_after_play(&of) }).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.saves_load();
+                    cx.notify();
+                });
+            })
+            .detach();
             return;
         };
         let bg = cx.background_executor().clone();
