@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "arkor"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "arkor-core",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-core"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-launch"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "arkor-core",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-login"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "gilrs",
  "gtk",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "arkor-stores"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "arkor-core",
