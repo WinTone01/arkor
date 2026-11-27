@@ -223,6 +223,9 @@ pub(super) enum Act {
     SavesCopy,
     SavesAskRestore(String),
     SavesRestore(String),
+    /// Copies of any game's saves (Ludusavi): one now; after playing on or off.
+    SavesBackup,
+    SavesBackupsToggle,
     /// A game's mods: get Amethyst, read them again, use mods for the game, switch one,
     /// its menu (X), move it, the question before removing it and its answer, the Nexus
     /// Mods account, the update check, a FOMOD option picked (step, group, option) and the
@@ -2250,6 +2253,9 @@ impl Library {
                 if matches!(self.console.screen(), Screen::Mods(_)) {
                     self.mods_opened(cx);
                 }
+                if matches!(self.console.screen(), Screen::Saves(_)) {
+                    self.saves_local_lookup(cx);
+                }
                 if matches!(self.console.screen(), Screen::Trouble(_))
                     && let Some(id) = self.selected_id()
                 {
@@ -2590,6 +2596,7 @@ impl Library {
             }
             Screen::AddGames => self.add_opened(cx),
             Screen::Covers(id) => self.covers_opened(id, cx),
+            Screen::Saves(_) => self.saves_local_lookup(cx),
             Screen::Mods(id) => {
                 self.console.focus.remove(&screen);
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == *id)
@@ -3481,7 +3488,9 @@ impl Library {
             | Act::SavesLater(_)
             | Act::SavesCopy
             | Act::SavesAskRestore(_)
-            | Act::SavesRestore(_) => self.saves_do(act, cx),
+            | Act::SavesRestore(_)
+            | Act::SavesBackup
+            | Act::SavesBackupsToggle => self.saves_do(act, cx),
             Act::ModsGet
             | Act::ModsReload
             | Act::ModsLink

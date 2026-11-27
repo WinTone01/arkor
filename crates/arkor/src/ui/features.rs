@@ -200,8 +200,9 @@ fn linux_game(_: &Library, g: &LibraryGame) -> bool {
 fn steam_game(_: &Library, g: &LibraryGame) -> bool {
     matches!(g.kind, GameKind::Steam { .. })
 }
+/// Saves in a store's cloud, or copies of any game's saves (Ludusavi).
 fn cloud_saves(lib: &Library, _: &LibraryGame) -> bool {
-    lib.saves_apply()
+    lib.saves_apply() || lib.saves.local.is_some()
 }
 fn has_other_layers(lib: &Library, _: &LibraryGame) -> bool {
     lib.has_other_layers()
@@ -243,10 +244,10 @@ pub(super) const FEATURES: &[Feature] = &[
         icon: "cloud",
         name: ("Saves", "Oyun kayıtları"),
         desc: (
-            "The store's cloud, and copies of the saves that can be put back.",
-            "Mağazanın bulutu ve geri yüklenebilecek kayıt kopyaları.",
+            "Copies of the saves to put back, and the store's cloud where there is one.",
+            "Geri yüklenebilecek kayıt kopyaları, varsa mağazanın bulutu.",
         ),
-        keywords: "save cloud sync backup restore kayıt bulut eşitle yedek geri yükle epic gog",
+        keywords: "save cloud sync backup restore copy ludusavi kayıt bulut eşitle yedek kopya geri yükle epic gog",
         applies: cloud_saves,
         active: None,
         render: |l, cx| l.render_saves(cx),

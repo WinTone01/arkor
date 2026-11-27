@@ -44,6 +44,8 @@ pub(super) struct SavesUi {
     asked: Option<GameId>,
     /// The copy that is asked about on the desktop.
     restoring: Option<String>,
+    /// A game no store keeps saves of: copies through Ludusavi.
+    pub(super) local: Option<super::save_backups::Local>,
 }
 
 impl SavesUi {
@@ -68,6 +70,12 @@ impl Library {
                 logged_in: arkor_launch::shops::logged_in(game.shop),
                 game,
             });
+        self.saves.local = match &self.saves.info {
+            Some(_) => None,
+            None => self
+                .entry()
+                .map(|g| super::save_backups::Local::new(g.game_id())),
+        };
     }
 
     /// The selected game's saves, unless its store keeps none.
@@ -366,7 +374,11 @@ impl Library {
     pub(super) fn saves_restore(&mut self, copy: String, cx: &mut Context<Self>) {
         self.console.overlay = None;
         self.saves.restoring = None;
-        let Some(id) = self.saves_shown().map(|i| i.game.id.clone()) else {
+        let Some(id) = self
+            .saves_shown()
+            .map(|i| i.game.id.clone())
+            .or_else(|| self.saves.local.as_ref().map(|l| l.id.clone()))
+        else {
             return;
         };
         if self.running.contains_key(&id.to_string()) {
@@ -459,14 +471,20 @@ impl Library {
     }
 
     /// A copy: what it is of, and its size.
-    fn saves_copy_text(&self, s: &Snapshot) -> (String, String) {
+    pub(super) fn saves_copy_text(&self, s: &Snapshot) -> (String, String) {
         let mut name = format!(
             "{} · {}",
             self.saves_when(s.saved.unwrap_or(s.time)),
             self.saves_why(s.why)
         );
-        // Games with more than one save folder.
-        if !["saves", "__default"].contains(&s.place.as_str()) {
+        // Games with more than one save folder; a folder found here by its name only.
+        if let Some(path) = s.place.strip_prefix("local:") {
+            let folder = std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            name.push_str(&format!(" · {folder}"));
+        } else if !["saves", "__default"].contains(&s.place.as_str()) {
             name.push_str(&format!(" · {}", s.place));
         }
         (
@@ -484,7 +502,15 @@ impl Library {
 
     /// The button on a game's screen.
     pub(super) fn saves_pill(&self) -> Option<Item> {
-        let i = self.saves_shown()?;
+        let Some(i) = self.saves_shown() else {
+            let l = self.saves.local.as_ref()?;
+            return Some(Item::pill(
+                Act::Screen(Screen::Saves(l.id.id.clone())),
+                "save",
+                self.tr("Saves", "Oyun kayıtları"),
+                false,
+            ));
+        };
         let alert = i.state.conflict.is_some();
         Some(Item::pill(
             Act::Screen(Screen::Saves(i.game.id.id.clone())),
@@ -497,7 +523,10 @@ impl Library {
     /// The screen of a game's saves.
     pub(super) fn saves_rows(&self, id: &str) -> Vec<Row> {
         let Some(i) = self.saves_shown().filter(|i| i.game.id.id == id) else {
-            return Vec::new();
+            return match self.saves.local.as_ref().filter(|l| l.id.id == id) {
+                Some(l) => self.local_saves_rows(l),
+                None => Vec::new(),
+            };
         };
         let line = |act, icon, text: &str, value| {
             Row::new(Kind::Line, vec![Item::line(act, icon, text, value)])
@@ -566,10 +595,23 @@ impl Library {
                     self.saves_ask(&i.game, c, false);
                 }
             }
+            Act::SavesBackup => {
+                if let Some(l) = self.saves.local.as_ref() {
+                    if l.found.is_none() {
+                        self.saves_local_lookup(cx);
+                    } else {
+                        self.saves_backup_now(cx);
+                    }
+                }
+            }
+            Act::SavesBackupsToggle => self.saves_backups_toggle(),
             Act::SavesAskRestore(copy) => {
+                let local = self.saves.local.as_ref().map(|l| &l.copies);
                 let Some(text) = self
                     .saves_shown()
-                    .and_then(|i| i.copies.iter().find(|s| s.id == copy))
+                    .map(|i| &i.copies)
+                    .or(local)
+                    .and_then(|c| c.iter().find(|s| s.id == copy))
                     .map(|s| self.saves_copy_text(s).0)
                 else {
                     return;
@@ -610,7 +652,9 @@ impl Library {
     // ---- The desktop's card ----
 
     pub(super) fn render_saves(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let i = self.saves_shown()?.clone();
+        let Some(i) = self.saves_shown().cloned() else {
+            return self.render_local_saves(cx);
+        };
         let (icon, text) = self.saves_line(&i);
         let color = match icon {
             "cloud-alert" => pal::warning(),
@@ -686,29 +730,34 @@ impl Library {
                 "Geri yüklenebilecek kopyalar",
             )));
         for (n, s) in i.copies.iter().enumerate() {
-            let (name, size) = self.saves_copy_text(s);
-            let sure = self.saves.restoring.as_ref() == Some(&s.id);
-            let id = s.id.clone();
-            let text = match sure {
-                true => self.tr("Really put back", "Gerçekten geri yükle"),
-                false => self.tr("Put back", "Geri yükle"),
-            };
-            card = card.child(widgets::setting_row(
-                name,
-                size,
-                style::button(("saves-restore", n), text, sure).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        if this.saves.restoring.as_ref() == Some(&id) {
-                            this.saves_restore(id.clone(), cx);
-                        } else {
-                            this.saves.restoring = Some(id.clone());
-                        }
-                        cx.notify();
-                    },
-                )),
-            ));
+            card = card.child(self.saves_restore_row(n, s, cx));
         }
         Some(card)
+    }
+
+    /// A copy, with its button to put it back (pressed twice).
+    pub(super) fn saves_restore_row(&self, n: usize, s: &Snapshot, cx: &mut Context<Self>) -> Div {
+        let (name, size) = self.saves_copy_text(s);
+        let sure = self.saves.restoring.as_ref() == Some(&s.id);
+        let id = s.id.clone();
+        let text = match sure {
+            true => self.tr("Really put back", "Gerçekten geri yükle"),
+            false => self.tr("Put back", "Geri yükle"),
+        };
+        widgets::setting_row(
+            name,
+            size,
+            style::button(("saves-restore", n), text, sure).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    if this.saves.restoring.as_ref() == Some(&id) {
+                        this.saves_restore(id.clone(), cx);
+                    } else {
+                        this.saves.restoring = Some(id.clone());
+                    }
+                    cx.notify();
+                },
+            )),
+        )
     }
 
     /// The question, over the game's page.

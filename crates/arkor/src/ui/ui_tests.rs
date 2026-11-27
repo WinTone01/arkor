@@ -2017,3 +2017,52 @@ fn a_games_mods_from_the_console() {
         assert!(l.mods_rows_asking_for_test().is_empty(), "no question left");
     });
 }
+
+#[test]
+fn any_games_saves_from_the_console() {
+    use super::console::{Act, Screen, Value};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let entry = GameLibrary::load().unwrap().games[0].id.clone();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update(cx, |l, cx| {
+        l.console_open(Screen::Game(entry.clone()), cx);
+        // A game no store keeps saves of: its Saves screen is there, for copies.
+        assert!(
+            l.game_rows(&entry)
+                .iter()
+                .flat_map(|r| &r.items)
+                .any(|i| i.act == Act::Screen(Screen::Saves(entry.clone())))
+        );
+        let rows = l.saves_rows(&entry);
+        let acts: Vec<Act> = rows
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert_eq!(acts, [Act::SavesBackupsToggle, Act::SavesBackup]);
+        let on = |l: &Library| match &l.saves_rows(&entry)[0].items[0].look {
+            super::console::Look::Line { value, .. } => value.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(on(l), Value::Switch(true), "on unless switched off");
+        l.saves_do(Act::SavesBackupsToggle, cx);
+        assert_eq!(on(l), Value::Switch(false));
+        assert!(l.global.no_save_backups);
+        l.saves_do(Act::SavesBackupsToggle, cx);
+        assert!(!l.global.no_save_backups);
+    });
+}

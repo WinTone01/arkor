@@ -38,6 +38,7 @@ mod kwin;
 mod loader;
 mod mods_page;
 mod protons;
+mod save_backups;
 mod saves;
 mod sgdb_picker;
 mod shell;
