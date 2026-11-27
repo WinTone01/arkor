@@ -19,6 +19,7 @@
 
 pub mod art;
 pub mod bios;
+pub mod custom;
 pub mod discovery;
 pub mod games;
 pub mod host;
@@ -172,6 +173,20 @@ pub mod dirs {
         root().join("playlists")
     }
 
+    /// The user's own emulators: `~/.config/arkor/emulators/<id>.json`.
+    pub fn custom() -> PathBuf {
+        #[cfg(test)]
+        {
+            super::test_base().join("config")
+        }
+        #[cfg(not(test))]
+        {
+            arkor_core::paths::config_dir()
+                .map(|d| d.join("emulators"))
+                .unwrap_or_else(|_| PathBuf::from("/tmp/arkor-emulators"))
+        }
+    }
+
     /// Release lists, partial downloads and the BIOS index.
     pub fn cache() -> PathBuf {
         #[cfg(test)]
@@ -187,28 +202,37 @@ pub mod dirs {
     }
 }
 
-static REGISTRY: LazyLock<Arc<Vec<Arc<EngineManifest>>>> = LazyLock::new(|| {
-    Arc::new(
-        BUILT_IN
-            .iter()
-            .filter_map(|(id, json)| match EngineManifest::parse(json) {
-                Ok(m) => Some(Arc::new(m)),
-                Err(e) => {
-                    eprintln!("arkor: emulator {id}: {e:#}");
-                    None
-                }
-            })
-            .collect(),
-    )
-});
+static REGISTRY: LazyLock<std::sync::RwLock<Arc<Vec<Arc<EngineManifest>>>>> =
+    LazyLock::new(|| std::sync::RwLock::new(Arc::new(load_manifests())));
 
-/// Every emulator Arkor knows.
+fn load_manifests() -> Vec<Arc<EngineManifest>> {
+    let mut out: Vec<Arc<EngineManifest>> = BUILT_IN
+        .iter()
+        .filter_map(|(id, json)| match EngineManifest::parse(json) {
+            Ok(m) => Some(Arc::new(m)),
+            Err(e) => {
+                eprintln!("arkor: emulator {id}: {e:#}");
+                None
+            }
+        })
+        .collect();
+    // The user's own emulators.
+    out.extend(custom::load().into_iter().map(Arc::new));
+    out
+}
+
+/// Every emulator Arkor knows, the user's own ones last.
 pub fn engines() -> Arc<Vec<Arc<EngineManifest>>> {
-    REGISTRY.clone()
+    REGISTRY.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 pub fn engine(id: &str) -> Option<Arc<EngineManifest>> {
-    REGISTRY.iter().find(|m| m.id == id).cloned()
+    engines().iter().find(|m| m.id == id).cloned()
+}
+
+/// Reads the emulators again (after the user added or removed one of their own).
+pub fn reload() {
+    *REGISTRY.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(load_manifests());
 }
 
 /// Emulators that play `system`, as choices: RetroArch counts once per core. The system's

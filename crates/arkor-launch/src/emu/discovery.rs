@@ -21,6 +21,8 @@ pub enum Origin {
     Flatpak,
     /// On `PATH` (a distribution package or a manual install).
     System,
+    /// The program of an emulator the user added.
+    Custom,
 }
 
 /// One usable install of an emulator.
@@ -68,6 +70,8 @@ pub struct State {
     pub cores: BTreeMap<String, CoreInstall>,
     /// Flatpaks Arkor installed (so it may remove them again), by emulator id.
     pub flatpaks: BTreeMap<String, String>,
+    /// The programs of the user's own emulators, by emulator id.
+    pub custom: BTreeMap<String, PathBuf>,
 }
 
 fn state_file() -> PathBuf {
@@ -165,6 +169,9 @@ pub(crate) fn find_with(
             }
             _ => {}
         }
+    }
+    if let Some(program) = state.custom.get(&manifest.id).filter(|p| p.exists()) {
+        out.push(base(Origin::Custom, program.clone()));
     }
     out
 }

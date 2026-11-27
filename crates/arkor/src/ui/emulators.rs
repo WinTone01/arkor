@@ -30,6 +30,10 @@ pub(super) struct EmuUi {
     detail: Option<String>,
     /// Covers are being looked up.
     covering: bool,
+    /// The emulator of the user's own being written: its program and systems (the name and
+    /// arguments are text fields).
+    own_program: Option<PathBuf>,
+    own_systems: Vec<String>,
     /// The versions an emulator offers, once asked for (an error as text).
     offered: std::collections::HashMap<String, Result<Vec<String>, String>>,
 }
@@ -43,6 +47,7 @@ fn state_of(lib: &Library, m: &emu::EngineManifest) -> String {
                 discovery::Origin::Managed => lib.tr("downloaded", "indirildi"),
                 discovery::Origin::Flatpak => "Flatpak",
                 discovery::Origin::System => lib.tr("installed", "kurulu"),
+                discovery::Origin::Custom => lib.tr("added by you", "senin eklediğin"),
             };
             match &i.version {
                 Some(v) => format!("{from} · {v}"),
@@ -681,6 +686,7 @@ impl Library {
                     .child(self.render_rom_folders(cx))
                     .child(self.render_emu_covers(cx))
                     .child(self.render_emulators(cx))
+                    .child(self.render_own_emulator(cx))
                     .child(
                         div().flex().child(
                             style::button(
@@ -695,6 +701,134 @@ impl Library {
                         ),
                     ),
             )
+    }
+
+    /// Adding an emulator of the user's own, and those added.
+    fn render_own_emulator(&mut self, cx: &mut Context<Self>) -> Div {
+        let name = self.field(
+            "own-emu-name",
+            |_| String::new(),
+            self.tr("Name, e.g. My emulator", "Ad, ör. Emülatörüm"),
+            cx,
+            |_, _| {},
+        );
+        let args = self.field(
+            "own-emu-args",
+            |_| String::new(),
+            self.tr(
+                "Arguments, e.g. --fullscreen {rom} (the game goes last without {rom})",
+                "Argümanlar, ör. --fullscreen {rom} ({rom} yoksa oyun en sona eklenir)",
+            ),
+            cx,
+            |_, _| {},
+        );
+        let mut card = widgets::section(self.tr("An emulator of your own", "Kendi emülatörün"));
+        card = card.child(widgets::label(self.tr(
+            "Any emulator program: Arkor starts it with the game, like the others.",
+            "Herhangi bir emülatör programı: Arkor onu da diğerleri gibi oyunla başlatır.",
+        )));
+        for (ix, m) in emu::engines().iter().filter(|m| m.custom).enumerate() {
+            let id = m.id.clone();
+            card = card.child(widgets::setting_row(
+                m.name.clone(),
+                self.emu_systems_short(m),
+                style::button(("own-emu-rm", ix), self.tr("Remove", "Kaldır"), false).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        let r = emu::custom::remove(&id);
+                        this.report(r);
+                        cx.notify();
+                    }),
+                ),
+            ));
+        }
+        let program = self
+            .emu
+            .own_program
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| self.tr("No program chosen", "Program seçilmedi").into());
+        let mut systems = div().flex().flex_wrap().gap_1().max_w(px(560.));
+        for (sx, s) in emu::systems::all()
+            .iter()
+            .filter(|s| emu::playable(&s.id))
+            .enumerate()
+        {
+            let on = self.emu.own_systems.contains(&s.id);
+            let id = s.id.clone();
+            systems = systems.child(
+                widgets::chip(("own-emu-sys", sx), s.short.clone(), on).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        let list = &mut this.emu.own_systems;
+                        if list.contains(&id) {
+                            list.retain(|x| *x != id);
+                        } else {
+                            list.push(id.clone());
+                        }
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        card.child(widgets::divider())
+            .child(widgets::setting_row(
+                self.tr("Name", "Ad"),
+                "",
+                div().w(px(300.)).child(name),
+            ))
+            .child(widgets::setting_row(
+                self.tr("Program", "Program"),
+                program,
+                style::button("own-emu-pick", self.tr("Choose…", "Seç…"), false).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        let title =
+                            this.tr("Choose the emulator's program", "Emülatörün programını seç");
+                        this.prompt_path(false, title, cx, |this, path, cx| {
+                            this.emu.own_program = Some(path);
+                            cx.notify();
+                        });
+                    }),
+                ),
+            ))
+            .child(widgets::setting_row(
+                self.tr("Arguments", "Argümanlar"),
+                "",
+                div().w(px(300.)).child(args),
+            ))
+            .child(widgets::setting_row(
+                self.tr("Systems", "Sistemler"),
+                "",
+                systems,
+            ))
+            .child(
+                div().flex().child(
+                    style::button(
+                        "own-emu-save",
+                        self.tr("Add the emulator", "Emülatörü ekle"),
+                        true,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.emu_save_own(cx))),
+                ),
+            )
+    }
+
+    fn emu_save_own(&mut self, cx: &mut Context<Self>) {
+        let def = emu::custom::CustomEngine {
+            name: self.field_text("own-emu-name", cx).unwrap_or_default(),
+            program: self.emu.own_program.clone().unwrap_or_default(),
+            args: self.field_text("own-emu-args", cx).unwrap_or_default(),
+            systems: self.emu.own_systems.clone(),
+        };
+        match emu::custom::save(None, &def) {
+            Ok(_) => {
+                self.emu.own_program = None;
+                self.emu.own_systems.clear();
+                self.fields.inputs.remove("own-emu-name");
+                self.fields.inputs.remove("own-emu-args");
+                self.status = Some(self.tr("Emulator added.", "Emülatör eklendi.").into());
+            }
+            Err(e) => self.status = Some(format!("{e:#}").into()),
+        }
+        cx.notify();
     }
 
     /// Box art for emulator games, on the Emulators page.
