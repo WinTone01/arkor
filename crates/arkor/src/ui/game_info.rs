@@ -350,9 +350,75 @@ impl Library {
         if let Some(h) = i.hours {
             facts.push((self.tr("Length", "Süre").into(), format!("~{h} h")));
         }
+        if let Some(b) = &i.beat {
+            let h = |m: u32| {
+                if m < 90 {
+                    format!("{m} {}", self.tr("min", "dk"))
+                } else {
+                    format!("~{} {}", (m + 30) / 60, self.tr("h", "sa"))
+                }
+            };
+            let mut parts = Vec::new();
+            if let Some(m) = b.main {
+                parts.push(format!("{} {}", self.tr("Story", "Hikâye"), h(m)));
+            }
+            if let Some(m) = b.extra {
+                parts.push(format!(
+                    "{} {}",
+                    self.tr("With extras", "Ekstralarla"),
+                    h(m)
+                ));
+            }
+            if let Some(m) = b.complete {
+                parts.push(format!("{} {}", self.tr("Everything", "Her şeyiyle"), h(m)));
+            }
+            let played = self.playtime(&entry.game_id()).0 / 60;
+            let mut text = format!("{} ({})", parts.join(" · "), b.source);
+            if let Some(main) = b.main.filter(|m| *m > 0 && played > 0) {
+                let pct = (played as f64 / f64::from(main) * 100.).round() as u64;
+                text.push_str(&format!(
+                    " — {} %{pct}",
+                    self.tr("you played about", "hikâyenin yaklaşık")
+                ));
+                if self.global.language != arkor_core::Language::Tr {
+                    text.push_str(" of the story");
+                } else {
+                    text.push_str("'ini oynadın");
+                }
+            }
+            facts.push((self.tr("Time to beat", "Bitirme süresi").into(), text));
+        }
         for (k, v) in facts {
             card = card.child(widgets::setting_row(k, v, div()));
         }
+        // PCGamingWiki: fixes, settings and what the PC version offers.
+        let wiki = format!(
+            "https://www.pcgamingwiki.com/w/index.php?search={}",
+            entry
+                .name
+                .bytes()
+                .map(|b| if b.is_ascii_alphanumeric() {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                })
+                .collect::<String>()
+        );
+        card = card.child(
+            div().flex().child(
+                widgets::chip(
+                    "pcgw",
+                    self.tr(
+                        "PCGamingWiki: fixes and settings",
+                        "PCGamingWiki: düzeltmeler ve ayarlar",
+                    ),
+                    false,
+                )
+                .on_click(move |_, _, _| {
+                    let _ = std::process::Command::new("xdg-open").arg(&wiki).spawn();
+                }),
+            ),
+        );
 
         // Trailers and screenshots, a row of pictures; a click opens the full one.
         let pics = self

@@ -61,6 +61,91 @@ pub struct GameInfo {
     pub score: Option<u32>,
     /// For a visual novel: how long it takes, in hours.
     pub hours: Option<u32>,
+    /// How long it takes to finish.
+    #[serde(default)]
+    pub beat: Option<Beat>,
+}
+
+/// How long a game takes to finish, in minutes: the main story, with extras, everything.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Beat {
+    pub main: Option<u32>,
+    pub extra: Option<u32>,
+    pub complete: Option<u32>,
+    /// `IGDB` or `HowLongToBeat`.
+    pub source: String,
+    pub link: String,
+}
+
+impl Beat {
+    fn is_empty(&self) -> bool {
+        self.main.is_none() && self.extra.is_none() && self.complete.is_none()
+    }
+}
+
+/// Heroic's cached HowLongToBeat times of a title (`store_cache/wikigameinfo.json`), when
+/// Heroic looked the game up. Only read.
+pub fn heroic_beat(title: &str) -> Option<Beat> {
+    let key = arkor_core::library::title_key(title);
+    let home = dirs::home_dir()?;
+    [
+        ".config/heroic/store_cache/wikigameinfo.json",
+        ".var/app/com.heroicgameslauncher.hgl/config/heroic/store_cache/wikigameinfo.json",
+    ]
+    .iter()
+    .filter_map(|f| std::fs::read_to_string(home.join(f)).ok())
+    .find_map(|text| beat_from_wiki_cache(&text, &key))
+}
+
+fn beat_from_wiki_cache(text: &str, key: &str) -> Option<Beat> {
+    let doc: serde_json::Value = serde_json::from_str(text).ok()?;
+    let entry = doc.as_object()?.iter().find_map(|(k, v)| {
+        (k != "__timestamp" && arkor_core::library::title_key(k) == key).then_some(v)
+    })?;
+    let h = &entry["howlongtobeat"];
+    let hours = |k: &str| {
+        h[k].as_f64()
+            .filter(|v| *v > 0.)
+            .map(|v| (v * 60.).round() as u32)
+    };
+    let beat = Beat {
+        main: hours("mainStory"),
+        extra: hours("mainExtra"),
+        complete: hours("completionist"),
+        source: "HowLongToBeat".into(),
+        link: h["gameWebLink"].as_str().unwrap_or_default().to_string(),
+    };
+    (!beat.is_empty()).then_some(beat)
+}
+
+/// IGDB's times to beat for its game `id` (in seconds there).
+fn igdb_beat(account: &IgdbAccount, token: &str, id: i64, link: &str) -> Option<Beat> {
+    let body = curl(&format!(
+        "url = {}\nrequest = \"POST\"\nheader = {}\nheader = {}\ndata = {}\n",
+        quoted("https://api.igdb.com/v4/game_time_to_beats"),
+        quoted(&format!("Client-ID: {}", account.client_id)),
+        quoted(&format!("Authorization: Bearer {token}")),
+        quoted(&format!(
+            "fields hastily,normally,completely; where game_id = {id};"
+        ))
+    ))
+    .ok()?;
+    let v: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let t = v.as_array()?.first()?;
+    let hours = |k: &str| {
+        t[k].as_f64()
+            .filter(|s| *s > 0.)
+            .map(|s| (s / 60.).round() as u32)
+    };
+    let beat = Beat {
+        main: hours("hastily"),
+        extra: hours("normally"),
+        complete: hours("completely"),
+        source: "IGDB".into(),
+        link: link.to_string(),
+    };
+    (!beat.is_empty()).then_some(beat)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -337,6 +422,7 @@ pub(crate) fn steam_info(appid: u64, d: &serde_json::Value) -> GameInfo {
             .unwrap_or_default(),
         score: d["metacritic"]["score"].as_u64().map(|s| s as u32),
         hours: None,
+        beat: None,
     }
 }
 
@@ -443,6 +529,7 @@ pub(crate) fn vndb_info(vn: &serde_json::Value) -> GameInfo {
         hours: vn["length_minutes"]
             .as_u64()
             .map(|m| ((m + 30) / 60) as u32),
+        beat: None,
     }
 }
 
@@ -508,7 +595,7 @@ fn igdb_token(a: &IgdbAccount) -> anyhow::Result<String> {
         .context("no token from Twitch")
 }
 
-const IGDB_FIELDS: &str = "name,summary,first_release_date,genres.name,game_modes.name,involved_companies.company.name,involved_companies.developer,screenshots.image_id,videos.video_id,videos.name,url,age_ratings.organization.name,age_ratings.rating_category.rating,aggregated_rating";
+const IGDB_FIELDS: &str = "id,name,summary,first_release_date,genres.name,game_modes.name,involved_companies.company.name,involved_companies.developer,screenshots.image_id,videos.video_id,videos.name,url,age_ratings.organization.name,age_ratings.rating_category.rating,aggregated_rating";
 
 /// The IGDB game of exactly this name.
 pub fn igdb(account: &IgdbAccount, name: &str) -> anyhow::Result<Option<GameInfo>> {
@@ -531,7 +618,13 @@ pub fn igdb(account: &IgdbAccount, name: &str) -> anyhow::Result<Option<GameInfo
             a.iter()
                 .find(|g| g["name"].as_str().is_some_and(|n| fold(n) == wanted))
         })
-        .map(igdb_info))
+        .map(|g| {
+            let mut info = igdb_info(g);
+            if let Some(id) = g["id"].as_i64() {
+                info.beat = igdb_beat(account, &token, id, &info.link);
+            }
+            info
+        }))
 }
 
 pub(crate) fn igdb_info(g: &serde_json::Value) -> GameInfo {
@@ -627,6 +720,7 @@ pub(crate) fn igdb_info(g: &serde_json::Value) -> GameInfo {
             .unwrap_or_default(),
         score: g["aggregated_rating"].as_f64().map(|r| r.round() as u32),
         hours: None,
+        beat: None,
     }
 }
 
@@ -698,6 +792,11 @@ pub fn lookup(game: &LibraryGame) -> anyhow::Result<Option<GameInfo>> {
     if found.is_none() {
         found = vndb(&game.name).unwrap_or(None);
     }
+    if let Some(info) = found.as_mut()
+        && info.beat.is_none()
+    {
+        info.beat = heroic_beat(&game.name);
+    }
     if let Some(d) = dir() {
         let _ = std::fs::create_dir_all(&d);
         let _ = std::fs::write(
@@ -714,6 +813,20 @@ pub fn lookup(game: &LibraryGame) -> anyhow::Result<Option<GameInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_heroics_cached_times() {
+        let text = r#"{"__timestamp": {"Hades": "x"},
+            "Hades": {"howlongtobeat": {"mainStory": 22.5, "mainExtra": 49, "completionist": 95,
+                "gameWebLink": "https://howlongtobeat.com/game/62941"}},
+            "Far Cry 5": {"howlongtobeat": null}}"#;
+        let b = beat_from_wiki_cache(text, &arkor_core::library::title_key("HADES")).unwrap();
+        assert_eq!(
+            (b.main, b.extra, b.complete),
+            (Some(1350), Some(2940), Some(5700))
+        );
+        assert!(beat_from_wiki_cache(text, "farcry5").is_none());
+    }
 
     #[test]
     fn folds_titles() {
