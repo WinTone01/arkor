@@ -24,6 +24,14 @@ pub enum GameKind {
     Epic { app_name: String },
     /// An Amazon Games game, started through nile.
     Amazon { id: String },
+    /// A game an emulator plays: `exe` is its file (a ROM, a disc's `.cue`/`.m3u`) or its
+    /// folder. `system` is from Arkor's systems catalog (`psx`, `snes`); `emulator` the
+    /// game's own choice (`duckstation`, `retroarch:snes9x`), else the system's default.
+    Emulated {
+        system: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        emulator: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,7 +77,9 @@ impl LibraryGame {
 
     pub fn to_game(&self) -> Game {
         let install_dir = match &self.kind {
-            GameKind::Windows | GameKind::Linux => self.exe.parent().map(Path::to_path_buf),
+            GameKind::Windows | GameKind::Linux | GameKind::Emulated { .. } => {
+                self.exe.parent().map(Path::to_path_buf)
+            }
             GameKind::Steam { .. } | GameKind::Epic { .. } | GameKind::Amazon { .. } => {
                 (!self.exe.as_os_str().is_empty()).then(|| self.exe.clone())
             }

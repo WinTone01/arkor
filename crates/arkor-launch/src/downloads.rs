@@ -29,6 +29,15 @@ pub fn label(key: &str) -> String {
     if let Some(name) = key.strip_prefix("latest:") {
         return name.to_string();
     }
+    if let Some(id) = key.strip_prefix("emu:") {
+        return crate::emu::engine(id).map_or(id.to_string(), |m| m.name.clone());
+    }
+    if let Some(core) = key.strip_prefix("core:") {
+        let name = crate::emu::engine("retroarch")
+            .and_then(|m| m.core(core).map(|c| c.name.clone()))
+            .unwrap_or_else(|| core.to_string());
+        return format!("RetroArch: {name}");
+    }
     if let Some(t) = layers::TOOLS.iter().find(|t| t.id == key) {
         return t.name.to_string();
     }
@@ -61,6 +70,13 @@ pub fn run(key: &str) -> anyhow::Result<String> {
             "{name} {}",
             l.installed_version().unwrap_or_default()
         ));
+    }
+    if let Some(id) = key.strip_prefix("emu:") {
+        return crate::emu::install::install(id);
+    }
+    if let Some(core) = key.strip_prefix("core:") {
+        let date = crate::emu::retroarch::install_core(core)?;
+        return Ok(format!("{} ({date})", label(key)));
     }
     if let Some(tool) = layers::TOOLS.iter().find(|t| t.id == key) {
         return layers::install(tool).map(|v| format!("{} {v}", tool.name));
@@ -293,6 +309,24 @@ pub fn check_updates() -> Vec<Update> {
                 &exact,
             );
         }
+    }
+    for (id, installed, latest) in crate::emu::install::updates() {
+        let key = format!("emu:{id}");
+        out.push(Update {
+            label: label(&key),
+            key,
+            installed,
+            latest,
+        });
+    }
+    for core in crate::emu::retroarch::outdated_cores() {
+        let key = format!("core:{core}");
+        out.push(Update {
+            label: label(&key),
+            key,
+            installed: String::new(),
+            latest: String::new(),
+        });
     }
     out.extend(shops::updates().into_iter().map(|(g, _)| Update {
         key: shops::key(g.shop, &g.id),

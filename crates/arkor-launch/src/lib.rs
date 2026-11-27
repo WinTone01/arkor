@@ -16,6 +16,7 @@ pub mod discord;
 pub mod dlss_enabler;
 pub mod downloads;
 pub mod ea_fix;
+pub mod emu;
 pub mod launchers;
 pub mod layers;
 pub mod mods;

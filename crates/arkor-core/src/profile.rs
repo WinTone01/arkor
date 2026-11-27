@@ -398,6 +398,10 @@ pub struct Global {
     /// only when changed, so older Arkor versions still read the file.
     #[serde(skip_serializing_if = "Clips::is_default")]
     pub clips: Clips,
+    /// Emulators: which one plays each system, where the BIOS files are and the emulators'
+    /// own options. Written only when changed.
+    #[serde(skip_serializing_if = "Emulators::is_default")]
+    pub emulators: Emulators,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).
@@ -684,6 +688,28 @@ impl Clips {
 
     pub fn seconds(&self) -> u32 {
         self.seconds.unwrap_or(60).clamp(5, 1800)
+    }
+}
+
+/// Emulator settings (see `arkor_launch::emu`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Emulators {
+    /// The emulator each system plays with when a game names none, by system id
+    /// (`psx` → `duckstation`, `snes` → `retroarch:snes9x`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub defaults: BTreeMap<String, String>,
+    /// The folder of the user's BIOS files (`None`: Arkor's own BIOS folder).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bios_dir: Option<PathBuf>,
+    /// Emulators started windowed instead of full screen, by emulator id.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub windowed: Vec<String>,
+}
+
+impl Emulators {
+    pub fn is_default(&self) -> bool {
+        *self == Emulators::default()
     }
 }
 

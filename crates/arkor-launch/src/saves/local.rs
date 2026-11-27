@@ -55,6 +55,8 @@ pub fn where_of(game: &LibraryGame, global: &Global) -> Option<Where> {
             w.install = game.exe.parent().map(Path::to_path_buf);
             w.home = home;
         }
+        // The emulator keeps the saves; the Ludusavi manifest knows no ROMs.
+        GameKind::Emulated { .. } => return None,
         GameKind::Windows | GameKind::Epic { .. } | GameKind::Amazon { .. } => {
             w.prefix = prefix_root(&game.effective_prefix(&global.prefixes_dir()));
             w.install = match &game.kind {

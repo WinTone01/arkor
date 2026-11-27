@@ -14,6 +14,11 @@ serde_json.workspace = true
 libc.workspace = true
 toml.workspace = true
 serde_yaml = "0.9"
+# Emulators: ROM names, BIOS digests, cores' checksums, zip files.
+regex = "1"
+md-5 = "0.10"
+crc32fast = "1"
+flate2 = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

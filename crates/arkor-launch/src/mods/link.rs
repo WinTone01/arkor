@@ -153,6 +153,8 @@ pub fn place(game: &LibraryGame, prefixes_dir: &Path) -> Option<Place> {
             prefix: None,
             steam_appid: None,
         }),
+        // A ROM is no game folder to mod.
+        GameKind::Emulated { .. } => None,
     }
 }
 

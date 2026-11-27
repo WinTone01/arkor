@@ -48,6 +48,9 @@ pub fn start(id: &GameId) -> anyhow::Result<i32> {
                     let target = arkor_stores::launch_target(id, &global.prefixes_dir())?;
                     run_target(id, target)
                 }
+                GameKind::Emulated { system, emulator } => {
+                    emulated_game(id, &game, system, emulator.as_deref(), &global)
+                }
             }
         }
         _ => anyhow::bail!("`{id}` is not a library game: add it to the library first"),
@@ -171,6 +174,41 @@ fn own_child(me: Option<&Path>) -> Option<i32> {
             .is_ok_and(|c| c.split(|b| *b == 0).nth(1) == Some(b"run"));
         (ours && run && exe.is_some() && exe.as_deref() == me).then_some(pid)
     })
+}
+
+/// A game an emulator plays: what it needs and lacks is downloaded first (the emulator, a
+/// RetroArch core), then the emulator starts it like a Linux game.
+fn emulated_game(
+    id: &GameId,
+    game: &LibraryGame,
+    system: &str,
+    emulator: Option<&str>,
+    global: &Global,
+) -> anyhow::Result<i32> {
+    anyhow::ensure!(
+        game.exe.exists(),
+        "{} not found (is its drive mounted?)",
+        game.exe.display()
+    );
+    let settings = &global.emulators;
+    let command = match crate::emu::launch::command(&game.exe, system, emulator, settings) {
+        Ok(c) => c,
+        Err(e) => {
+            let missing = e.downcast::<crate::emu::launch::NotInstalled>()?;
+            for key in &missing.keys {
+                eprintln!(
+                    "arkor: installing {}, which this game uses",
+                    crate::downloads::label(key)
+                );
+                crate::downloads::run(key)?;
+            }
+            crate::emu::launch::command(&game.exe, system, emulator, settings)?
+        }
+    };
+    eprintln!("arkor: {} plays {}", command.emulator, game.name);
+    let mut argv = command.argv;
+    argv.extend(game.args.iter().cloned());
+    crate::run(id, &argv, &command.env, Some(&command.cwd))
 }
 
 fn run_target(id: &GameId, target: ExeTarget) -> anyhow::Result<i32> {
