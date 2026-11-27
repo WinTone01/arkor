@@ -14,6 +14,8 @@ usage:
   arkor open <global|add|stores|protons|id>
                                           open the window on a page
   arkor nxm <nxm://link>                  install a mod from Nexus Mods (Mod Manager Download)
+  arkor url <arkor://launch/ID | arkor://open/PAGE | heroic://launch/…>
+                                          follow a link (a shortcut, a browser)
   arkor list                              print the library
   arkor system                            machine, desktop and tool report (for bug reports)
   arkor detect                            print games found in other launchers
@@ -305,6 +307,14 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             ui::run(None, false)
+        }
+        // arkor:// and heroic:// links (from a browser or a shortcut).
+        Some("url") => {
+            use arkor_launch::links::{self, Link};
+            match links::parse(arg(&args, 1)?, &Library::load()?)? {
+                Link::Launch(id) => std::process::exit(arkor_launch::start::start(&id)?),
+                Link::Open(page) => ui::run(Some(page), false),
+            }
         }
         Some("list") => list(),
         Some("system") => {

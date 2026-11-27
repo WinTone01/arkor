@@ -1034,6 +1034,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 if !cfg!(test) {
                     cx.background_executor()
                         .spawn(async {
+                            arkor_launch::links::register();
                             arkor_launch::dxvk::leftovers();
                             arkor_launch::mods::play::leftovers()
                         })

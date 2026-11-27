@@ -22,6 +22,7 @@ pub mod gpu;
 pub mod info;
 pub mod launchers;
 pub mod layers;
+pub mod links;
 pub mod mods;
 pub mod optiscaler;
 pub mod pkg;
