@@ -4,7 +4,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, FontWeight, div, prelude::*, px};
 
 use super::style::{self, pal};
-use super::{Library, Selection, Sort, cover_art, widgets};
+use super::{Library, Sort, cover_art, widgets};
 
 impl Library {
     /// A cover image, or a placeholder tile with the game's initial.
@@ -265,7 +265,26 @@ impl Library {
                 .child(title)
                 .child(self.render_empty_library(cx));
         }
-        let toolbar = self.library_toolbar(cx);
+        let toolbar = self.library_toolbar(cx).child(self.library_shelves(cx));
+        let bar = self.picked_bar(cx);
+        if self.global.library_list {
+            let list = if self.visible.is_empty() {
+                div().py_8().text_color(pal::muted()).child(self.tr(
+                    "No game matches the search or filter.",
+                    "Aramaya ya da filtreye uyan oyun yok.",
+                ))
+            } else {
+                self.render_library_list(cx)
+            };
+            return div()
+                .flex()
+                .flex_col()
+                .gap_5()
+                .child(title)
+                .child(toolbar)
+                .children(bar)
+                .child(list);
+        }
         // As many columns of about the chosen cover size as fit (covers get a little bigger
         // on large windows); the covers then grow to fill the row, so nothing is left empty.
         let scale = (self.viewport_w / 1320.).clamp(1., 1.45);
@@ -289,6 +308,7 @@ impl Library {
                 .map(|g| self.kind_label(g))
                 .unwrap_or_default();
             let hidden = self.library.get(&game.id.id).is_some_and(|g| g.hidden);
+            let picked = self.is_picked(ix);
             tiles = tiles.child(
                 div()
                     .id(("tile", ix))
@@ -300,16 +320,16 @@ impl Library {
                     .cursor_pointer()
                     .group("tile")
                     .when(hidden, |d| d.opacity(0.55))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.select(Selection::Game(ix), cx)),
-                    )
+                    .on_click(cx.listener(move |this, e, _, cx| this.library_click(ix, e, cx)))
                     .child(
                         div()
                             .relative()
                             .rounded(px(14.))
                             .p(px(2.))
                             .border_1()
-                            .border_color(if running {
+                            .border_color(if picked {
+                                pal::accent()
+                            } else if running {
                                 pal::success().opacity(0.7)
                             } else {
                                 gpui::transparent_black()
@@ -367,6 +387,7 @@ impl Library {
             .gap_5()
             .child(title)
             .child(toolbar)
+            .children(bar)
             .child(tiles)
     }
 }

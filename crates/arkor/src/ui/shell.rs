@@ -17,7 +17,8 @@ actions!(
         GoBack,
         NextTab,
         PrevTab,
-        PlayGame
+        PlayGame,
+        PickAll
     ]
 );
 
@@ -31,17 +32,23 @@ pub(super) fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-tab", NextTab, Some("Arkor")),
         KeyBinding::new("ctrl-shift-tab", PrevTab, Some("Arkor")),
         KeyBinding::new("ctrl-enter", PlayGame, Some("Arkor")),
+        KeyBinding::new("ctrl-a", PickAll, Some("Arkor")),
     ]);
 }
 
 /// Shortcut list for the Settings page: (keys, English, Turkish).
-pub(super) const SHORTCUTS: [(&str, &str, &str); 9] = [
+pub(super) const SHORTCUTS: [(&str, &str, &str); 10] = [
     (
         "Ctrl+F",
         "Search the library, or the open game's settings",
         "Kütüphanede ya da açık oyunun ayarlarında ara",
     ),
     ("Ctrl+L", "Library", "Kütüphane"),
+    (
+        "Ctrl+A · Ctrl/Shift+click",
+        "Pick games in the library, for actions on all of them",
+        "Kütüphanede oyun seç, hepsine birden işlem yap",
+    ),
     ("Ctrl+,", "Settings", "Ayarlar"),
     (
         "Esc",
@@ -674,6 +681,7 @@ impl Render for Library {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
+            .on_action(cx.listener(|this, _: &PickAll, _, cx| this.library_pick_all(cx)))
             .children(bar)
             .child(
                 div()

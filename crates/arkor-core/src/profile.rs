@@ -406,6 +406,9 @@ pub struct Global {
     /// own options. Written only when changed.
     #[serde(skip_serializing_if = "Emulators::is_default")]
     pub emulators: Emulators,
+    /// The library shows a list instead of covers.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub library_list: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).

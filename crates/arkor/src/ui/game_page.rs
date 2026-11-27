@@ -20,6 +20,8 @@ pub(super) struct GameUi {
     pub(super) upscale_group: usize,
     confirm_delete: bool,
     delete_prefix: bool,
+    /// "Remove from library" for the picked games was pressed once.
+    pub(super) confirm_remove_picked: bool,
     umu_hits: Option<Result<Vec<umu_db::Entry>, String>>,
     umu_loading: bool,
     tool_busy: Option<String>,

@@ -37,6 +37,7 @@ mod i18n;
 mod icons;
 mod intro;
 mod kwin;
+mod library_views;
 mod loader;
 mod mods_page;
 mod protons;
@@ -114,6 +115,8 @@ struct ListFilter {
     sort: Sort,
     category: Option<String>,
     show_hidden: bool,
+    /// A ready-made shelf (favourites, never played, a store…).
+    smart: Option<library_views::Smart>,
 }
 
 pub struct Library {
@@ -172,6 +175,8 @@ pub struct Library {
     mods: mods_page::ModsUi,
     /// Emulator games: ROM folders, a game waiting for its emulator.
     emu: emulators::EmuUi,
+    /// Games picked in the library (Ctrl/Shift+click), by entry id, for batch actions.
+    picked: Vec<String>,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -259,6 +264,7 @@ impl Library {
             backup_prefixes: false,
             console: Default::default(),
             emu: Default::default(),
+            picked: Vec::new(),
             restore_pending: None,
             required: Default::default(),
         };
@@ -370,8 +376,13 @@ impl Library {
                     Some(c) => entry.and_then(|e| e.category.as_ref()) == Some(c),
                     None => true,
                 };
+                let smart_ok = self
+                    .filter
+                    .smart
+                    .is_none_or(|s| entry.is_some_and(|e| self.smart_matches(s, e)));
                 (self.filter.show_hidden || !hidden)
                     && category_ok
+                    && smart_ok
                     && (needle.is_empty() || game.name.to_lowercase().contains(&needle))
             })
             .collect();

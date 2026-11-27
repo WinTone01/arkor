@@ -2066,3 +2066,58 @@ fn any_games_saves_from_the_console() {
         assert!(!l.global.no_save_backups);
     });
 }
+
+#[test]
+fn library_shelves_lists_and_picked_games() {
+    use super::library_views::Smart;
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let home = scratch_home();
+    let mut lib = GameLibrary::load().unwrap();
+    for name in ["Bravo", "Charlie"] {
+        let exe = home.path().join(format!("{name}.sh"));
+        std::fs::write(&exe, "").unwrap();
+        let mut new = arkor_core::library::NewGame::windows(name, exe);
+        new.kind = arkor_core::library::GameKind::Linux;
+        lib.add(new);
+    }
+    lib.get_mut("bravo").unwrap().favorite = true;
+    lib.save().unwrap();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("library"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update(cx, |l, cx| {
+        assert_eq!(l.visible.len(), 3);
+        l.filter.smart = Some(Smart::Favorites);
+        l.apply_filter();
+        assert_eq!(l.visible.len(), 1, "favourites");
+        l.filter.smart = Some(Smart::Programs);
+        l.apply_filter();
+        assert_eq!(l.visible.len(), 3, "Windows and Linux programs");
+        l.filter.smart = None;
+        l.apply_filter();
+        l.library_pick_all(cx);
+        assert_eq!(l.picked.len(), 3, "Ctrl+A picks all");
+        l.library_pick_all(cx);
+        assert!(l.picked.is_empty(), "again: none");
+        l.picked = vec!["bravo".into(), "charlie".into()];
+        l.change_picked(|g| g.category = Some("Party".into()), cx);
+        assert_eq!(l.categories(), ["Party"]);
+        l.remove_picked(cx);
+        assert_eq!(l.library.games.len(), 3, "the first press only asks");
+        l.remove_picked(cx);
+        assert_eq!(l.library.games.len(), 1);
+        l.global.library_list = true;
+    });
+    cx.run_until_parked();
+}
