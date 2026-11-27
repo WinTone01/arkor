@@ -472,6 +472,9 @@ pub struct Global {
     pub views: Vec<SavedView>,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
+    /// How console mode looks (`None` = the Classic theme).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub console_theme: Option<ConsoleTheme>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).
     pub console_dim_mins: Option<u32>,
     /// The computer sleeps after this many minutes without input in console mode, when
@@ -1319,4 +1322,101 @@ mod preset_tests {
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
+}
+
+/// How console mode looks: its layout, covers, corners, focus colour and hint bar. Saved in
+/// the settings, and as a `.arkor-theme.json` file to share.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConsoleTheme {
+    pub name: String,
+    /// `shelves` (rows of covers), `grid` (every game in a grid), `spotlight` (the first row
+    /// large), `compact` (small covers, more of them).
+    pub layout: String,
+    /// Cover size, in percent of the usual.
+    pub cover_scale: u32,
+    /// Corner radius of covers and lines, in points at 1080p.
+    pub corners: u32,
+    /// The colour of what is focused (`None` = Arkor's accent).
+    pub focus: Option<u32>,
+    /// The bar of button hints at the bottom.
+    pub hints: bool,
+}
+
+impl Default for ConsoleTheme {
+    fn default() -> Self {
+        Self {
+            name: "Classic".into(),
+            layout: "shelves".into(),
+            cover_scale: 100,
+            corners: 14,
+            focus: None,
+            hints: true,
+        }
+    }
+}
+
+impl ConsoleTheme {
+    /// The themes Arkor comes with.
+    pub fn builtin() -> Vec<ConsoleTheme> {
+        let t = |name: &str, layout: &str, cover_scale, corners, focus, hints| ConsoleTheme {
+            name: name.into(),
+            layout: layout.into(),
+            cover_scale,
+            corners,
+            focus,
+            hints,
+        };
+        vec![
+            ConsoleTheme::default(),
+            t("Big covers", "shelves", 135, 18, None, true),
+            t("Compact", "compact", 75, 10, None, true),
+            t("Grid", "grid", 100, 14, None, true),
+            t("Spotlight", "spotlight", 100, 22, Some(0xF5B942), true),
+            t("Cinema", "shelves", 115, 8, Some(0xE8E8E8), false),
+            t("Minimal", "grid", 90, 0, Some(0xFFFFFF), false),
+        ]
+    }
+
+    /// Writes the theme as a file to share.
+    pub fn export(&self, path: &Path) -> anyhow::Result<()> {
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    /// Reads a theme file (values out of range are brought back in).
+    pub fn import(path: &Path) -> anyhow::Result<ConsoleTheme> {
+        let mut t: ConsoleTheme = serde_json::from_str(&std::fs::read_to_string(path)?)
+            .map_err(|e| anyhow::anyhow!("not an Arkor theme: {e}"))?;
+        t.cover_scale = t.cover_scale.clamp(50, 200);
+        t.corners = t.corners.min(40);
+        if !["shelves", "grid", "spotlight", "compact"].contains(&t.layout.as_str()) {
+            t.layout = "shelves".into();
+        }
+        if t.name.trim().is_empty() {
+            t.name = "Imported".into();
+        }
+        Ok(t)
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn themes_go_out_and_come_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("t.arkor-theme.json");
+        let mut t = ConsoleTheme::builtin()[4].clone();
+        t.cover_scale = 999;
+        t.export(&f).unwrap();
+        let back = ConsoleTheme::import(&f).unwrap();
+        assert_eq!(back.name, "Spotlight");
+        assert_eq!(back.cover_scale, 200, "kept in range");
+        std::fs::write(&f, "{}").unwrap();
+        assert_eq!(ConsoleTheme::import(&f).unwrap().layout, "shelves");
+        std::fs::write(&f, "nope").unwrap();
+        assert!(ConsoleTheme::import(&f).is_err());
+    }
 }

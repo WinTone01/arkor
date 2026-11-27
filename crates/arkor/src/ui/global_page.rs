@@ -941,12 +941,86 @@ impl Library {
                     ),
                     toggle("sounds", a.sounds, cx, |l| l.sounds = !l.sounds),
                 ));
+        let console_card = self.render_console_themes(cx);
         div()
             .flex()
             .flex_col()
             .gap_4()
             .child(theme_card)
             .child(layout_card)
+            .child(console_card)
+    }
+
+    /// Console mode's themes: the built-in ones, and a theme file to share or take in.
+    fn render_console_themes(&mut self, cx: &mut Context<Self>) -> Div {
+        use arkor_core::profile::ConsoleTheme;
+        let current = self.console_theme();
+        let mut chips = div().flex().flex_wrap().gap_2();
+        let mut themes = ConsoleTheme::builtin();
+        if !themes.iter().any(|t| t.name == current.name) {
+            themes.push(current.clone());
+        }
+        for (ix, t) in themes.into_iter().enumerate() {
+            let on = t.name == current.name;
+            let label = self.console_theme_name(&t.name);
+            chips = chips.child(
+                widgets::chip(("ctheme", ix), label, on).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.global.console_theme =
+                            (t != ConsoleTheme::default()).then(|| t.clone());
+                        let r = this.global.save();
+                        this.report(r);
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        let export = widgets::chip(
+            "ctheme-export",
+            self.tr("Save as a file…", "Dosya olarak kaydet…"),
+            false,
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            let t = this.console_theme();
+            let dir = dirs::download_dir()
+                .or_else(dirs::home_dir)
+                .unwrap_or_default();
+            let file = dir.join(format!("{}.arkor-theme.json", t.name.replace('/', "_")));
+            this.status = Some(match t.export(&file) {
+                Ok(()) => file.display().to_string().into(),
+                Err(e) => format!("{e:#}").into(),
+            });
+            cx.notify();
+        }));
+        let import = widgets::chip(
+            "ctheme-import",
+            self.tr("Open a theme file…", "Tema dosyası aç…"),
+            false,
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            let title = this.tr(
+                "Choose a .arkor-theme.json file",
+                ".arkor-theme.json dosyası seç",
+            );
+            this.prompt_path(false, title, cx, |this, file, cx| {
+                match ConsoleTheme::import(&file) {
+                    Ok(t) => {
+                        this.global.console_theme = Some(t);
+                        let r = this.global.save();
+                        this.report(r);
+                    }
+                    Err(e) => this.status = Some(format!("{e:#}").into()),
+                }
+                cx.notify();
+            });
+        }));
+        widgets::section(self.tr("Console mode", "Konsol modu"))
+            .child(widgets::label(self.tr(
+                "How console mode looks on the TV: rows of covers or a grid, big or small covers, round or square corners, the focus colour. A theme can be saved as a file and shared.",
+                "Konsol modunun televizyonda nasıl göründüğü: kapak sıraları ya da ızgara, büyük ya da küçük kapaklar, yuvarlak ya da köşeli kenarlar, odak rengi. Bir tema dosya olarak kaydedilip paylaşılabilir.",
+            )))
+            .child(chips)
+            .child(div().flex().gap_2().child(export).child(import))
     }
 }
 

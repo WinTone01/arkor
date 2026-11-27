@@ -124,6 +124,8 @@ pub(super) enum Opt {
     Quick(usize),
     Language,
     Theme,
+    /// Console mode's theme (layout, covers, corners, focus colour, hints).
+    ConsoleTheme,
     Accent,
     InstallProton,
     InstallMenu,
@@ -955,7 +957,7 @@ impl Library {
         // What runs comes first.
         recent.sort_by_key(|g| !self.running.contains_key(&g.game_id().to_string()));
         let shelf = |games: &[&LibraryGame]| games.iter().map(|g| self.game_item(g)).collect();
-        if !recent.is_empty() {
+        if !recent.is_empty() && self.console_theme().layout != "grid" {
             rows.push(Row::titled(
                 self.tr("Continue playing", "Oynamaya devam et"),
                 Kind::Shelf,
@@ -976,11 +978,23 @@ impl Library {
         }
         let all = self.console_all();
         if !all.is_empty() {
-            rows.push(Row::titled(
-                self.tr("Library", "Kütüphane"),
-                Kind::Shelf,
-                shelf(&all[..all.len().min(40)]),
-            ));
+            let layout = self.console_theme().layout;
+            if matches!(layout.as_str(), "grid" | "spotlight") {
+                // Every game in a grid under its title.
+                let items: Vec<Item> = all.iter().map(|g| self.game_item(g)).collect();
+                let mut grid = self.grid(items);
+                if let Some(first) = grid.first_mut() {
+                    first.title = Some(self.tr("Library", "Kütüphane").into());
+                }
+                rows.extend(grid);
+            } else {
+                let n = if layout == "compact" { 80 } else { 40 };
+                rows.push(Row::titled(
+                    self.tr("Library", "Kütüphane"),
+                    Kind::Shelf,
+                    shelf(&all[..all.len().min(n)]),
+                ));
+            }
         }
         for shop in Shop::ALL {
             let items: Vec<Item> = (0..self.shops.owned(shop).len())

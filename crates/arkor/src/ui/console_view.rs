@@ -35,6 +35,10 @@ struct Frame {
     /// Share of the way eased positions move in this frame.
     ease: f32,
     still: bool,
+    /// The theme's cover size (1 = the usual).
+    scale: f32,
+    /// The theme's corner radius, in points at 1080p.
+    corners: f32,
 }
 
 /// Several lines beside each other: the column in a line's id.
@@ -50,11 +54,11 @@ impl Frame {
 
     fn cols(&self) -> usize {
         let gap = 28. * self.u;
-        (((self.width + gap) / (206. * self.u + gap)).floor() as usize).max(3)
+        (((self.width + gap) / (206. * self.u * self.scale + gap)).floor() as usize).max(3)
     }
 
     fn shelf_tile(&self) -> (f32, f32) {
-        (214. * self.u, 321. * self.u)
+        (214. * self.u * self.scale, 321. * self.u * self.scale)
     }
 
     fn row_height(&self, row: &Row, cols: usize) -> f32 {
@@ -125,6 +129,8 @@ impl Library {
             width: vw - 176. * u,
             ease: if still { 1. } else { 1. - (-dt * 13.).exp() },
             still,
+            scale: self.console_theme().cover_scale as f32 / 100.,
+            corners: self.console_theme().corners as f32,
         };
         self.console.cols = f.cols();
         self.console.unsettled = false;
@@ -988,6 +994,9 @@ impl Library {
     }
 
     fn console_footer(&self, item: &Option<Item>, f: Frame, cx: &mut Context<Self>) -> Div {
+        if !self.console_theme().hints {
+            return div();
+        }
         let u = f.u;
         let pad = self.console.pad;
         let mut hints: Vec<(&'static str, &'static str, Nav)> = Vec::new();
@@ -1511,7 +1520,8 @@ impl Library {
         };
         let k = 1. + GROW * glow;
         let (bw, bh) = (w * k, h * k);
-        let radius = 14. * u;
+        let radius = f.corners * u;
+        let focus = self.console_focus_color();
         let picture = self.console_art(art, &item.label, (bw, bh, radius), cx);
         let act = item.act.clone();
         div()
@@ -1530,14 +1540,14 @@ impl Library {
                     .when(glow > 0.01, |d| {
                         d.shadow(vec![
                             BoxShadow {
-                                color: pal::accent().opacity(0.95 * glow),
+                                color: focus.opacity(0.95 * glow),
                                 offset: point(px(0.), px(0.)),
                                 blur_radius: px(0.),
                                 spread_radius: px(4. * u),
                                 inset: false,
                             },
                             BoxShadow {
-                                color: pal::accent().opacity(0.45 * glow),
+                                color: focus.opacity(0.45 * glow),
                                 offset: point(px(0.), px(0.)),
                                 blur_radius: px(44. * u),
                                 spread_radius: px(2. * u),
@@ -1790,7 +1800,7 @@ impl Library {
             .flex()
             .items_center()
             .gap(px(22. * u))
-            .rounded(px(18. * u))
+            .rounded(px((f.corners + 4.) * u))
             .overflow_hidden()
             .cursor_pointer()
             .map(|d| {
@@ -2518,5 +2528,20 @@ mod tests {
             "without motion it is there at once"
         );
         assert_eq!(at, 0.);
+    }
+}
+
+impl Library {
+    /// The console theme in use.
+    pub(super) fn console_theme(&self) -> arkor_core::profile::ConsoleTheme {
+        self.global.console_theme.clone().unwrap_or_default()
+    }
+
+    /// The colour of what is focused in console mode.
+    pub(super) fn console_focus_color(&self) -> gpui::Hsla {
+        match self.console_theme().focus {
+            Some(c) => gpui::rgb(c).into(),
+            None => pal::accent(),
+        }
     }
 }

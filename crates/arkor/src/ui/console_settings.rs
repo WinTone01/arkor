@@ -1349,6 +1349,19 @@ impl Library {
             ],
             AppCat::Looks => vec![
                 line(Opt::Theme, "moon", t("Theme", "Tema")),
+                {
+                    let mut row = line(
+                        Opt::ConsoleTheme,
+                        "layout-template",
+                        t("Console look", "Konsol görünümü"),
+                    );
+                    row.items[0].sub = t(
+                        "Rows of covers, a grid, big or small covers, colours. Themes can be shared as files from the desktop's settings.",
+                        "Kapak sıraları, ızgara, büyük ya da küçük kapaklar, renkler. Temalar masaüstü ayarlarından dosya olarak paylaşılabilir.",
+                    )
+                    .into();
+                    row
+                },
                 line(Opt::Accent, "palette", t("Accent colour", "Vurgu rengi")),
                 line(Opt::Motion, "zap", t("Reduce motion", "Hareketi azalt")),
                 line(Opt::Sounds, "bell", t("Sounds", "Sesler")),
@@ -1523,6 +1536,17 @@ impl Library {
                 .into_iter()
                 .map(|(_, n)| (s(n), s(n)))
                 .collect(),
+            Opt::ConsoleTheme => {
+                let mut out: Vec<(String, String)> = arkor_core::profile::ConsoleTheme::builtin()
+                    .into_iter()
+                    .map(|t| (self.console_theme_name(&t.name), t.name))
+                    .collect();
+                let current = self.console_theme();
+                if !out.iter().any(|(_, k)| *k == current.name) {
+                    out.push((current.name.clone(), current.name));
+                }
+                out
+            }
             Opt::Theme => vec![
                 (s(self.tr("Dark", "Koyu")), s("dark")),
                 (s(self.tr("Light", "Açık")), s("light")),
@@ -1619,6 +1643,7 @@ impl Library {
                 .find(|(l, _)| *l == g.language)
                 .map(|(_, n)| n.to_string())
                 .unwrap_or_default(),
+            Opt::ConsoleTheme => self.console_theme().name,
             Opt::Theme => match g.appearance.theme {
                 Theme::Dark => "dark",
                 Theme::Light => "light",
@@ -1745,6 +1770,15 @@ impl Library {
                     _ => Theme::Dark,
                 }
             }
+            Opt::ConsoleTheme => {
+                if let Some(t) = arkor_core::profile::ConsoleTheme::builtin()
+                    .into_iter()
+                    .find(|t| t.name == key)
+                {
+                    g.console_theme =
+                        (t != arkor_core::profile::ConsoleTheme::default()).then_some(t);
+                }
+            }
             Opt::Accent => g.appearance.accent = u32::from_str_radix(key, 16).ok(),
             Opt::ConsoleVolume => g.console_volume = key.parse().ok(),
             Opt::Updates => {
@@ -1821,5 +1855,22 @@ impl Library {
             self.opt_set(o, &key);
         }
         true
+    }
+}
+
+impl Library {
+    /// A built-in console theme's name in the user's language.
+    pub(super) fn console_theme_name(&self, name: &str) -> String {
+        match name {
+            "Classic" => self.tr("Classic", "Klasik"),
+            "Big covers" => self.tr("Big covers", "Büyük kapaklar"),
+            "Compact" => self.tr("Compact", "Sıkışık"),
+            "Grid" => self.tr("Grid", "Izgara"),
+            "Spotlight" => self.tr("Spotlight", "Öne çıkan"),
+            "Cinema" => self.tr("Cinema", "Sinema"),
+            "Minimal" => self.tr("Minimal", "Sade"),
+            other => return other.to_string(),
+        }
+        .to_string()
     }
 }
