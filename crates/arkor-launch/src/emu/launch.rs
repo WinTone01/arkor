@@ -56,6 +56,44 @@ impl std::fmt::Display for BiosMissing {
 
 impl std::error::Error for BiosMissing {}
 
+/// A downloaded emulator needs system libraries this computer lacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingLibraries {
+    pub name: String,
+    pub libs: Vec<String>,
+    /// The packages (Arch's names, see `crate::pkg`) that bring the ones Arkor knows.
+    pub packages: Vec<&'static str>,
+}
+
+impl std::fmt::Display for MissingLibraries {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} needs libraries this computer lacks: {}",
+            self.name,
+            self.libs.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for MissingLibraries {}
+
+/// What a downloaded emulator of `choice` lacks from the system, if anything. Blocking.
+pub fn missing_libraries(choice: &EngineRef) -> Option<MissingLibraries> {
+    let m = super::engine(&choice.engine)?;
+    let installation = discovery::find(&m).into_iter().next()?;
+    let libs = super::libs::missing(&installation);
+    if libs.is_empty() {
+        return None;
+    }
+    let (packages, _) = super::libs::packages(&libs);
+    Some(MissingLibraries {
+        name: m.name.clone(),
+        libs,
+        packages,
+    })
+}
+
 /// The command that plays a game.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -90,6 +128,9 @@ pub fn command(
         .into());
     }
     let installation = installs.first().context("no installation")?;
+    if let Some(missing) = missing_libraries(&choice) {
+        return Err(missing.into());
+    }
     let bios_root = super::bios_dir(settings);
     let index = if bios_root.is_dir() {
         bios::scan(&bios_root, &bios::cached_index()).unwrap_or_default()

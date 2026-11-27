@@ -24,6 +24,7 @@ pub mod host;
 pub mod install;
 pub mod iso9660;
 pub mod launch;
+pub mod libs;
 pub mod manifest;
 pub mod names;
 pub mod retroarch;

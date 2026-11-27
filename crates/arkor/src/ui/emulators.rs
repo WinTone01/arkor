@@ -24,6 +24,8 @@ pub(super) struct EmuUi {
     scanning: bool,
     /// A game waiting for its emulator to download before it starts.
     waiting: Option<GameId>,
+    /// Library packages already installed for emulators this session (never asked twice).
+    tried: Vec<&'static str>,
 }
 
 /// What an emulator is on this computer, in a few words.
@@ -98,8 +100,11 @@ impl Library {
             return false;
         };
         let keys = emu::missing_keys(&choice);
-        if keys.is_empty() || cfg!(test) {
+        if cfg!(test) {
             return false;
+        }
+        if keys.is_empty() {
+            return self.emu_libraries_first(id, &choice, cx);
         }
         for key in &keys {
             arkor_launch::downloads::enqueue(key);
@@ -246,26 +251,96 @@ impl Library {
 
     /// Installs an emulator's distribution package (asking for the password through polkit).
     pub(super) fn emu_install_package(&mut self, package: &'static str, cx: &mut Context<Self>) {
+        self.emu_install_packages(vec![package], None, cx);
+    }
+
+    /// Installs distribution packages (polkit asks for the password); then starts `play`
+    /// when it is given and they installed.
+    fn emu_install_packages(
+        &mut self,
+        packages: Vec<&'static str>,
+        play: Option<GameId>,
+        cx: &mut Context<Self>,
+    ) {
         self.watch_progress(cx);
-        self.status = Some(format!("{} {package}…", self.tr("Installing", "Kuruluyor:")).into());
+        let label = packages.join(", ");
+        self.status = Some(format!("{} {label}…", self.tr("Installing", "Kuruluyor:")).into());
         cx.notify();
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = bg
                 .spawn(async move {
-                    let _job = arkor_launch::progress::job("system-tools", package);
-                    arkor_launch::tools::install_packages(&[package])
+                    let _job = arkor_launch::progress::job("system-tools", &label);
+                    arkor_launch::tools::install_packages(&packages)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                let ok = result.is_ok();
                 this.status = Some(match result {
                     Ok(()) => this.tr("Installed.", "Kuruldu.").into(),
                     Err(e) => format!("{e:#}").into(),
                 });
+                if ok
+                    && let Some(id) = play
+                    && this.selected_id().as_ref() == Some(&id)
+                {
+                    this.play(cx);
+                }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// A downloaded emulator that lacks system libraries: their packages are installed
+    /// first (then the game starts), or what is missing is said. `true` when the game does
+    /// not start now.
+    fn emu_libraries_first(
+        &mut self,
+        id: &GameId,
+        choice: &EngineRef,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(missing) = emu::launch::missing_libraries(choice) else {
+            return false;
+        };
+        if missing.packages.is_empty()
+            || missing.packages.iter().all(|p| self.emu.tried.contains(p))
+        {
+            self.status = Some(
+                format!(
+                    "{} {}: {}",
+                    missing.name,
+                    self.tr(
+                        "needs libraries this computer lacks; install them with your distribution",
+                        "bu bilgisayarda olmayan kütüphanelere ihtiyaç duyuyor; dağıtımının paketlerinden kur"
+                    ),
+                    missing.libs.join(", ")
+                )
+                .into(),
+            );
+            self.sound(super::sounds::Sound::Error);
+            cx.notify();
+            return true;
+        }
+        self.emu.tried.extend(missing.packages.iter().copied());
+        if self.console.on {
+            self.status = Some(
+                format!(
+                    "{} {}",
+                    missing.name,
+                    self.tr(
+                        "needs a few system libraries; type the password to install them, then press Play again.",
+                        "birkaç sistem kütüphanesine ihtiyaç duyuyor; kurmak için şifreyi yaz, sonra yeniden Oyna'ya bas."
+                    )
+                )
+                .into(),
+            );
+            self.console_install_tools(missing.packages.iter().map(|p| p.to_string()).collect());
+        } else {
+            self.emu_install_packages(missing.packages, Some(id.clone()), cx);
+        }
+        true
     }
 
     /// Removes what Arkor installed of an emulator.

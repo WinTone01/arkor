@@ -111,14 +111,22 @@ fn emulators(args: &[String]) -> anyhow::Result<()> {
             for m in emu::engines().iter() {
                 let found = discovery::find(m);
                 let state = match found.first() {
-                    Some(i) => format!(
-                        "{:?}{}",
-                        i.origin,
-                        i.version
-                            .as_deref()
-                            .map(|v| format!(" {v}"))
-                            .unwrap_or_default()
-                    ),
+                    Some(i) => {
+                        let libs = emu::libs::missing(i);
+                        format!(
+                            "{:?}{}{}",
+                            i.origin,
+                            i.version
+                                .as_deref()
+                                .map(|v| format!(" {v}"))
+                                .unwrap_or_default(),
+                            if libs.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" (needs {})", libs.join(", "))
+                            }
+                        )
+                    }
                     None => match install::way(m) {
                         install::Way::Download => "not installed (Arkor downloads it)".into(),
                         install::Way::Flatpak(id) => format!("not installed (Flathub: {id})"),

@@ -98,6 +98,31 @@ const NAMES: &[(&str, [Option<&str>; 3])] = &[
         ],
     ),
     ("nvidia-utils", [None, None, None]),
+    // Libraries emulators' downloads expect from the system (see `emu::libs`).
+    (
+        "pipewire-jack",
+        [
+            Some("libjack-jackd2-0"),
+            Some("pipewire-jack-audio-connection-kit-libs"),
+            Some("libjack0"),
+        ],
+    ),
+    (
+        "alsa-lib",
+        [Some("libasound2"), Some("alsa-lib"), Some("libasound2")],
+    ),
+    (
+        "fuse2",
+        [Some("libfuse2"), Some("fuse-libs"), Some("libfuse2")],
+    ),
+    (
+        "sdl2",
+        [Some("libsdl2-2.0-0"), Some("SDL2"), Some("libSDL2-2_0-0")],
+    ),
+    (
+        "openal",
+        [Some("libopenal1"), Some("openal-soft"), Some("libopenal1")],
+    ),
 ];
 
 impl Manager {
