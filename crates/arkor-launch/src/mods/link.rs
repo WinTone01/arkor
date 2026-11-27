@@ -2,6 +2,7 @@
 //! own files start from) and its Wine prefix. The choice is kept in the game's config folder
 //! (`mods.toml`), not in its profile, so older Arkor versions still read the profile.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -13,12 +14,16 @@ use serde_json::{Value, json};
 use super::rpc::Client;
 
 /// An Arkor game's place in Amethyst.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
     /// Amethyst's game id (`Valheim`, `skyrim_se`…).
     pub game: String,
     /// Its mod profile.
     pub profile: String,
+    /// The DLL overrides Amethyst set for the game's mod loaders, kept so a launch gives
+    /// them to Wine itself: Proton may rewrite the prefix's registry (its first start does).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dll_overrides: BTreeMap<String, String>,
 }
 
 fn file(id: &GameId) -> anyhow::Result<PathBuf> {
@@ -236,12 +241,50 @@ pub fn connect(
         c.job("games.configure.start", params, |_| {})
             .with_context(|| format!("setting {} up in Amethyst", candidate.name))?;
     }
-    let link = Link {
+    let mut link = Link {
         game: candidate.id.clone(),
         profile: "default".into(),
+        ..Link::default()
     };
     save(id, &link)?;
+    refresh(c, id, &mut link)?;
     Ok(link)
+}
+
+/// Reads the DLL overrides Amethyst set for the game again and keeps them with the link.
+pub fn refresh(c: &mut Client, id: &GameId, link: &mut Link) -> anyhow::Result<()> {
+    let now: BTreeMap<String, String> = super::dll_overrides(c, link)?.into_iter().collect();
+    if now != link.dll_overrides {
+        link.dll_overrides = now;
+        save(id, link)?;
+    }
+    Ok(())
+}
+
+/// `native,builtin` → `n,b`: how `WINEDLLOVERRIDES` writes a load order (empty: disabled).
+pub fn short_order(order: &str) -> String {
+    order
+        .split(',')
+        .map(str::trim)
+        .filter_map(|w| match w.to_ascii_lowercase().as_str() {
+            "native" | "n" => Some("n"),
+            "builtin" | "b" => Some("b"),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The overrides of the game's link, for a launch: `(dll, n,b)`.
+pub fn launch_overrides(id: &GameId) -> Vec<(String, String)> {
+    load(id)
+        .map(|l| {
+            l.dll_overrides
+                .iter()
+                .map(|(dll, order)| (dll.clone(), short_order(order)))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -252,6 +295,25 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortens_load_orders() {
+        assert_eq!(short_order("native,builtin"), "n,b");
+        assert_eq!(short_order("builtin"), "b");
+        assert_eq!(short_order(""), "", "disabled");
+        assert_eq!(short_order("n, b"), "n,b");
+    }
+
+    #[test]
+    fn an_older_link_file_still_reads() {
+        let l: Link = toml::from_str("game = \"repo\"\nprofile = \"default\"\n").unwrap();
+        assert!(l.dll_overrides.is_empty());
+        let mut l = l;
+        l.dll_overrides
+            .insert("winhttp".into(), "native,builtin".into());
+        let back: Link = toml::from_str(&toml::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back, l);
+    }
 
     #[test]
     fn finds_the_games_own_folder() {

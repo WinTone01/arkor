@@ -65,6 +65,8 @@ pub struct Host {
     pub proxy_dlls: Vec<String>,
     /// `WINEDLLOVERRIDES` already in the environment, kept when Arkor adds its own.
     pub inherited_dll_overrides: Option<String>,
+    /// What the game's mod loaders need from Wine (Amethyst's overrides, `(dll, n,b)`).
+    pub mod_dll_overrides: Vec<(String, String)>,
     /// Folder for Proton's own logs when the profile asks for them.
     pub log_dir: Option<PathBuf>,
     pub anticheat: tools::AntiCheat,
@@ -84,6 +86,7 @@ impl Host {
             inherited_dll_overrides: std::env::var("WINEDLLOVERRIDES")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            mod_dll_overrides: mods::link::launch_overrides(id),
             log_dir: paths::launch_log(id)
                 .ok()
                 .and_then(|p| p.parent().map(Path::to_path_buf)),
@@ -164,12 +167,15 @@ pub fn plan(
         }
     }
 
-    if !host.proxy_dlls.is_empty() {
-        // Wine must load the mods' proxy DLLs from the game folder instead of its builtins.
+    if !host.proxy_dlls.is_empty() || !host.mod_dll_overrides.is_empty() {
+        // Wine must load the mods' proxy DLLs from the game folder instead of its builtins;
+        // the mod loaders' come first, so Arkor's own win for the same DLL.
         let ours = host
-            .proxy_dlls
+            .mod_dll_overrides
             .iter()
-            .map(|d| format!("{d}=n,b"))
+            .filter(|(dll, _)| !host.proxy_dlls.contains(dll))
+            .map(|(dll, order)| format!("{dll}={order}"))
+            .chain(host.proxy_dlls.iter().map(|d| format!("{d}=n,b")))
             .collect::<Vec<_>>()
             .join(";");
         let overrides = match &host.inherited_dll_overrides {
@@ -649,6 +655,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.env["WINEDLLOVERRIDES"], "d3d11=n;dxgi=n,b;version=n,b");
+    }
+
+    #[test]
+    fn mod_loaders_get_their_dlls_and_arkors_own_win() {
+        let host = Host {
+            proxy_dlls: vec!["version".into()],
+            mod_dll_overrides: vec![
+                ("version".into(), "b".into()),
+                ("winhttp".into(), "n,b".into()),
+            ],
+            ..Default::default()
+        };
+        let p = plan(
+            &Profile::default(),
+            &global(false),
+            &host,
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
+        assert_eq!(p.env["WINEDLLOVERRIDES"], "winhttp=n,b;version=n,b");
+        let only_mods = Host {
+            mod_dll_overrides: vec![("winhttp".into(), "n,b".into())],
+            ..Default::default()
+        };
+        let p = plan(
+            &Profile::default(),
+            &global(false),
+            &only_mods,
+            Path::new("/g"),
+            &cmd(),
+        )
+        .unwrap();
+        assert_eq!(p.env["WINEDLLOVERRIDES"], "winhttp=n,b");
     }
 
     #[test]

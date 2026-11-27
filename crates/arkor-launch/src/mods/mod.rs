@@ -253,6 +253,14 @@ mod tests {
         let id = arkor_core::GameId::new(arkor_core::Store::Local, "valheim-test");
         let link = link::connect(&mut c, &id, &valheim, &place).unwrap();
         assert_eq!(link::load(&id), Some(link.clone()));
+        // BepInEx's loader is handed to Wine at launch, whatever the prefix says.
+        assert_eq!(
+            link::launch_overrides(&id),
+            [
+                ("version".into(), "n,b".into()),
+                ("winhttp".into(), "n,b".into())
+            ]
+        );
 
         let got = install(&mut c, &link, Path::new("/home/user/ArkorTest.zip"), None).unwrap();
         assert_eq!(got, Installed::Done("ArkorTest".into()));
@@ -333,6 +341,7 @@ mod tests {
         let link = Link {
             game: "Valheim".into(),
             profile: "default".into(),
+            ..Link::default()
         };
         let p = params(&link, json!({"mods": ["A"]}));
         assert_eq!(p["game"], "Valheim");

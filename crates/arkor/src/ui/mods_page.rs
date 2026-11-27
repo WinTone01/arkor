@@ -89,7 +89,9 @@ impl Library {
                 .spawn(async move {
                     let mut account = None;
                     let known = amethyst::with(|c| {
-                        if let Some(link) = link::load(&id) {
+                        if let Some(mut link) = link::load(&id) {
+                            // What its loaders need from Wine, kept for the next launch.
+                            let _ = link::refresh(c, &id, &mut link);
                             let domain = link::games(c)?
                                 .into_iter()
                                 .find(|g| g.id == link.game)
