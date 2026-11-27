@@ -26,6 +26,10 @@ pub(super) struct QuickState {
     fps: u32,
     /// Gamescope limits its frames, not MangoHud.
     gamescope: bool,
+    /// The game as it was when the menu came, softened, behind the panel.
+    pub(super) frame: Option<PathBuf>,
+    /// Its picture is being taken: the menu comes after.
+    busy: bool,
 }
 
 const FPS: [u32; 12] = [0, 30, 40, 45, 60, 72, 90, 120, 144, 165, 180, 240];
@@ -49,6 +53,43 @@ impl Library {
 
     /// The pad's middle button while a game is in front: the menu comes over it.
     pub(super) fn quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.quick_game().is_none() {
+            return false;
+        }
+        if cfg!(test) || !arkor_launch::system::has("spectacle") {
+            return self.quick_show(window, cx);
+        }
+        // The game's picture is taken while it is still in front; the window cannot be
+        // see-through everywhere (NVIDIA draws it opaque), so the panel stands over this.
+        if std::mem::replace(&mut self.console.quick.busy, true) {
+            return true;
+        }
+        let bg = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let raw = bg.spawn(async { take_frame() }).await;
+            let shown = this
+                .update_in(cx, |this, w, cx| {
+                    this.console.quick.busy = false;
+                    this.quick_show(w, cx)
+                })
+                .unwrap_or(false);
+            let Some(raw) = raw.filter(|_| shown) else {
+                return;
+            };
+            let frame = bg.spawn(async move { soften(&raw) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if matches!(this.console.screen(), Screen::Quick(_)) {
+                    this.console.quick.frame = frame;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        true
+    }
+
+    /// The menu comes over the game.
+    fn quick_show(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((entry, pid)) = self.quick_game() else {
             return false;
         };
@@ -62,6 +103,8 @@ impl Library {
             hud,
             pids,
             entry: entry.clone(),
+            frame: None,
+            busy: false,
         };
         // The "playing" screen would cover it.
         if let Some(l) = self.console.launching.as_mut() {
@@ -86,6 +129,7 @@ impl Library {
 
     /// Back to the game.
     pub(super) fn quick_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.quick_forget_frame();
         self.console.overlay = None;
         if matches!(self.console.screen(), Screen::Quick(_)) {
             self.console_back(cx);
@@ -112,8 +156,16 @@ impl Library {
 
     /// The game ended: its menu goes.
     pub(super) fn quick_over(&mut self, entry: &str, cx: &mut Context<Self>) {
+        self.quick_forget_frame();
         if self.console.screen() == Screen::Quick(entry.to_string()) {
             self.console_back(cx);
+        }
+    }
+
+    /// The game's picture is not kept once the menu goes.
+    fn quick_forget_frame(&mut self) {
+        if let Some(p) = self.console.quick.frame.take() {
+            let _ = std::fs::remove_file(p);
         }
     }
 
@@ -151,7 +203,10 @@ impl Library {
     pub(super) fn quick_act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
             Act::QuickBack => self.quick_back(window, cx),
-            Act::QuickHome => self.console_open(Screen::Home, cx),
+            Act::QuickHome => {
+                self.quick_forget_frame();
+                self.console_open(Screen::Home, cx)
+            }
             Act::QuickShot => self.quick_shot(window, cx),
             _ => {}
         }
@@ -231,23 +286,6 @@ impl Library {
             return Vec::new();
         };
         let gid = g.game_id().to_string();
-        let mut rows = vec![Row::new(
-            Kind::Pills,
-            vec![
-                Item::main(
-                    Act::QuickBack,
-                    "play",
-                    self.tr("Back to the game", "Oyuna dön"),
-                ),
-                Item::pill(
-                    Act::Stop(gid),
-                    "square",
-                    self.tr("Close the game", "Oyunu kapat"),
-                    false,
-                ),
-                Item::pill(Act::QuickHome, "house", self.tr("Arkor", "Arkor"), false),
-            ],
-        )];
         let line = |act: Act, icon: &'static str, label: &str, value: Value| {
             Row::new(Kind::Line, vec![Item::line(act, icon, label, value)])
         };
@@ -255,11 +293,30 @@ impl Library {
             let value = self.opt_value(&o);
             line(Act::Opt(o), icon, label, value)
         };
-        rows.push(opt(
-            Opt::Volume,
-            "volume-2",
-            self.tr("Volume", "Ses düzeyi"),
-        ));
+        // A list down the panel at the side, as the game stays in view.
+        let mut rows = vec![
+            line(
+                Act::QuickBack,
+                "play",
+                self.tr("Back to the game", "Oyuna dön"),
+                Value::None,
+            ),
+            line(
+                Act::QuickHome,
+                "house",
+                self.tr("Go to Arkor", "Arkor'a geç"),
+                Value::None,
+            ),
+            line(
+                Act::Stop(gid),
+                "square",
+                self.tr("Close the game", "Oyunu kapat"),
+                Value::None,
+            ),
+        ];
+        let mut volume = opt(Opt::Volume, "volume-2", self.tr("Volume", "Ses düzeyi"));
+        volume.title = Some(self.tr("Quick settings", "Hızlı ayarlar").into());
+        rows.push(volume);
         rows.push(opt(Opt::Muted, "volume-x", self.tr("Mute", "Sessiz")));
         let q = &self.console.quick;
         if q.hud.is_some() {
@@ -295,4 +352,65 @@ impl Library {
         }
         rows
     }
+}
+
+/// Where the game's pictures are kept while the menu is open (only this user's).
+fn frame_dir() -> Option<PathBuf> {
+    dirs::runtime_dir().or_else(dirs::cache_dir)
+}
+
+/// The screen the game is on, as it is now (Spectacle; at most a few seconds).
+fn take_frame() -> Option<PathBuf> {
+    use std::process::{Command, Stdio};
+    let path = frame_dir()?.join("arkor-quick-raw.png");
+    let _ = std::fs::remove_file(&path);
+    let mut child = Command::new("spectacle")
+        .args(["--background", "--nonotify", "--current", "--output"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() < Duration::from_secs(3) => {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    path.is_file().then_some(path)
+}
+
+/// The picture made small and soft, under a name of its own (pictures are kept by name); the
+/// taken one and earlier ones go.
+fn soften(raw: &std::path::Path) -> Option<PathBuf> {
+    let dir = raw.parent()?.to_path_buf();
+    let picture = image::open(raw).ok().map(|i| {
+        let small = i.thumbnail(640, 640).to_rgba8();
+        image::imageops::blur(&small, 7.)
+    });
+    let _ = std::fs::remove_file(raw);
+    if let Ok(list) = std::fs::read_dir(&dir) {
+        for e in list.flatten() {
+            let name = e.file_name();
+            if name.to_string_lossy().starts_with("arkor-quick-") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let out = dir.join(format!("arkor-quick-{stamp}.png"));
+    picture?.save(&out).ok()?;
+    Some(out)
 }

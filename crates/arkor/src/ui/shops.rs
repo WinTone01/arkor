@@ -597,6 +597,8 @@ impl Library {
             cx.notify();
             return;
         }
+        // A window of an earlier try (one kept behind a game) would stay over the new one.
+        self.end_login_window();
         self.fields.remove("shop-code");
         let request = self.shops.login.as_ref().map_or(0, |l| l.request) + 1;
         self.shops.login = Some(LoginUi {
@@ -675,6 +677,10 @@ impl Library {
             .detach();
             return cx.notify();
         }
+        if let LoginMode::Window(pid) = l.mode {
+            // SAFETY: plain syscall on the login window's own process.
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        }
         let mut child = login_helper().and_then(|bin| {
             let mut cmd = std::process::Command::new(bin);
             // Console mode: full screen, with the gamepad and the on-screen keyboard.
@@ -698,7 +704,21 @@ impl Library {
         let Some(mut child) = child.take() else {
             return self.shop_login_browser(cx);
         };
-        l.mode = LoginMode::Window(child.id());
+        let pid = child.id();
+        l.mode = LoginMode::Window(pid);
+        // KWin may keep a window that asked for nothing behind the one in front (a game):
+        // it is brought forward, a few times while it appears.
+        if console && !cfg!(test) && super::kwin::available() {
+            let bg = cx.background_executor().clone();
+            cx.background_executor()
+                .spawn(async move {
+                    for wait in [250, 700, 1500] {
+                        bg.timer(Duration::from_millis(wait)).await;
+                        super::kwin::show_process(pid);
+                    }
+                })
+                .detach();
+        }
         l.no_webkit = false;
         l.pad = child
             .stdin
@@ -710,6 +730,13 @@ impl Library {
         cx.spawn(async move |this, cx| {
             let out = bg.spawn(async move { child.wait_with_output() }).await;
             let _ = this.update(cx, |this, cx| {
+                // A window closed for a newer one (or with the login) has nothing to say.
+                let current = this.shops.login.as_ref().is_some_and(|l| {
+                    l.request == request && matches!(l.mode, LoginMode::Window(p) if p == pid)
+                });
+                if !current {
+                    return;
+                }
                 // The window that had the keyboard is gone: Arkor's comes to the front, its
                 // message starts at its first button.
                 if this.console.on {
@@ -749,6 +776,18 @@ impl Library {
             });
         })
         .detach();
+    }
+
+    /// Closes Arkor's login window, if one is open.
+    fn end_login_window(&mut self) {
+        if let Some(l) = self.shops.login.as_mut()
+            && let LoginMode::Window(pid) = l.mode
+        {
+            // SAFETY: plain syscall on the login window's own process.
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            l.mode = LoginMode::Closed;
+            l.pad = None;
+        }
     }
 
     /// The browser way: the store's page there, the code copied back by hand.

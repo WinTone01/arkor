@@ -93,6 +93,12 @@ impl Library {
         self.console.screen_px = ((vw * scale).round() as u32, (vh * scale).round() as u32);
         if std::mem::take(&mut self.console.come_back) && !window.is_window_active() {
             window.activate_window();
+            // Over a game KWin may not let Arkor ask for itself.
+            if !self.running.is_empty() && !cfg!(test) && super::kwin::available() {
+                cx.background_executor()
+                    .spawn(async { super::kwin::show_arkor() })
+                    .detach();
+            }
         }
         self.watch_pointer(window, cx);
         self.pad_watch();
@@ -155,6 +161,18 @@ impl Library {
         } else {
             ease_out(since(self.console.entered, ENTER_TIME))
         };
+        if let Screen::Quick(id) = self.console.screen() {
+            let panel = self.quick_panel(&id, &rows, &item, f, entered, cx);
+            let over = self.console_overlay_view(f, cx);
+            if self.console.unsettled {
+                if still {
+                    window.request_animation_frame();
+                } else {
+                    self.keep_moving(window, cx);
+                }
+            }
+            return div().absolute().inset_0().child(panel).children(over);
+        }
         let spot = self.spotlight(&item, f);
         let top = if spot.is_some() { 470. * u } else { 150. * u };
         let body = match (self.console.screen(), self.shops_preparing()) {
@@ -233,6 +251,200 @@ impl Library {
             .children(launching)
             .children(intro)
             .children(self.idle_view(vw, vh, u, f.margin))
+    }
+
+    /// The quick menu: a panel at the side, the game (as it was) softened beside it; a click
+    /// beside the panel goes back to the game.
+    fn quick_panel(
+        &mut self,
+        id: &str,
+        rows: &[Row],
+        item: &Option<Item>,
+        f: Frame,
+        entered: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let u = f.u;
+        let w = (640. * u).min(f.vw * 0.55);
+        let pad = 44. * u;
+        let pf = Frame {
+            vw: w,
+            margin: pad,
+            width: w - pad * 2.,
+            ..f
+        };
+        let head = 318. * u;
+        let body = self.console_body(rows, head, pf, cx);
+        let (title, meta) = self.spotlight_game(id).unwrap_or_default();
+        let art = self.console_art(
+            &Art::Game(id.to_string()),
+            &title,
+            (100. * u, 150. * u, 14. * u),
+            cx,
+        );
+        let top = div()
+            .absolute()
+            .top(px(40. * u))
+            .left(px(pad))
+            .right(px(pad))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(style::logo(40. * u))
+            .child(
+                div()
+                    .text_size(px(24. * u))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(clock()),
+            );
+        let game = div()
+            .absolute()
+            .top(px(118. * u))
+            .left(px(pad))
+            .right(px(pad))
+            .flex()
+            .items_center()
+            .gap(px(24. * u))
+            .child(art)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .gap(px(8. * u))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(10. * u))
+                            .text_size(px(17. * u))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(pal::success())
+                            .child(div().size(px(10. * u)).rounded_full().bg(pal::success()))
+                            .child(self.tr("PLAYING", "OYNANIYOR")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(34. * u))
+                            .font_weight(FontWeight::BOLD)
+                            .line_clamp(2)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(19. * u))
+                            .text_color(pal::muted())
+                            .truncate()
+                            .child(meta.join(" · ")),
+                    ),
+            );
+        // What the buttons do here.
+        let choice = matches!(
+            item,
+            Some(Item {
+                look: Look::Line {
+                    value: Value::Choice(_),
+                    ..
+                },
+                ..
+            })
+        );
+        let mut hints: Vec<(&'static str, &'static str, Nav)> = vec![(
+            if self.console.pad { "A" } else { "↵" },
+            self.tr("Choose", "Seç"),
+            Nav::Accept,
+        )];
+        if choice {
+            hints.push(("◀ ▶", self.tr("Change", "Değiştir"), Nav::Right));
+        }
+        hints.push((
+            if self.console.pad { "B" } else { "Esc" },
+            self.tr("Back to the game", "Oyuna dön"),
+            Nav::Back,
+        ));
+        let mut keys = div().flex().items_center().gap(px(26. * u));
+        for (ix, (glyph, text, nav)) in hints.into_iter().enumerate() {
+            keys = keys.child(
+                div()
+                    .id(("quick-hint", ix))
+                    .flex()
+                    .items_center()
+                    .gap(px(10. * u))
+                    .cursor_pointer()
+                    .child(self.console_glyph(glyph, f))
+                    .child(div().text_color(pal::text_soft()).child(text))
+                    .on_click(cx.listener(move |this, _, w, cx| this.nav(nav, w, cx))),
+            );
+        }
+        let footer = div()
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .right_0()
+            .h(px(78. * u))
+            .px(px(pad))
+            .flex()
+            .items_center()
+            .text_size(px(19. * u))
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(pal::bg().opacity(0.), 0.),
+                linear_color_stop(pal::bg().opacity(0.9), 0.45),
+            ))
+            .child(keys);
+        let slide = if f.still {
+            0.
+        } else {
+            (1. - entered) * 56. * u
+        };
+        let frame = self.console.quick.frame.clone();
+        div()
+            .id("quick")
+            .absolute()
+            .inset_0()
+            .text_size(px(22. * u))
+            .bg(pal::bg())
+            .children(frame.map(|p| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(cover_art::backdrop(p, Size::Wide, 0.).size_full())
+            }))
+            .child(div().absolute().inset_0().bg(linear_gradient(
+                90.,
+                linear_color_stop(gpui::black().opacity(0.62), 0.),
+                linear_color_stop(gpui::black().opacity(0.28), 1.),
+            )))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, w, cx| this.quick_back(w, cx)),
+            )
+            .child(
+                div()
+                    .id("quick-panel")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-slide))
+                    .w(px(w))
+                    .opacity(entered.max(0.02))
+                    .overflow_hidden()
+                    .bg(pal::bg().opacity(0.8))
+                    .border_r_1()
+                    .border_color(pal::border())
+                    .shadow(vec![BoxShadow {
+                        color: gpui::black().opacity(0.45),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(60. * u),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .child(top)
+                    .child(game)
+                    .child(body)
+                    .child(footer),
+            )
     }
 
     /// A store's login (its page is a window of its own; this is what is around it).

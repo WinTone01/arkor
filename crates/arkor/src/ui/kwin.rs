@@ -255,3 +255,30 @@ for (var i = 0; i < all.length; i++) {
     );
     unload("arkor-show-self");
 }
+
+/// Brings the window of process `pid` to the front, unless it is there: KWin keeps a new
+/// window that came without asking behind the one in front (a game). Blocking.
+pub(super) fn show_process(pid: u32) {
+    if !available() {
+        return;
+    }
+    let code = format!(
+        r#"
+var all = workspace.windowList ? workspace.windowList() : workspace.clientList();
+var now = workspace.activeWindow !== undefined ? workspace.activeWindow : workspace.activeClient;
+for (var i = 0; i < all.length; i++) {{
+    var w = all[i];
+    if (w.pid === {pid} && w.normalWindow) {{
+        w.minimized = false;
+        if (now !== w) {{
+            if (workspace.activeWindow !== undefined) {{ workspace.activeWindow = w; }}
+            else {{ workspace.activeClient = w; }}
+        }}
+        break;
+    }}
+}}
+"#
+    );
+    run_script("arkor-show-process", &code);
+    unload("arkor-show-process");
+}
