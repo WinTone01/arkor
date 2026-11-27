@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#features"><b>Features</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#console-mode"><b>Console mode</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#screenshots"><b>Screenshots</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#desktops"><b>Desktops</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#command-line"><b>Command line</b></a>
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#features"><b>Features</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#console-mode"><b>Console mode</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#screenshots"><b>Screenshots</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#desktops"><b>Distributions</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#command-line"><b>Command line</b></a>
 </p>
 
 <br>
@@ -69,7 +69,8 @@ cargo build --release -p arkor -p arkor-login
 
 The window needs Vulkan, `libxkbcommon`, `libxcb`, `wayland` and `fontconfig`; the store
 login window needs `webkit2gtk-4.1` (without it, logins open in your browser). At run time
-Arkor uses `curl`, `tar` and `python`.
+Arkor uses `curl`, `tar` and `python`. Releases are built with `packaging/make-release.sh`,
+in an Ubuntu 22.04 container (podman), so they run on older systems too.
 
 </details>
 
@@ -228,7 +229,21 @@ console mode. Steam games still start from Steam, with Arkor's settings written 
 
 <a id="desktops"></a>
 
-## <img src="docs/icons/desktops.svg" width="30" align="top"> Desktops
+## <img src="docs/icons/desktops.svg" width="30" align="top"> Distributions and desktops
+
+The same release runs on every x86_64 distribution with glibc 2.35 or newer, and installs the
+tools games need with the distribution's own package manager:
+
+| Distribution | Install&nbsp;script | Notes |
+| --- | --- | --- |
+| **Arch Linux**, **CachyOS**, EndeavourOS, Manjaro | <img src="docs/icons/badge-full.svg" height="22" alt="Full"> | Made and played on here; also an Arch package (`arkor-git`) |
+| **Ubuntu 22.04+**, **Debian 12+**, Linux Mint, Pop!_OS | <img src="docs/icons/badge-full.svg" height="22" alt="Full"> | Install checked on Ubuntu 22.04 and Debian 12; tools through `apt` |
+| **Fedora**, Nobara | <img src="docs/icons/badge-full.svg" height="22" alt="Full"> | Install checked on Fedora 42; tools through `dnf` |
+| **openSUSE** Tumbleweed | <img src="docs/icons/badge-full.svg" height="22" alt="Full"> | Install checked; tools through `zypper` |
+| Others (NixOS, Void, Alpine…) | <img src="docs/icons/badge-untested.svg" height="22" alt="Untested"> | Alpine (musl) cannot run it; reports welcome |
+
+Some tools are not packaged everywhere (umu-launcher on Debian, GPU Screen Recorder outside
+Arch…): Arkor says so, and downloads what games need itself.
 
 Arkor's window runs on any Linux desktop. Console mode also has to bring itself over a
 running game, which every desktop allows in its own way:
