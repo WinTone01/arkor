@@ -58,6 +58,7 @@ mod sounds;
 mod splash;
 mod stats_page;
 mod steam_card;
+mod storage;
 mod style;
 mod synth;
 mod system_page;
@@ -154,6 +155,7 @@ pub struct Library {
     global_hud_tab: bool,
     fields: Fields,
     system: system_page::SystemState,
+    storage: storage::StorageUi,
     bench: bench_page::BenchState,
     /// Games started from this window: game id -> process group id.
     running: HashMap<String, u32>,
@@ -260,6 +262,7 @@ impl Library {
             global_hud_tab: false,
             fields: Fields::default(),
             system: Default::default(),
+            storage: Default::default(),
             bench: Default::default(),
             running: HashMap::new(),
             stopping: Default::default(),

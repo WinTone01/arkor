@@ -241,7 +241,8 @@ impl Library {
         for key in ["CPU", "RAM", "GPU", "Driver", "Kernel", "sched_ext"] {
             grid = grid.child(tile(key, value(key)));
         }
-        page.child(div().flex().flex_col().gap_4().child(hero).child(grid).child(
+        let storage = self.render_storage(cx);
+        page.child(div().flex().flex_col().gap_4().child(hero).child(grid).child(storage).child(
             div()
                 .id("system-to-tools")
                 .flex()

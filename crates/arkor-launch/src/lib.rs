@@ -42,6 +42,7 @@ pub mod steam_api;
 pub mod steam_control;
 pub mod steam_downloads;
 pub mod steam_link;
+pub mod storage;
 pub mod streamline;
 pub mod sunshine;
 pub mod sync;
