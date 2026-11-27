@@ -36,6 +36,7 @@ mod icons;
 mod intro;
 mod kwin;
 mod loader;
+mod mods_page;
 mod protons;
 mod saves;
 mod sgdb_picker;
@@ -163,6 +164,7 @@ pub struct Library {
     steam: steam_card::SteamState,
     /// The selected game's saves and the cloud's.
     saves: saves::SavesUi,
+    mods: mods_page::ModsUi,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -237,6 +239,7 @@ impl Library {
             downloads: Default::default(),
             steam: Default::default(),
             saves: Default::default(),
+            mods: Default::default(),
             trouble: Default::default(),
             shops: shops::ShopsState::load(),
             window_active: true,

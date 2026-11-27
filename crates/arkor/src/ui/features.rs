@@ -26,11 +26,12 @@ pub(super) enum GameTab {
     Performance,
     Upscaling,
     Visuals,
+    Mods,
     Logs,
 }
 
 impl GameTab {
-    pub(super) const ALL: [GameTab; 8] = [
+    pub(super) const ALL: [GameTab; 9] = [
         GameTab::Overview,
         GameTab::Game,
         GameTab::Runtime,
@@ -38,6 +39,7 @@ impl GameTab {
         GameTab::Performance,
         GameTab::Upscaling,
         GameTab::Visuals,
+        GameTab::Mods,
         GameTab::Logs,
     ];
 
@@ -50,6 +52,7 @@ impl GameTab {
             GameTab::Performance => "gauge",
             GameTab::Upscaling => "sparkles",
             GameTab::Visuals => "palette",
+            GameTab::Mods => "puzzle",
             GameTab::Logs => "scroll-text",
         }
     }
@@ -63,6 +66,7 @@ impl GameTab {
             GameTab::Performance => lib.tr("Performance", "Performans"),
             GameTab::Upscaling => lib.tr("Upscaling & frame gen", "Ölçekleme ve kare üretimi"),
             GameTab::Visuals => lib.tr("Overlay & visuals", "Overlay ve görüntü"),
+            GameTab::Mods => lib.tr("Mods", "Modlar"),
             GameTab::Logs => lib.tr("Logs", "Kayıtlar"),
         }
     }
@@ -75,7 +79,8 @@ impl GameTab {
             "launch" => GameTab::Launch,
             "runtime" | "compatibility" | "wine" | "proton" => GameTab::Runtime,
             "performance" => GameTab::Performance,
-            "upscaling" | "mods" | "framegen" => GameTab::Upscaling,
+            "upscaling" | "framegen" => GameTab::Upscaling,
+            "mods" | "modding" => GameTab::Mods,
             "visuals" | "overlay" | "mangohud" => GameTab::Visuals,
             "logs" => GameTab::Logs,
             _ => return None,
@@ -159,6 +164,10 @@ fn download_of(id: &str) -> Option<(Ready, Start)> {
         "streamline" => (
             |l| l.tools.sl_downloaded.is_some() || l.tools.sl_manifest.is_some(),
             |l, cx| l.enqueue_download("streamline", cx),
+        ),
+        "mods" => (
+            |l| l.mods_ready(),
+            |l, cx| l.enqueue_download("amethyst", cx),
         ),
         _ => return None,
     })
@@ -601,6 +610,21 @@ pub(super) const FEATURES: &[Feature] = &[
         applies: has_other_layers,
         active: Some(|l| !l.profile.layers.other.is_empty()),
         render: |l, cx| Some(l.render_other_layers(cx)),
+    },
+    // Mods
+    Feature {
+        id: "mods",
+        tab: GameTab::Mods,
+        icon: "puzzle",
+        name: ("Mods", "Modlar"),
+        desc: (
+            "Install, switch and order mods with Amethyst Mod Manager.",
+            "Amethyst Mod Manager ile mod kur, aç-kapat ve sırala.",
+        ),
+        keywords: "mod mods nexus thunderstore fomod bepinex amethyst modlar eklenti",
+        applies: always,
+        active: None,
+        render: |l, cx| l.render_mods(cx),
     },
     // Logs
     Feature {
