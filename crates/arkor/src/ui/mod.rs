@@ -453,6 +453,7 @@ impl Library {
                     Some("appearance") => SettingsTab::Appearance,
                     Some("defaults") => SettingsTab::Defaults,
                     Some("integrations") => SettingsTab::Integrations,
+                    Some("emulators") => SettingsTab::Emulators,
                     Some("backups") => SettingsTab::Backups,
                     Some("shortcuts" | "keys") => SettingsTab::Shortcuts,
                     _ => SettingsTab::General,
@@ -468,6 +469,7 @@ impl Library {
                     (Some("import"), _) | (_, Some("prefix")) => add_game::AddTab::Prefix,
                     (_, Some("manual")) => add_game::AddTab::Manual,
                     (_, Some("launcher")) => add_game::AddTab::Launcher,
+                    (_, Some("roms")) => add_game::AddTab::Roms,
                     _ => add_game::AddTab::Found,
                 };
                 Selection::Add

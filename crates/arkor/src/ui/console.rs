@@ -2206,6 +2206,10 @@ impl Library {
                 Screen::Settings,
                 Screen::SettingsCat(super::console_settings::AppCat::Games),
             ],
+            Some("emulators") => vec![
+                Screen::Settings,
+                Screen::SettingsCat(super::console_settings::AppCat::Emulators),
+            ],
             Some("folder") => {
                 let home = dirs::home_dir().unwrap_or_default();
                 self.console_overlay(Overlay::Folder(FolderFor::Games, home));

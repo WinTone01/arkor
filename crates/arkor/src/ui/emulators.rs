@@ -244,11 +244,49 @@ impl Library {
         self.enqueue_download(&format!("emu:{id}"), cx);
     }
 
+    /// Installs an emulator's distribution package (asking for the password through polkit).
+    pub(super) fn emu_install_package(&mut self, package: &'static str, cx: &mut Context<Self>) {
+        self.watch_progress(cx);
+        self.status = Some(format!("{} {package}…", self.tr("Installing", "Kuruluyor:")).into());
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = bg
+                .spawn(async move {
+                    let _job = arkor_launch::progress::job("system-tools", package);
+                    arkor_launch::tools::install_packages(&[package])
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(match result {
+                    Ok(()) => this.tr("Installed.", "Kuruldu.").into(),
+                    Err(e) => format!("{e:#}").into(),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Removes what Arkor installed of an emulator.
     pub(super) fn emu_remove(&mut self, id: &str, cx: &mut Context<Self>) {
         let r = install::remove(id);
         self.report(r);
         cx.notify();
+    }
+
+    /// The systems an emulator plays, short: `PS1`, `GB, GBC, GBA`, or `15 systems`.
+    fn emu_systems_short(&self, m: &emu::EngineManifest) -> String {
+        let names: Vec<String> = m
+            .systems
+            .iter()
+            .filter_map(|s| emu::systems::get(s).map(|s| s.short.clone()))
+            .collect();
+        if names.len() > 3 {
+            format!("{} {}", names.len(), self.tr("systems", "sistem"))
+        } else {
+            names.join(", ")
+        }
     }
 
     // ---- The desktop ----
@@ -396,18 +434,20 @@ impl Library {
             let id = m.id.clone();
             let installed = !discovery::find(m).is_empty();
             let ours = install::arkor_installed(&m.id);
-            let systems: Vec<String> = m
-                .systems
-                .iter()
-                .filter_map(|s| emu::systems::get(s).map(|s| s.short.clone()))
-                .collect();
-            let hint = format!("{} · {}", systems.join(", "), state_of(self, m));
+            let title = format!("{} · {}", m.name, self.emu_systems_short(m));
+            let hint = state_of(self, m);
             let mut actions = div().flex().gap_1();
             if !installed && install::can_get(m) {
                 let id = id.clone();
                 actions = actions.child(
                     style::button(("emu-get", ix), self.tr("Install", "Kur"), false)
                         .on_click(cx.listener(move |this, _, _, cx| this.emu_install(&id, cx))),
+                );
+            } else if !installed && let Some(package) = install::distro_package(&m.id) {
+                actions = actions.child(
+                    style::button(("emu-pkg", ix), self.tr("Install", "Kur"), false).on_click(
+                        cx.listener(move |this, _, _, cx| this.emu_install_package(package, cx)),
+                    ),
                 );
             }
             if ours {
@@ -416,11 +456,9 @@ impl Library {
                         .on_click(cx.listener(move |this, _, _, cx| this.emu_remove(&id, cx))),
                 );
             }
-            card = card.child(widgets::divider()).child(widgets::setting_row(
-                m.name.clone(),
-                hint,
-                actions,
-            ));
+            card = card
+                .child(widgets::divider())
+                .child(widgets::setting_row(title, hint, actions));
         }
         card
     }
@@ -540,18 +578,17 @@ impl Library {
         )];
         for (ix, m) in emu::engines().iter().enumerate() {
             let installed = !discovery::find(m).is_empty();
-            let act = if !installed && install::can_get(m) {
+            let act = if installed {
+                Act::Nothing
+            } else if install::can_get(m) {
                 Act::Queue(format!("emu:{}", m.id))
+            } else if let Some(package) = install::distro_package(&m.id) {
+                Act::InstallTools(vec![package.to_string()])
             } else {
                 Act::Nothing
             };
             let mut row = line(act, "joystick", &m.name, Value::Text(state_of(self, m)));
-            row.items[0].sub = m
-                .systems
-                .iter()
-                .filter_map(|s| emu::systems::get(s).map(|s| s.short.clone()))
-                .collect::<Vec<_>>()
-                .join(", ");
+            row.items[0].sub = self.emu_systems_short(m);
             if ix == 0 {
                 row.title = Some(self.tr("Emulators", "Emülatörler").into());
             }

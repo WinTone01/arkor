@@ -91,6 +91,18 @@ pub fn way(m: &EngineManifest) -> Way {
     )
 }
 
+/// The distribution package (by Arch's name, see `crate::pkg`) of an emulator Arkor cannot
+/// download, when the usual distributions have one.
+pub fn distro_package(id: &str) -> Option<&'static str> {
+    match id {
+        "dolphin" => Some("dolphin-emu"),
+        "scummvm" => Some("scummvm"),
+        "mame" => Some("mame"),
+        "desmume" => Some("desmume"),
+        _ => None,
+    }
+}
+
 /// Whether Arkor can install `m` by itself here.
 pub fn can_get(m: &EngineManifest) -> bool {
     !matches!(way(m), Way::Distribution(_))

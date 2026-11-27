@@ -197,12 +197,17 @@ fn proton_choice(_: &Library, g: &LibraryGame) -> bool {
 fn linux_game(_: &Library, g: &LibraryGame) -> bool {
     g.kind == GameKind::Linux
 }
+/// A game with a folder of its own to mod (not a ROM).
+fn moddable(_: &Library, g: &LibraryGame) -> bool {
+    !matches!(g.kind, GameKind::Emulated { .. })
+}
 fn steam_game(_: &Library, g: &LibraryGame) -> bool {
     matches!(g.kind, GameKind::Steam { .. })
 }
 /// Saves in a store's cloud, or copies of any game's saves (Ludusavi).
-fn cloud_saves(lib: &Library, _: &LibraryGame) -> bool {
-    lib.saves_apply() || lib.saves.local.is_some()
+fn cloud_saves(lib: &Library, g: &LibraryGame) -> bool {
+    // An emulator keeps an emulator game's saves.
+    !matches!(g.kind, GameKind::Emulated { .. }) && (lib.saves_apply() || lib.saves.local.is_some())
 }
 fn has_other_layers(lib: &Library, _: &LibraryGame) -> bool {
     lib.has_other_layers()
@@ -623,7 +628,7 @@ pub(super) const FEATURES: &[Feature] = &[
             "Amethyst Mod Manager ile mod kur, aç-kapat ve sırala.",
         ),
         keywords: "mod mods nexus thunderstore fomod bepinex amethyst modlar eklenti",
-        applies: always,
+        applies: moddable,
         active: None,
         render: |l, cx| l.render_mods(cx),
     },
