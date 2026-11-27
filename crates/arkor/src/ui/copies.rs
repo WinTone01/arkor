@@ -58,6 +58,14 @@ impl Library {
     /// stays shown.
     pub(super) fn link_all_copies(&mut self, cx: &mut Context<Self>) {
         let groups = self.copy_groups();
+        self.remember(format!(
+            "{} {}",
+            groups.len(),
+            self.tr(
+                "games joined with their copies",
+                "oyun kopyalarıyla birleştirildi"
+            )
+        ));
         for group in groups {
             let main = group
                 .iter()

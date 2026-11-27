@@ -2133,6 +2133,16 @@ fn library_shelves_lists_and_picked_games() {
         l.picked = vec!["bravo".into(), "charlie".into()];
         l.change_picked(|g| g.category = Some("Party".into()), cx);
         assert_eq!(l.categories(), ["Party"]);
+        l.change_picked(
+            |g| g.status = Some(arkor_core::library::PlayStatus::Beaten),
+            cx,
+        );
+        l.undo_library(cx);
+        assert!(
+            l.library.get("bravo").unwrap().status.is_none(),
+            "undo puts the status back"
+        );
+        assert_eq!(l.categories(), ["Party"], "only the last change is undone");
         l.remove_picked(cx);
         assert_eq!(l.library.games.len(), 3, "the first press only asks");
         l.remove_picked(cx);
@@ -2140,6 +2150,10 @@ fn library_shelves_lists_and_picked_games() {
         l.global.library_list = true;
     });
     cx.run_until_parked();
+    // Ctrl+Z brings the removed games back.
+    cx.simulate_keystrokes("ctrl-z");
+    assert_eq!(view.read_with(cx, |l, _| l.library.games.len()), 3);
+    assert_eq!(GameLibrary::load().unwrap().games.len(), 3, "and saves it");
 }
 
 #[test]

@@ -271,6 +271,7 @@ impl Library {
             .child(self.render_views_bar(cx));
         let bar = self.picked_bar(cx);
         let offer = self.render_copies_offer(cx);
+        let undo = self.undo_bar(cx);
         if self.global.library_list {
             let list = if self.visible.is_empty() {
                 div().py_8().text_color(pal::muted()).child(self.tr(
@@ -285,6 +286,7 @@ impl Library {
                 .flex_col()
                 .gap_5()
                 .child(title)
+                .children(undo)
                 .children(offer)
                 .child(toolbar)
                 .children(bar)
@@ -406,6 +408,7 @@ impl Library {
             .flex_col()
             .gap_5()
             .child(title)
+            .children(undo)
             .children(offer)
             .child(toolbar)
             .children(bar)

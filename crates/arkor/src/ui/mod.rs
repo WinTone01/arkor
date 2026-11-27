@@ -173,6 +173,8 @@ pub struct Library {
     search: Option<(gpui::Entity<text_input::TextInput>, gpui::Subscription)>,
     /// "Save this view" asks for a name.
     views_naming: bool,
+    /// The library before the last change to several games, and what that change was.
+    undo: Option<(String, GameLibrary)>,
     search_text: String,
     focus: Option<gpui::FocusHandle>,
     backup_prefixes: bool,
@@ -269,6 +271,7 @@ impl Library {
             visible: Vec::new(),
             search: None,
             views_naming: false,
+            undo: None,
             search_text: String::new(),
             focus: None,
             covers: HashMap::new(),

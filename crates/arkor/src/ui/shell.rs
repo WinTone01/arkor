@@ -19,6 +19,7 @@ actions!(
         PrevTab,
         PlayGame,
         PickAll,
+        UndoLibrary,
         ZoomIn,
         ZoomOut,
         ZoomReset
@@ -36,6 +37,7 @@ pub(super) fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PrevTab, Some("Arkor")),
         KeyBinding::new("ctrl-enter", PlayGame, Some("Arkor")),
         KeyBinding::new("ctrl-a", PickAll, Some("Arkor")),
+        KeyBinding::new("ctrl-z", UndoLibrary, Some("Arkor")),
         KeyBinding::new("ctrl-=", ZoomIn, Some("Arkor")),
         KeyBinding::new("ctrl-+", ZoomIn, Some("Arkor")),
         KeyBinding::new("ctrl-shift-=", ZoomIn, Some("Arkor")),
@@ -725,6 +727,7 @@ impl Render for Library {
             }))
             .on_action(cx.listener(|this, _: &ToggleConsole, w, cx| this.toggle_console(w, cx)))
             .on_action(cx.listener(|this, _: &PickAll, _, cx| this.library_pick_all(cx)))
+            .on_action(cx.listener(|this, _: &UndoLibrary, _, cx| this.undo_library(cx)))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(1, cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(-1, cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom(0, cx)))

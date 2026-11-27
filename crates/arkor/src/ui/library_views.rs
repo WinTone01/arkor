@@ -274,11 +274,63 @@ impl Library {
     }
 
     /// Does `change` to every picked game and saves the library.
+    /// Keeps the library as it is, so the next change can be undone.
+    pub(super) fn remember(&mut self, what: String) {
+        self.undo = Some((what, self.library.clone()));
+    }
+
+    /// Puts the library back as it was before the last change to several games (Ctrl+Z).
+    pub(super) fn undo_library(&mut self, cx: &mut Context<Self>) {
+        let Some((_, before)) = self.undo.take() else {
+            return;
+        };
+        self.library = before;
+        let r = self.library.save();
+        self.report(r);
+        self.reload_games();
+        self.apply_filter();
+        cx.notify();
+    }
+
+    /// The offer to undo the last change to several games.
+    pub(super) fn undo_bar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let (what, _) = self.undo.as_ref()?;
+        Some(
+            style::card()
+                .px_4()
+                .py_2()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(style::icon("undo-2", 15., pal::muted()))
+                .child(div().flex_1().text_sm().child(what.clone()))
+                .child(
+                    style::button("undo", self.tr("Undo (Ctrl+Z)", "Geri al (Ctrl+Z)"), false)
+                        .on_click(cx.listener(|this, _, _, cx| this.undo_library(cx))),
+                )
+                .child(
+                    div()
+                        .id("undo-close")
+                        .cursor_pointer()
+                        .child(style::icon("x", 14., pal::faint()))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.undo = None;
+                            cx.notify();
+                        })),
+                ),
+        )
+    }
+
     pub(super) fn change_picked(
         &mut self,
         change: impl Fn(&mut LibraryGame),
         cx: &mut Context<Self>,
     ) {
+        let n = self.picked.len();
+        self.remember(format!(
+            "{n} {}",
+            self.tr("games changed", "oyun değiştirildi")
+        ));
         for id in self.picked.clone() {
             if let Some(g) = self.library.get_mut(&id) {
                 change(g);
@@ -410,7 +462,30 @@ impl Library {
                                 .child(self.tr("Category:", "Kategori:")),
                         )
                         .child(cats),
-                ),
+                )
+                .child({
+                    let mut row = div().flex().flex_wrap().items_center().gap_2().child(
+                        div()
+                            .text_sm()
+                            .text_color(pal::muted())
+                            .child(self.tr("Status:", "Durum:")),
+                    );
+                    for (ix, st) in std::iter::once(None)
+                        .chain(arkor_core::library::PlayStatus::ALL.into_iter().map(Some))
+                        .enumerate()
+                    {
+                        let label = match st {
+                            Some(s) => self.status_name(s),
+                            None => self.tr("None", "Yok"),
+                        };
+                        row = row.child(widgets::chip(("pick-status", ix), label, false).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.change_picked(move |g| g.status = st, cx)
+                            }),
+                        ));
+                    }
+                    row
+                }),
         )
     }
 
@@ -422,6 +497,14 @@ impl Library {
             return;
         }
         self.game_ui.confirm_remove_picked = false;
+        let n = self.picked.len();
+        self.remember(format!(
+            "{n} {}",
+            self.tr(
+                "games removed from the library",
+                "oyun kütüphaneden kaldırıldı"
+            )
+        ));
         for id in std::mem::take(&mut self.picked) {
             self.emu_note_removed(&id);
             self.library.remove(&id);
