@@ -31,6 +31,44 @@ pub struct Mod {
     pub update: bool,
     /// From Nexus Mods (its page), or Thunderstore.
     pub url: Option<String>,
+    /// What it needs that is not installed: mods Nexus names and Amethyst found missing,
+    /// and tools outside Nexus (a loader like MelonLoader) that nobody can check.
+    pub needs: Vec<String>,
+}
+
+/// A mod's `requirements.nexus`: the missing ones, then the outside tools (mod id 0).
+fn needs_of(m: &Value) -> Vec<String> {
+    let nexus = &m["requirements"]["nexus"];
+    let names = |k: &str, outside: bool| -> Vec<String> {
+        nexus[k]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|r| !outside || r["mod_id"].as_u64() == Some(0))
+                    .filter_map(|r| r["name"].as_str())
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut out = names("missing", false);
+    for n in names("all", true) {
+        if !out.iter().any(|o| o.eq_ignore_ascii_case(&n)) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// The mod loader a game's mods are placed for but which is not in its folder:
+/// `BepInEx` when there are plugins and no BepInEx core.
+pub fn missing_loader(game_dir: &Path) -> Option<&'static str> {
+    let bepinex = game_dir.join("BepInEx");
+    let plugins = std::fs::read_dir(bepinex.join("plugins")).is_ok_and(|mut d| {
+        d.any(|e| e.is_ok_and(|e| !e.file_name().to_string_lossy().starts_with('.')))
+    });
+    (plugins && !bepinex.join("core").is_dir()).then_some("BepInEx")
 }
 
 /// The mods of a linked game, highest priority first (separators left out).
@@ -67,6 +105,7 @@ fn parse_mods(v: &Value) -> Vec<Mod> {
                         version: m["version"].as_str().map(str::to_string),
                         update: m["update_available"].as_bool().unwrap_or(false),
                         url,
+                        needs: needs_of(m),
                     })
                 })
                 .collect()
@@ -334,6 +373,33 @@ mod tests {
         );
         assert!(mods[1].locked && !mods[1].enabled);
         assert_eq!(mods[1].url.as_deref(), Some("https://thunderstore.io/x"));
+        assert!(mods[0].needs.is_empty());
+    }
+
+    #[test]
+    fn says_what_a_mod_still_needs() {
+        let m: Value = serde_json::from_str(
+            r#"{"requirements":{"nexus":{
+              "all":[{"mod_id":0,"name":"Melonloader"},{"mod_id":7,"name":"Core Lib"}],
+              "missing":[{"mod_id":7,"name":"Core Lib"}]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(needs_of(&m), ["Core Lib", "Melonloader"]);
+        assert!(needs_of(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn notices_bepinex_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let g = tmp.path();
+        assert_eq!(missing_loader(g), None, "no mods: nothing to say");
+        std::fs::create_dir_all(g.join("BepInEx/plugins")).unwrap();
+        std::fs::write(g.join("BepInEx/plugins/.mm_deployed"), "").unwrap();
+        assert_eq!(missing_loader(g), None, "only Amethyst's marker");
+        std::fs::write(g.join("BepInEx/plugins/Mod.dll"), "").unwrap();
+        assert_eq!(missing_loader(g), Some("BepInEx"));
+        std::fs::create_dir_all(g.join("BepInEx/core")).unwrap();
+        assert_eq!(missing_loader(g), None);
     }
 
     #[test]

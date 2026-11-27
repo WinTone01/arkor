@@ -32,6 +32,8 @@ pub(super) enum Known {
         mods: Vec<Mod>,
         /// The game's name on Nexus Mods, when its mods come from there.
         domain: Option<String>,
+        /// The mod loader the mods need but the game folder lacks.
+        loader: Option<&'static str>,
     },
     Failed(String),
 }
@@ -99,10 +101,13 @@ impl Library {
                             if ask_account && domain.is_some() {
                                 account = nexus::account(c).ok();
                             }
+                            let loader = link::place(&game, &prefixes)
+                                .and_then(|p| mods::missing_loader(&p.game_dir));
                             return Ok(Known::Linked {
                                 mods: mods::list(c, &link)?,
                                 link,
                                 domain,
+                                loader,
                             });
                         }
                         let place = link::place(&game, &prefixes);
@@ -627,7 +632,15 @@ impl Library {
             Known::Unlinked { fits, place } => {
                 card = card.child(self.render_mods_unlinked(fits, place, cx));
             }
-            Known::Linked { link, mods, domain } => {
+            Known::Linked {
+                link,
+                mods,
+                domain,
+                loader,
+            } => {
+                if let Some(loader) = loader {
+                    card = card.child(self.render_loader_warning(loader));
+                }
                 if let Some(domain) = &domain {
                     card = card.child(self.render_nexus(domain, &link, cx));
                 }
@@ -696,6 +709,40 @@ impl Library {
                     })
                     .child(self.mods_window_button(cx)),
             )
+    }
+
+    /// The mods' loader is missing: they are placed, but nothing loads them.
+    fn render_loader_warning(&self, loader: &str) -> Div {
+        div()
+            .flex()
+            .items_start()
+            .gap_2()
+            .p_3()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(pal::warning().opacity(0.4))
+            .bg(pal::warning().opacity(0.08))
+            .child(style::icon("circle-alert", 15., pal::warning()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(widgets::label(self.loader_text(loader))),
+            )
+    }
+
+    fn loader_text(&self, loader: &str) -> String {
+        format!(
+            "{loader} {} {loader}{}",
+            self.tr(
+                "is not installed, so these mods do not load. Install",
+                "kurulu değil, bu yüzden bu modlar yüklenmiyor. Önce",
+            ),
+            self.tr(
+                " itself first (BepInExPack on Thunderstore or Nexus Mods).",
+                "'in kendisini kur (Thunderstore'da ya da Nexus Mods'ta BepInExPack).",
+            )
+        )
     }
 
     fn mods_window_button(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
@@ -880,6 +927,12 @@ impl Library {
                     })
                     .when(m.update, |d| {
                         d.child(style::tag(self.tr("Update", "Güncelleme"), pal::accent()))
+                    })
+                    .when(!m.needs.is_empty(), |d| {
+                        d.child(style::tag(
+                            format!("{} {}", self.tr("Needs", "Gerekli:"), m.needs.join(", ")),
+                            pal::warning(),
+                        ))
                     }),
             )
             .children(page)
@@ -1097,7 +1150,23 @@ impl Library {
                     Shown::None,
                 )),
             },
-            Known::Linked { mods, domain, .. } => {
+            Known::Linked {
+                mods,
+                domain,
+                loader,
+                ..
+            } => {
+                if let Some(loader) = loader {
+                    rows.push(line(
+                        Act::ModsReload,
+                        "circle-alert",
+                        &format!("{loader} {}", self.tr("is not installed", "kurulu değil")),
+                        Shown::Text(
+                            self.tr("the mods do not load", "modlar yüklenmiyor")
+                                .to_string(),
+                        ),
+                    ));
+                }
                 if domain.is_some() {
                     let account = self.mods.account.clone().flatten();
                     let (act, who) = match (&account, self.mods.signing_in) {
@@ -1143,6 +1212,13 @@ impl Library {
                     let mut sub: Vec<String> = m.version.iter().cloned().collect();
                     if m.update {
                         sub.push(self.tr("update available", "güncelleme var").to_string());
+                    }
+                    if !m.needs.is_empty() {
+                        sub.push(format!(
+                            "{} {}",
+                            self.tr("needs", "gerekli:"),
+                            m.needs.join(", ")
+                        ));
                     }
                     item.sub = sub.join(" · ");
                     let mut row = Row::new(Kind::Line, vec![item]);
