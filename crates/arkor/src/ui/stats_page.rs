@@ -300,7 +300,7 @@ impl Library {
                 days.push((d, Vec::new()));
             }
         }
-        days.sort_by(|a, b| (b.0.year, b.0.month, b.0.day).cmp(&(a.0.year, a.0.month, a.0.day)));
+        days.sort_by_key(|(d, _)| std::cmp::Reverse((d.year, d.month, d.day)));
         days.truncate(30);
         for (d, games) in days {
             let day = format!(

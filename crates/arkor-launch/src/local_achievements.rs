@@ -132,7 +132,10 @@ fn goldberg(game: &LibraryGame, prefixes_dir: &Path) -> Option<Vec<Achievement>>
 
 /// The trophies of a `TROPCONF.SFM` / `TROP.XML`: (id, name, detail, hidden, unlocked by the
 /// list itself), and the list's title.
-fn trophy_xml(xml: &str) -> (String, Vec<(u32, String, String, bool, bool)>) {
+/// A trophy of a list: id, name, detail, hidden, unlocked.
+type Trophy = (u32, String, String, bool, bool);
+
+fn trophy_xml(xml: &str) -> (String, Vec<Trophy>) {
     let title = xml
         .split("<title-name>")
         .nth(1)

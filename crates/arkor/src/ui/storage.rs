@@ -9,10 +9,13 @@ use gpui::{Context, Div, div, prelude::*, px};
 use super::style::{self, pal};
 use super::{Library, widgets};
 
+/// Disks, games by size (name, folder, bytes), leftovers.
+type Measured = (Vec<Disk>, Vec<(String, PathBuf, u64)>, Vec<Leftover>);
+
 #[derive(Default)]
 pub(super) struct StorageUi {
-    /// Disks, games by size, leftovers (read in the background).
-    data: Option<(Vec<Disk>, Vec<(String, PathBuf, u64)>, Vec<Leftover>)>,
+    /// What was measured (in the background).
+    data: Option<Measured>,
     loading: bool,
     /// The leftover asked about once (deleted on the second press).
     confirm: Option<PathBuf>,

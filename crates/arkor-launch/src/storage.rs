@@ -87,7 +87,7 @@ pub fn game_sizes() -> Vec<(String, PathBuf, u64)> {
         })
         .filter(|(_, _, s)| *s > 0)
         .collect();
-    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out.sort_by_key(|g| std::cmp::Reverse(g.2));
     out
 }
 
@@ -154,7 +154,7 @@ pub fn leftovers() -> Vec<Leftover> {
             }
         }
     }
-    out.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    out.sort_by_key(|l| std::cmp::Reverse(l.bytes));
     out
 }
 
