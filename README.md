@@ -216,10 +216,10 @@ The first start of a game gets its emulator: Arkor downloads the project's own L
 else from your distribution; a system library it lacks is installed first. An emulator you
 already have is used as it is. RetroArch's
 cores come from the libretro buildbot, checked before use. Each game can pick another
-emulator; **Settings → Emulators** lists them all.
+emulator; **Tools → Emulators** in the sidebar lists them all, and installs or removes them.
 
 Arkor does not download games or BIOS files. Systems that need a BIOS (PlayStation 1 and 2,
-Sega CD, Dreamcast…) find yours in **Settings → Emulators → BIOS folder**, recognised by
+Sega CD, Dreamcast…) find yours in **Tools → Emulators → BIOS folder**, recognised by
 their contents whatever their names.
 
 <details>

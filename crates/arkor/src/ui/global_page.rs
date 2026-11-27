@@ -15,18 +15,16 @@ pub(super) enum SettingsTab {
     Appearance,
     Defaults,
     Integrations,
-    Emulators,
     Backups,
     Shortcuts,
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 7] = [
+    pub(super) const ALL: [SettingsTab; 6] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Defaults,
         SettingsTab::Integrations,
-        SettingsTab::Emulators,
         SettingsTab::Backups,
         SettingsTab::Shortcuts,
     ];
@@ -193,7 +191,6 @@ impl Library {
             style::NavEntry::new("palette", self.tr("Appearance", "Görünüm")),
             style::NavEntry::new("gamepad-2", self.tr("Game defaults", "Oyun varsayılanları")),
             style::NavEntry::new("plug", self.tr("Integrations", "Entegrasyonlar")),
-            style::NavEntry::new("joystick", self.tr("Emulators", "Emülatörler")),
             style::NavEntry::new("archive", self.tr("Backups", "Yedekleme")),
             style::NavEntry::new(
                 "keyboard",
@@ -381,7 +378,6 @@ impl Library {
                         )))
                         .child(discord_id),
                 ),
-            SettingsTab::Emulators => self.render_emulators(cx),
             SettingsTab::Backups => self.render_backup(cx),
             SettingsTab::Shortcuts => self.render_shortcut_list(),
         };

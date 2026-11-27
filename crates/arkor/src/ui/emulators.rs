@@ -477,9 +477,42 @@ impl Library {
         card
     }
 
-    /// The Emulators section of the settings page.
+    /// The Emulators page (Tools → Emulators): every emulator, what is installed, installing
+    /// and removing them, and the BIOS folder.
+    pub(super) fn render_emulators_page(&mut self, cx: &mut Context<Self>) -> Div {
+        div()
+            .child(Self::header(
+                self.tr("Emulators", "Emülatörler"),
+                self.tr(
+                    "Install the emulators your games need, or let Arkor do it when a game first starts.",
+                    "Oyunlarının ihtiyaç duyduğu emülatörleri kur, ya da bir oyun ilk açılırken Arkor kursun.",
+                ),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(self.render_emulators(cx))
+                    .child(
+                        div().flex().child(
+                            style::button(
+                                "emu-add-roms",
+                                self.tr("Add games from a ROM folder…", "ROM klasöründen oyun ekle…"),
+                                true,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.add.tab = super::add_game::AddTab::Roms;
+                                this.go(super::shell::Nav::Add, cx);
+                            })),
+                        ),
+                    ),
+            )
+    }
+
+    /// The emulators card (on the Emulators page).
     pub(super) fn render_emulators(&mut self, cx: &mut Context<Self>) -> Div {
-        let mut card = widgets::section(self.tr("Emulators", "Emülatörler"));
+        let mut card = widgets::section(self.tr("Emulators and BIOS", "Emülatörler ve BIOS"));
         card = card.child(widgets::label(self.tr(
             "Games of consoles you own, from your own ROM files. Arkor downloads the emulator a game needs when it first starts (or installs it from Flathub); one you already have is used.",
             "Sahip olduğun konsolların oyunları, kendi ROM dosyalarından. Bir oyunun ihtiyaç duyduğu emülatörü Arkor oyun ilk açılırken indirir (ya da Flathub'dan kurar); zaten kurulu olan kullanılır.",

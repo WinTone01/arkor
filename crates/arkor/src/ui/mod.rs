@@ -92,6 +92,8 @@ enum Selection {
     System,
     Add,
     Protons,
+    /// The emulators page.
+    Emulators,
     Shops,
     Game(usize),
 }
@@ -453,7 +455,6 @@ impl Library {
                     Some("appearance") => SettingsTab::Appearance,
                     Some("defaults") => SettingsTab::Defaults,
                     Some("integrations") => SettingsTab::Integrations,
-                    Some("emulators") => SettingsTab::Emulators,
                     Some("backups") => SettingsTab::Backups,
                     Some("shortcuts" | "keys") => SettingsTab::Shortcuts,
                     _ => SettingsTab::General,
@@ -475,6 +476,7 @@ impl Library {
                 Selection::Add
             }
             Some("protons") => Selection::Protons,
+            Some("emulators") => Selection::Emulators,
             Some("system") => Selection::System,
             Some("stores") => {
                 use arkor_launch::shops::Shop;
@@ -667,6 +669,7 @@ impl Library {
             Some(Selection::Global) => self.render_global(window, cx),
             Some(Selection::Add) => self.render_add(window, cx),
             Some(Selection::Protons) => self.render_protons(cx),
+            Some(Selection::Emulators) => self.render_emulators_page(cx),
             Some(Selection::Grid) => self.render_grid(cx),
             Some(Selection::Bench) => self.render_bench(cx),
             Some(Selection::Downloads) => self.render_downloads(cx),
