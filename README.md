@@ -9,7 +9,7 @@
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-8b5cf6?style=flat-square&logo=rust&logoColor=white">
 </p>
 
-<h3 align="center">Steam, Epic, GOG, Amazon and your own games in one fast, native launcher.</h3>
+<h3 align="center">Steam, Epic, GOG, Amazon, emulators and your own games in one fast, native launcher.</h3>
 
 <p align="center">
   The right Proton for every game, its own MangoHud, Gamescope and upscaler settings,<br>
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#features"><b>Features</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#console-mode"><b>Console mode</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#screenshots"><b>Screenshots</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#desktops"><b>Distributions</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#command-line"><b>Command line</b></a>
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#features"><b>Features</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#console-mode"><b>Console mode</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#emulators"><b>Emulators</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#screenshots"><b>Screenshots</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#desktops"><b>Distributions</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#command-line"><b>Command line</b></a>
 </p>
 
 <br>
@@ -154,12 +154,29 @@ stay, so installing again picks up where you left off. Installed as a package? U
     <td valign="top">
       <img src="docs/icons/tools.svg" width="44"><br>
       <b>Everything else a game needs</b><br>
-      <sub>Steam-style launch options, commands before and after, winecfg, winetricks, logs, benchmarks, backups, Discord status, clips of the last moments (GPU Screen Recorder).</sub>
+      <sub>Steam-style launch options, commands before and after, winecfg, winetricks, logs, benchmarks, backups, Discord status.</sub>
     </td>
     <td valign="top">
       <img src="docs/icons/mods.svg" width="44"><br>
       <b>Mods <sup>experimental</sup></b><br>
       <sub>Install, switch and order mods, FOMOD choices and Nexus Mods downloads, through <a href="https://github.com/ChrisDKN/Amethyst-Mod-Manager">Amethyst Mod Manager</a>.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/icons/emulators.svg" width="44"><br>
+      <b>Emulators</b><br>
+      <sub>Your ROMs from 29 consoles and computers in the same library. RetroArch, DuckStation, PCSX2, Dolphin and more are installed when a game first starts.</sub>
+    </td>
+    <td valign="top">
+      <img src="docs/icons/screenshots.svg" width="44"><br>
+      <b>Clips</b><br>
+      <sub>The last moments of a game are kept in memory (GPU Screen Recorder); save them from the gamepad's middle button or a key.</sub>
+    </td>
+    <td valign="top">
+      <img src="docs/icons/desktops.svg" width="44"><br>
+      <b>Any distribution</b><br>
+      <sub>Arch, Ubuntu, Debian, Fedora, openSUSE and their families, with each one's own package manager.</sub>
     </td>
   </tr>
 </table>
@@ -183,6 +200,64 @@ computer awake while the pad is in use.
 
 Press the pad's middle button or <kbd>F11</kbd>, or let Arkor start in console mode with the
 computer.
+
+<a id="emulators"></a>
+
+## <img src="docs/icons/emulators.svg" width="30" align="top"> Emulators
+
+**Library → Add game → Emulator games** adds every game in a folder of ROMs: one folder per
+system (as EmuDeck and RetroDECK keep them, `~/ROMs/snes`, `~/ROMs/psx`…) or any folder, where
+Arkor tells the system by the file and its contents. Discs of one game become one entry; a
+single file can also be added by hand. The games then play like any other: MangoHud,
+Gamescope, play time, clips and console mode's quick menu all work.
+
+The first start of a game gets its emulator: Arkor downloads the project's own Linux build
+(AppImages are unpacked, so FUSE is not needed), else installs it from Flathub for you only,
+else from your distribution; a system library it lacks is installed first. An emulator you
+already have is used as it is. RetroArch's
+cores come from the libretro buildbot, checked before use. Each game can pick another
+emulator; **Settings → Emulators** lists them all.
+
+Arkor does not download games or BIOS files. Systems that need a BIOS (PlayStation 1 and 2,
+Sega CD, Dreamcast…) find yours in **Settings → Emulators → BIOS folder**, recognised by
+their contents whatever their names.
+
+<details>
+<summary><b>Systems and their emulators</b> (the first one is used unless you choose)</summary>
+
+| System | Emulators | BIOS |
+| --- | --- | --- |
+| Nintendo Entertainment System | RetroArch (Nestopia), RetroArch (Mesen) |  |
+| Super Nintendo | RetroArch (Snes9x), RetroArch (bsnes) |  |
+| Nintendo 64 | RetroArch (Mupen64Plus-Next), Gopher64 |  |
+| Game Boy | RetroArch (Gambatte), RetroArch (mGBA), mGBA |  |
+| Game Boy Color | RetroArch (Gambatte), RetroArch (mGBA), mGBA |  |
+| Game Boy Advance | RetroArch (mGBA), mGBA |  |
+| Nintendo DS | RetroArch (melonDS DS), melonDS |  |
+| GameCube | Dolphin |  |
+| Wii | Dolphin |  |
+| Master System | RetroArch (Genesis Plus GX) |  |
+| Mega Drive / Genesis | RetroArch (Genesis Plus GX) |  |
+| Game Gear | RetroArch (Genesis Plus GX) |  |
+| Mega-CD / Sega CD | RetroArch (Genesis Plus GX) | yes |
+| PC Engine / TurboGrafx-16 | RetroArch (Beetle PCE Fast) |  |
+| PlayStation | DuckStation, RetroArch (SwanStation) | yes |
+| PlayStation Portable | PPSSPP, RetroArch (PPSSPP) |  |
+| MS-DOS | DOSBox Staging |  |
+| ScummVM adventures | ScummVM |  |
+| PlayStation 2 | PCSX2 | yes |
+| Nintendo 3DS | Azahar |  |
+| Arcade | MAME |  |
+| Wii U | Cemu |  |
+| PlayStation 3 | RPCS3 |  |
+| Xbox | xemu |  |
+| PlayStation 4 | shadPS4 |  |
+| Dreamcast | Flycast, RetroArch (Flycast) |  |
+| PlayStation Vita | Vita3K |  |
+| Nintendo Switch | Ryujinx |  |
+| DOOM | UZDoom, GZDoom |  |
+
+</details>
 
 <a id="screenshots"></a>
 
@@ -212,7 +287,7 @@ computer.
   </tr>
   <tr>
     <td align="center"><img src="docs/icons/step-2.svg" width="36"></td>
-    <td><b>Add your games.</b> <b>Library → Add game</b> picks up games Arkor found on your computer or adds one by hand; <b>Stores</b> installs what you own.</td>
+    <td><b>Add your games.</b> <b>Library → Add game</b> picks up games Arkor found on your computer, the games in a ROM folder, or adds one by hand; <b>Stores</b> installs what you own.</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/icons/step-3.svg" width="36"></td>
@@ -243,7 +318,11 @@ tools games need with the distribution's own package manager:
 | Others (NixOS, Void, Alpine…) | <img src="docs/icons/badge-untested.svg" height="22" alt="Untested"> | Alpine (musl) cannot run it; reports welcome |
 
 Some tools are not packaged everywhere (umu-launcher on Debian, GPU Screen Recorder outside
-Arch…): Arkor says so, and downloads what games need itself.
+Arch…): Arkor says so, and downloads what games need itself. Emulators work the same
+everywhere: their downloads need no FUSE, a library one expects from the system (JACK, for
+RetroArch) is installed with the package manager, and the rest come from Flathub (when
+Flatpak is installed) or the distribution. Downloading and starting them was checked in
+Debian 12, Fedora 42 and openSUSE Tumbleweed containers.
 
 Arkor's window runs on any Linux desktop. Console mode also has to bring itself over a
 running game, which every desktop allows in its own way:
@@ -283,6 +362,8 @@ running game, which every desktop allows in its own way:
 | `arkor trouble <id>` | Why a game did not start, and what helps |
 | `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
 | `arkor clip` | Saves a clip of the running game (bind it to a key) |
+| `arkor roms [--add] [folder…]` | Games in ROM folders (the usual ones without a folder); `--add` adds them |
+| `arkor emulators [install \| remove <id> \| core <core> \| bios]` | Emulators: what is installed, getting them, BIOS status |
 | `arkor nxm <link>` | Installs a mod from Nexus Mods' "Mod Manager Download" |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor system` | A report of the computer, the desktop and Arkor's tools |
@@ -301,6 +382,7 @@ running game, which every desktop allows in its own way:
 | Launch logs, download queue | `~/.local/state/arkor/` |
 | Runtimes, downloaded tools, store logins (encrypted) | `~/.local/share/arkor/` |
 | Copies of saves | `~/.local/share/arkor/saves/` |
+| Emulators, RetroArch's cores, the BIOS folder | `~/.local/share/arkor/emulators/` (RetroArch's settings and saves in `home/retroarch/`) |
 | Mods (Amethyst's) | `~/Games/Amethyst/`, its settings in `~/.config/AmethystModManager/` |
 | Games from stores · Wine prefixes | `~/Games/Arkor/Games/` · `~/Games/Arkor/Prefixes/` (changeable) |
 | Proton builds | `~/.local/share/Steam/compatibilitytools.d/` (shared with Steam) |
@@ -315,7 +397,10 @@ Arkor stands on the shoulders of great Linux gaming projects:
 packages Arkor uses), [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher)
 (whose way of working with the stores Arkor follows), the mod manager [Amethyst](https://github.com/ChrisDKN/Amethyst-Mod-Manager) (which installs
 and places mods for Arkor), [Ludusavi's manifest](https://github.com/mtkennerly/ludusavi-manifest)
-(which tells where games keep their saves, from [PCGamingWiki](https://www.pcgamingwiki.com)), and the store helpers
+(which tells where games keep their saves, from [PCGamingWiki](https://www.pcgamingwiki.com)),
+[Irori](https://github.com/irori-app/irori) (whose systems catalog, emulator definitions, BIOS
+index and ROM scanning Arkor's emulator support is built on), [RetroArch](https://www.retroarch.com)
+and the libretro buildbot, the emulators themselves, and the store helpers
 [legendary](https://github.com/legendary-gl/legendary), [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
 and [nile](https://github.com/imLinguin/nile),
 [GOverlay](https://github.com/benjamimgois/goverlay), [MangoHud](https://github.com/flightlessmango/MangoHud),
