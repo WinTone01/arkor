@@ -24,6 +24,8 @@ pub(super) struct InfoUi {
     pictures: HashMap<String, Vec<Picture>>,
     /// What GOG counted for GOG games: minutes and achievements (an error as text).
     gog: HashMap<String, Result<(u64, Vec<arkor_launch::shops::gog::Achievement>), String>>,
+    /// Achievements from files on this computer (Goldberg, RPCS3, shadPS4), read once.
+    local: HashMap<String, Option<(&'static str, Vec<arkor_launch::shops::gog::Achievement>)>>,
 }
 
 impl Library {
@@ -205,19 +207,70 @@ impl Library {
             Ok(v) => v.clone(),
             Err(e) => return Some(div().child(widgets::label(format!("GOG: {e}")))),
         };
-        let got = list.iter().filter(|a| a.unlocked).count();
-        let mut part = div().flex().flex_col().gap_2().child(widgets::setting_row(
+        Some(self.achievement_part(
             "GOG",
-            format!(
-                "{} · {} {}/{}",
-                arkor_core::stats::format_duration(minutes * 60),
+            Some(arkor_core::stats::format_duration(minutes * 60)),
+            &list,
+        ))
+    }
+
+    /// Achievements kept in files here (Goldberg, RPCS3, shadPS4), read once in the background.
+    fn local_part(
+        &mut self,
+        entry: &arkor_core::library::LibraryGame,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if !self.info.local.contains_key(&entry.id) && !cfg!(test) {
+            self.info.local.insert(entry.id.clone(), None);
+            let (id, game, prefixes) =
+                (entry.id.clone(), entry.clone(), self.global.prefixes_dir());
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let r = bg
+                    .spawn(async move { arkor_launch::local_achievements::find(&game, &prefixes) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.info.local.insert(id, r);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        let (source, list) = self.info.local.get(&entry.id)?.clone()?;
+        Some(self.achievement_part(source, None, &list))
+    }
+
+    /// A list of achievements under the name of where they came from.
+    fn achievement_part(
+        &self,
+        source: &str,
+        extra: Option<String>,
+        list: &[arkor_launch::shops::gog::Achievement],
+    ) -> Div {
+        let got = list.iter().filter(|a| a.unlocked).count();
+        let summary = match extra {
+            Some(e) => format!(
+                "{e} · {} {got}/{}",
                 self.tr("achievements", "başarım"),
-                got,
                 list.len()
             ),
+            None => format!(
+                "{} {got}/{}",
+                self.tr("achievements", "başarım"),
+                list.len()
+            ),
+        };
+        let mut part = div().flex().flex_col().gap_2().child(widgets::setting_row(
+            source.to_string(),
+            summary,
             div(),
         ));
         for a in list.iter().filter(|a| a.unlocked || !a.hidden).take(30) {
+            let detail = if a.rarity > 0 {
+                format!("{} · %{:.1}", a.description, a.rarity as f32 / 10.)
+            } else {
+                a.description.clone()
+            };
             part = part.child(
                 div()
                     .flex()
@@ -246,15 +299,11 @@ impl Library {
                                     })
                                     .child(a.name.clone()),
                             )
-                            .child(div().text_xs().text_color(pal::muted()).child(format!(
-                                "{} · %{:.1}",
-                                a.description,
-                                a.rarity as f32 / 10.
-                            ))),
+                            .child(div().text_xs().text_color(pal::muted()).child(detail)),
                     ),
             );
         }
-        Some(part)
+        part
     }
 
     /// The "About" card of the selected game.
@@ -306,6 +355,9 @@ impl Library {
                 "",
                 statuses,
             ));
+        if let Some(local) = self.local_part(&entry, cx) {
+            card = card.child(local);
+        }
         if let Some(gog) = self.gog_part(&entry, cx) {
             card = card.child(widgets::divider()).child(gog);
         }
