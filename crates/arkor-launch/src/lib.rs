@@ -40,6 +40,7 @@ pub mod steam_control;
 pub mod steam_downloads;
 pub mod steam_link;
 pub mod streamline;
+pub mod sunshine;
 pub mod system;
 pub mod tools;
 pub mod trouble;

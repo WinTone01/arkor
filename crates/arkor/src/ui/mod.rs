@@ -346,6 +346,14 @@ impl Library {
 
     /// Re-reads the library, keeping the selected game selected if it still exists.
     fn reload_games(&mut self) {
+        // Sunshine's list follows the library (when it is switched on).
+        if self.global.sunshine && !cfg!(test) {
+            std::thread::spawn(|| {
+                if let Err(e) = arkor_launch::sunshine::sync(true) {
+                    eprintln!("arkor: Sunshine: {e:#}");
+                }
+            });
+        }
         let selected = self.selected_id();
         match GameLibrary::load() {
             Ok(library) => self.library = library,

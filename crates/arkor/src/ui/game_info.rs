@@ -380,6 +380,59 @@ impl Library {
         ))
     }
 
+    /// Settings → Integrations: Arkor's games in Sunshine.
+    pub(super) fn render_sunshine(&mut self, cx: &mut Context<Self>) -> Div {
+        let on = self.global.sunshine;
+        let found = arkor_launch::sunshine::config().is_some();
+        widgets::section("Sunshine / Apollo").child(widgets::setting_row(
+            self.tr("Games in Sunshine", "Oyunlar Sunshine'da"),
+            if found {
+                self.tr(
+                    "Moonlight lists Arkor's games and starts them with their settings. Only Arkor's entries change; your other applications stay.",
+                    "Moonlight Arkor'un oyunlarını listeler ve ayarlarıyla başlatır. Yalnızca Arkor'un girdileri değişir; diğer uygulamaların kalır.",
+                )
+            } else {
+                self.tr(
+                    "Sunshine is not set up on this computer.",
+                    "Bu bilgisayarda Sunshine kurulu değil.",
+                )
+            },
+            widgets::switch(on)
+                .id("sunshine")
+                .cursor_pointer()
+                .when(!found && !on, |s| s.opacity(0.4))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !found && !on {
+                        return;
+                    }
+                    this.global.sunshine = !on;
+                    this.save();
+                    this.sunshine_sync(cx);
+                })),
+        ))
+    }
+
+    /// Brings Sunshine's list in line with the library (in the background).
+    pub(super) fn sunshine_sync(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) || arkor_launch::sunshine::config().is_none() {
+            return;
+        }
+        let on = self.global.sunshine;
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let r = bg
+                .spawn(async move { arkor_launch::sunshine::sync(on) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(e) = r {
+                    this.status = Some(format!("Sunshine: {e:#}").into());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     fn igdb_save(&mut self, cx: &mut Context<Self>) {
         let id = self.field_text("igdb-id", cx).unwrap_or_default();
         let secret = self.field_text("igdb-secret", cx).unwrap_or_default();

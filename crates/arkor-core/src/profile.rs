@@ -416,6 +416,9 @@ pub struct Global {
     /// When downloads may run (see `arkor_launch::downloads::hold`). Written only when changed.
     #[serde(skip_serializing_if = "DownloadRules::is_default")]
     pub download_rules: DownloadRules,
+    /// Arkor's games are kept in Sunshine's application list (Moonlight shows them).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sunshine: bool,
     /// No look-ups of games' descriptions, screenshots and the like.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_game_info: bool,
