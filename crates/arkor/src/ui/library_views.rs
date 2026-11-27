@@ -109,6 +109,44 @@ impl Library {
                 )),
             );
         }
+        // Genres and ways of playing, and where the user is with games.
+        let genres = self.library_genres();
+        if !genres.is_empty() || self.filter.genre.is_some() {
+            let current = self.filter.genre.clone();
+            let mut names = genres;
+            if let Some(c) = &current
+                && !names.contains(c)
+            {
+                names.insert(0, c.clone());
+            }
+            for (ix, g) in names.into_iter().take(12).enumerate() {
+                let on = current.as_ref() == Some(&g);
+                row = row.child(
+                    widgets::chip(("genre", ix), g.clone(), on).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.filter.genre = (!on).then(|| g.clone());
+                            this.apply_filter();
+                            cx.notify();
+                        },
+                    )),
+                );
+            }
+        }
+        for (ix, s) in arkor_core::library::PlayStatus::ALL.into_iter().enumerate() {
+            if !self.library.games.iter().any(|g| g.status == Some(s)) {
+                continue;
+            }
+            let on = self.filter.status == Some(s);
+            row = row.child(
+                widgets::chip(("pstatus", ix), self.status_name(s), on).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.filter.status = (!on).then_some(s);
+                        this.apply_filter();
+                        cx.notify();
+                    },
+                )),
+            );
+        }
         let list = self.global.library_list;
         let view = |id: &'static str, icon: &'static str, on: bool| {
             div()

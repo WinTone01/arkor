@@ -25,7 +25,7 @@ pub(super) struct InfoUi {
 }
 
 impl Library {
-    fn status_name(&self, s: PlayStatus) -> &'static str {
+    pub(super) fn status_name(&self, s: PlayStatus) -> &'static str {
         match s {
             PlayStatus::PlanToPlay => self.tr("Plan to play", "Oynanacak"),
             PlayStatus::Playing => self.tr("Playing", "Oynuyorum"),
@@ -90,6 +90,77 @@ impl Library {
     fn set_status(&mut self, status: Option<PlayStatus>, cx: &mut Context<Self>) {
         self.edit_entry(|g| g.status = status);
         cx.notify();
+    }
+
+    /// The genres and ways of playing known for a game.
+    pub(super) fn genres_of(&self, id: &str) -> Vec<String> {
+        match self.info.known.get(id) {
+            Some(Ok(Some(i))) => i.genres.iter().chain(&i.modes).cloned().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Every genre and way of playing in the library, most common first.
+    pub(super) fn library_genres(&self) -> Vec<String> {
+        let mut count: HashMap<String, usize> = HashMap::new();
+        for g in &self.library.games {
+            for x in self.genres_of(&g.id) {
+                *count.entry(x).or_default() += 1;
+            }
+        }
+        let mut v: Vec<(String, usize)> = count.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        v.into_iter().map(|(g, _)| g).collect()
+    }
+
+    /// At start: what is known about every game (kept answers at once, the rest looked up
+    /// one by one, gently), for the genre shelves.
+    pub(super) fn info_fill_all(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) || self.global.no_game_info {
+            return;
+        }
+        let games = self.library.games.clone();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let (kept, missing): (Vec<_>, Vec<_>) = bg
+                .spawn(async move {
+                    let mut kept = Vec::new();
+                    let mut missing = Vec::new();
+                    for g in games {
+                        match info::cached(&g.id) {
+                            Some(i) => kept.push((g.id.clone(), i)),
+                            None => missing.push(g),
+                        }
+                    }
+                    (kept, missing)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                for (id, i) in kept {
+                    this.info.known.entry(id).or_insert(Ok(i));
+                }
+                this.apply_filter();
+                cx.notify();
+            });
+            for game in missing {
+                bg.timer(std::time::Duration::from_millis(1500)).await;
+                let id = game.id.clone();
+                let found = bg
+                    .spawn(async move { info::lookup(&game).map_err(|e| format!("{e:#}")) })
+                    .await;
+                let stop = this
+                    .update(cx, |this, cx| {
+                        this.info.known.entry(id).or_insert(found);
+                        cx.notify();
+                        this.global.no_game_info
+                    })
+                    .unwrap_or(true);
+                if stop {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// The "About" card of the selected game.

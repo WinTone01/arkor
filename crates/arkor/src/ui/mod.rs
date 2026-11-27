@@ -118,6 +118,9 @@ struct ListFilter {
     show_hidden: bool,
     /// A ready-made shelf (favourites, never played, a store…).
     smart: Option<library_views::Smart>,
+    /// A genre or way of playing (from what is known about the games).
+    genre: Option<String>,
+    status: Option<arkor_core::library::PlayStatus>,
 }
 
 pub struct Library {
@@ -385,7 +388,16 @@ impl Library {
                 let smart_ok = self
                     .filter
                     .smart
-                    .is_none_or(|s| entry.is_some_and(|e| self.smart_matches(s, e)));
+                    .is_none_or(|s| entry.is_some_and(|e| self.smart_matches(s, e)))
+                    && self
+                        .filter
+                        .genre
+                        .as_ref()
+                        .is_none_or(|g| self.genres_of(&game.id.id).contains(g))
+                    && self
+                        .filter
+                        .status
+                        .is_none_or(|s| entry.is_some_and(|e| e.status == Some(s)));
                 (self.filter.show_hidden || !hidden)
                     && category_ok
                     && smart_ok
@@ -1014,6 +1026,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.watch_progress(cx);
                 lib.watch_nxm(cx);
                 lib.emu_watch(cx);
+                lib.info_fill_all(cx);
                 lib.startup_updates(cx);
                 lib
             })
