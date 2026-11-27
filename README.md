@@ -32,8 +32,9 @@
 
 ## <img src="docs/icons/install.svg" width="30" align="top"> Install
 
-For **Arch Linux, CachyOS, EndeavourOS, Manjaro** and other up-to-date distributions (x86_64,
-glibc 2.44 or newer), paste this into a terminal:
+On **Arch Linux, CachyOS, Ubuntu 22.04 and newer, Linux Mint, Pop!_OS, Debian 12 and newer,
+Fedora, Nobara, openSUSE** and most other distributions of the last years (x86_64, glibc 2.35
+or newer), paste this into a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/install.sh | bash
@@ -42,7 +43,10 @@ curl -fsSL https://raw.githubusercontent.com/WinTone01/arkor/master/packaging/in
 It installs the latest [release](https://github.com/WinTone01/arkor/releases) into `~/.local`
 with its menu entry and icon: no build, no root. On its first start Arkor sets up what games
 need (umu-launcher, the Steam Linux Runtime, the anti-cheat runtimes and, if you have none,
-Proton-CachyOS) and from then on **updates itself**.
+Proton-CachyOS) and from then on **updates itself**. Missing system tools are installed with
+your distribution's own package manager (pacman, apt, dnf or zypper). Store logins open in a
+window of Arkor's own, which needs WebKitGTK 4.1; the install script tells you the package if it
+is missing.
 
 <details>
 <summary><b>Build from source</b></summary>
@@ -149,7 +153,7 @@ stay, so installing again picks up where you left off. Installed as a package? U
     <td valign="top">
       <img src="docs/icons/tools.svg" width="44"><br>
       <b>Everything else a game needs</b><br>
-      <sub>Steam-style launch options, commands before and after, winecfg, winetricks, logs, benchmarks, backups, Discord status.</sub>
+      <sub>Steam-style launch options, commands before and after, winecfg, winetricks, logs, benchmarks, backups, Discord status, clips of the last moments (GPU Screen Recorder).</sub>
     </td>
     <td valign="top">
       <img src="docs/icons/mods.svg" width="44"><br>
@@ -173,7 +177,7 @@ Everything Arkor does, full screen and from a gamepad: the library and the store
 logins, downloads, Proton builds, disks, **Wi-Fi, Bluetooth, sound, screens and power**. Where
 something has to be typed, an on-screen keyboard comes up. During a game the pad's middle
 button opens a **quick menu** at its side: volume, the performance overlay, a frame limit, a
-screenshot, or closing the game. At rest Arkor shows your games and the time, and keeps the
+screenshot, a clip of the last moments, or closing the game. At rest Arkor shows your games and the time, and keeps the
 computer awake while the pad is in use.
 
 Press the pad's middle button or <kbd>F11</kbd>, or let Arkor start in console mode with the
@@ -263,6 +267,7 @@ running game, which every desktop allows in its own way:
 | `arkor proton installed \| list \| install` | Proton builds |
 | `arkor trouble <id>` | Why a game did not start, and what helps |
 | `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
+| `arkor clip` | Saves a clip of the running game (bind it to a key) |
 | `arkor nxm <link>` | Installs a mod from Nexus Mods' "Mod Manager Download" |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor system` | A report of the computer, the desktop and Arkor's tools |

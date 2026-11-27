@@ -498,11 +498,19 @@ pub fn diagnostics() -> String {
             "none found"
         }
     ));
+    let manager = crate::pkg::manager();
+    out.push_str(&format!(
+        "Packages: {}\n",
+        manager.map_or("unknown", |m| m.program())
+    ));
     out.push_str("\nPrograms:\n");
     for t in tool_status() {
+        let package = manager
+            .and_then(|m| m.name(t.package))
+            .unwrap_or_else(|| "not packaged here".into());
         match t.found {
             Some(v) => out.push_str(&format!("  ok {} {v}\n", t.name)),
-            None => out.push_str(&format!("  -- {} (package {})\n", t.name, t.package)),
+            None => out.push_str(&format!("  -- {} (package {package})\n", t.name)),
         }
     }
     let log = arkor_core::paths::desk_log()

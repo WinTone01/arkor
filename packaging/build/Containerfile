@@ -1,0 +1,14 @@
+# The build environment of Arkor's releases: Ubuntu 22.04, so the programs need nothing newer
+# than its glibc (2.35) and run on the distributions of the last years (Ubuntu 22.04+,
+# Debian 12+, Fedora 36+, openSUSE, Arch…). Rust itself comes from the host's rustup
+# toolchain, mounted read-only by make-release.sh (its programs need only glibc 2.17).
+FROM docker.io/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential pkg-config ca-certificates git cmake clang binutils \
+        libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+        libudev-dev libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+        libxcb1-dev libx11-xcb-dev libwayland-dev libfontconfig1-dev libfreetype-dev \
+        libssl-dev libsqlite3-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
