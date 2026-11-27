@@ -205,6 +205,17 @@ menu key, renaming benchmark runs, the newest fakenvapi with OptiScaler, and DLS
 ReShade routes and 32-bit package · [ANR FG](https://github.com/apex-compute/ANR) (Apex's AI frame
 generation) per game, with its own OptiScaler and the launch setting it needs.
 
+**Library and play:** games installed inside Battle.net, the EA app, Ubisoft Connect and
+Rockstar's launcher join the library · one card for a game owned in several stores ·
+group the library by status, store, genre, series, year or Steam tag, and save views ·
+undo (Ctrl+Z) for changes to several games · search that forgives typos · launch presets ·
+a sandbox without network or home folder for games you do not trust · the in-game menu
+from the desktop (gamepad middle button) · time to beat (IGDB, or Heroic's HowLongToBeat
+cache) · achievements of Goldberg's emulator, RPCS3 and shadPS4 · save copies while
+playing · journal notes, a yearly goal and the year as a picture · console themes, shared
+as files · sync with your other computers (a shared folder or rclone) · disk space and
+leftovers · a PIN for hidden games.
+
 <a id="console-mode"></a>
 
 ## <img src="docs/icons/console.svg" width="30" align="top"> Console mode
