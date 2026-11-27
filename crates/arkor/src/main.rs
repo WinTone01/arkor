@@ -54,9 +54,112 @@ usage:
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
   arkor clip                              save a clip of the running game (bind it to a key)
+  arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
+                                          folder); --add puts them in the library
+  arkor emulators [install <id> | remove <id> | core <core> | bios]
+                                          emulators: what is installed, getting them, BIOS
   arkor trouble <id>                      why a game did not start, and what helps
   arkor backup create [--with-prefixes] | restore <file>
                                           back up / restore Arkor's data";
+
+/// `arkor roms [--add] [FOLDER...]`.
+fn roms(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::emu::games;
+    let add = args.iter().any(|a| a == "--add");
+    let mut folders: Vec<PathBuf> = args
+        .iter()
+        .filter(|a| *a != "--add")
+        .map(PathBuf::from)
+        .collect();
+    if folders.is_empty() {
+        for source in games::suggested_folders() {
+            println!("ROM folder: {}", source.root.display());
+            folders.push(source.root);
+        }
+        anyhow::ensure!(!folders.is_empty(), "no ROM folder found; name one");
+    }
+    let found = games::find_in(&folders);
+    for f in &found {
+        println!(
+            "{:<10} {}{}  {}",
+            f.system,
+            f.title,
+            if f.in_library {
+                " (in the library)"
+            } else {
+                ""
+            },
+            f.path.display()
+        );
+    }
+    if add {
+        let mut library = Library::load()?;
+        let added = games::add(&mut library, &found);
+        library.save()?;
+        println!("added {added} games");
+    } else {
+        println!("{} games (--add puts them in the library)", found.len());
+    }
+    Ok(())
+}
+
+/// `arkor emulators [install <id> | remove <id> | core <core> | bios]`.
+fn emulators(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::emu::{self, bios, discovery, install, systems};
+    match args.first().map(String::as_str) {
+        None => {
+            for m in emu::engines().iter() {
+                let found = discovery::find(m);
+                let state = match found.first() {
+                    Some(i) => format!(
+                        "{:?}{}",
+                        i.origin,
+                        i.version
+                            .as_deref()
+                            .map(|v| format!(" {v}"))
+                            .unwrap_or_default()
+                    ),
+                    None => match install::way(m) {
+                        install::Way::Download => "not installed (Arkor downloads it)".into(),
+                        install::Way::Flatpak(id) => format!("not installed (Flathub: {id})"),
+                        install::Way::Distribution(names) => {
+                            format!("not installed (your distribution: {})", names.join(", "))
+                        }
+                    },
+                };
+                println!("{:<16} {:<22} {state}", m.id, m.name);
+            }
+            Ok(())
+        }
+        Some("install") => {
+            println!(
+                "{}",
+                arkor_launch::downloads::run(&format!("emu:{}", arg(args, 1)?))?
+            );
+            Ok(())
+        }
+        Some("core") => {
+            println!(
+                "{}",
+                arkor_launch::downloads::run(&format!("core:{}", arg(args, 1)?))?
+            );
+            Ok(())
+        }
+        Some("remove") => install::remove(arg(args, 1)?),
+        Some("bios") => {
+            let global = arkor_core::Global::load_or_import()?;
+            let dir = emu::bios_dir(&global.emulators);
+            std::fs::create_dir_all(&dir)?;
+            println!("BIOS folder: {}", dir.display());
+            let index = bios::scan(&dir, &bios::cached_index())?;
+            for s in systems::all().iter().filter(|s| !s.bios.files.is_empty()) {
+                println!("{:<10} {:?}", s.id, bios::status(s, &index).state);
+            }
+            Ok(())
+        }
+        _ => Err(anyhow!(USAGE)),
+    }
+}
 
 fn arg(args: &[String], ix: usize) -> anyhow::Result<&String> {
     args.get(ix).ok_or_else(|| anyhow!(USAGE))
@@ -145,6 +248,8 @@ fn main() -> anyhow::Result<()> {
                 .status();
             Ok(())
         }
+        Some("roms") => roms(&args[1..]),
+        Some("emulators") => emulators(&args[1..]),
         Some("trouble") => {
             use arkor_launch::trouble;
             let id: GameId = arg(&args, 1)?.parse()?;

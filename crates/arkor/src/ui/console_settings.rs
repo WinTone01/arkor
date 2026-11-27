@@ -42,6 +42,8 @@ pub(super) enum GameOpt {
     Proton,
     ProtonLog,
     LinuxRuntime,
+    /// The emulator an emulator game plays with.
+    Emulator,
     Winecfg,
     Winetricks,
     Tweak(&'static str),
@@ -112,6 +114,8 @@ pub(super) enum AppCat {
     Controllers,
     Looks,
     Games,
+    /// Emulators and the BIOS folder.
+    Emulators,
     Stores,
     Proton,
     Tools,
@@ -119,7 +123,7 @@ pub(super) enum AppCat {
 }
 
 impl AppCat {
-    pub(super) const ALL: [AppCat; 14] = [
+    pub(super) const ALL: [AppCat; 15] = [
         AppCat::Arkor,
         AppCat::General,
         AppCat::Network,
@@ -130,6 +134,7 @@ impl AppCat {
         AppCat::Power,
         AppCat::Looks,
         AppCat::Games,
+        AppCat::Emulators,
         AppCat::Proton,
         AppCat::Stores,
         AppCat::Tools,
@@ -298,6 +303,10 @@ impl Library {
                 .step_by(10)
                 .map(|n| (format!("%{n}"), n.to_string()))
                 .collect(),
+            GameOpt::Emulator => self
+                .entry()
+                .map(|e| self.emu_game_choices(e))
+                .unwrap_or_default(),
             GameOpt::LinuxRuntime => std::iter::once((
                 s(self.tr("Steam Runtime 4 (default)", "Steam Runtime 4 (varsayılan)")),
                 String::new(),
@@ -368,6 +377,10 @@ impl Library {
             GameOpt::HudAlpha => (self.hud().background_alpha / 10 * 10).to_string(),
             GameOpt::Cas => (p.vkbasalt.cas_sharpness / 10 * 10).to_string(),
             GameOpt::LinuxRuntime => p.linux_runtime.clone().unwrap_or_default(),
+            GameOpt::Emulator => match self.entry().map(|e| &e.kind) {
+                Some(GameKind::Emulated { emulator, .. }) => emulator.clone().unwrap_or_default(),
+                _ => String::new(),
+            },
             GameOpt::Category => self
                 .entry()
                 .and_then(|e| e.category.clone())
@@ -560,6 +573,15 @@ impl Library {
             }
             GameOpt::LinuxRuntime => {
                 self.profile.linux_runtime = Some(key.to_string()).filter(|k| !k.is_empty())
+            }
+            GameOpt::Emulator => {
+                if let Some(e) = self.entry_mut()
+                    && let GameKind::Emulated { emulator, .. } = &mut e.kind
+                {
+                    emulator.clone_from(&Some(key.to_string()).filter(|k| !k.is_empty()));
+                }
+                self.save_library();
+                return;
             }
             GameOpt::Category => {
                 if let Some(e) = self.entry_mut() {
@@ -854,6 +876,9 @@ impl Library {
                         ),
                     ]);
                 }
+                if matches!(g.kind, GameKind::Emulated { .. }) {
+                    v.push(o(GameOpt::Emulator, "joystick", t("Emulator", "Emülatör")));
+                }
                 if linux {
                     v.push(o(
                         GameOpt::LinuxRuntime,
@@ -962,6 +987,7 @@ impl Library {
             AppCat::Power => ("gauge", self.tr("Power", "Güç")),
             AppCat::Looks => ("palette", self.tr("Looks", "Görünüm")),
             AppCat::Games => ("gamepad-2", self.tr("Games", "Oyunlar")),
+            AppCat::Emulators => ("joystick", self.tr("Emulators", "Emülatörler")),
             AppCat::Stores => ("store", self.tr("Stores", "Mağazalar")),
             AppCat::Proton => ("wine", self.tr("Proton & Wine", "Proton ve Wine")),
             AppCat::Tools => ("wrench", self.tr("Tools", "Araçlar")),
@@ -1103,6 +1129,7 @@ impl Library {
                 rows.extend(self.clip_rows());
                 rows
             }
+            AppCat::Emulators => self.emulator_rows(),
             AppCat::Proton => self.console_proton_rows(),
             AppCat::Tools => self.console_program_rows(),
             AppCat::System => self.console_system_rows(),

@@ -76,6 +76,10 @@ impl Library {
             .detach();
             return;
         }
+        // An emulator game whose emulator is missing: downloaded first, then it starts.
+        if self.emu_before_play(&id, cx) {
+            return;
+        }
         // Newer saves from the cloud first; it starts by itself then.
         if self.saves_first(&id, cx) {
             return;
@@ -328,7 +332,7 @@ impl Library {
         cx.notify();
     }
 
-    fn edit_entry(&mut self, f: impl FnOnce(&mut arkor_core::library::LibraryGame)) {
+    pub(super) fn edit_entry(&mut self, f: impl FnOnce(&mut arkor_core::library::LibraryGame)) {
         if let Some(entry) = self.entry_mut() {
             f(entry);
             self.save_library();
@@ -418,6 +422,9 @@ impl Library {
     pub(super) fn render_exec_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         use super::style::{self, pal};
         let entry = self.entry().cloned()?;
+        if matches!(entry.kind, GameKind::Emulated { .. }) {
+            return Some(self.render_emulated_card(&entry, cx));
+        }
         let mut card = widgets::section(self.tr("Game files", "Oyun dosyaları"));
         match &entry.kind {
             GameKind::Windows | GameKind::Linux => {
@@ -512,6 +519,8 @@ impl Library {
                     ));
                 }
             }
+            // Drawn by `render_emulated_card` (returned above).
+            GameKind::Emulated { .. } => {}
             GameKind::Steam { appid } => {
                 let appid = appid.clone();
                 card = card.child(widgets::setting_row(

@@ -48,6 +48,7 @@ pub(super) fn programs(dir: &Path) -> Vec<String> {
                 .iter()
                 .any(|x| name.ends_with(x))
                 || executable(&e.path())
+                || arkor_launch::emu::games::looks_like_rom(&name)
         })
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| !n.starts_with('.'))
@@ -61,8 +62,12 @@ fn executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
-/// A program as a library game: Windows' run through Proton, others as they are.
+/// A program as a library game: Windows' run through Proton, a game an emulator plays
+/// through its emulator, others as they are.
 fn new_game(path: &Path) -> NewGame {
+    if let Some(new) = arkor_launch::emu::games::new_game_for(path) {
+        return new;
+    }
     let name = prefix::suggested_name(path);
     let lower = path.to_string_lossy().to_lowercase();
     let windows = [".exe", ".bat", ".lnk", ".msi"]
@@ -133,6 +138,7 @@ impl Library {
             return;
         }
         self.console.lib.looking = true;
+        self.emu_look(cx);
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let (found, _) = bg.spawn(async { arkor_stores::detect() }).await;
@@ -168,6 +174,12 @@ impl Library {
                     Act::Folder(FolderFor::GameFile),
                     "file-plus",
                     self.tr("Choose a program", "Program seç"),
+                ),
+                Item::pill(
+                    Act::Folder(FolderFor::Roms),
+                    "joystick",
+                    self.tr("A ROM folder", "ROM klasörü"),
+                    false,
                 ),
                 Item::pill(
                     Act::Folder(FolderFor::ImportPrefix),
@@ -218,6 +230,7 @@ impl Library {
                 rows.push(row);
             }
         }
+        rows.extend(self.emu_add_rows());
         let found = self.not_added();
         let mut first = true;
         for (n, d) in &found {
@@ -539,6 +552,7 @@ impl Library {
         match act {
             Act::AddScan => {
                 self.console.lib.found = None;
+                self.emu.forget_folders();
                 self.add_opened(cx);
             }
             Act::AddFound(n) => {

@@ -19,6 +19,7 @@
 
 pub mod bios;
 pub mod discovery;
+pub mod games;
 pub mod host;
 pub mod install;
 pub mod iso9660;

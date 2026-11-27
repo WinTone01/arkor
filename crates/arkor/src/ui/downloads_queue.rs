@@ -54,6 +54,8 @@ fn icon_for(key: &str) -> &'static str {
         "gamepad-2"
     } else if key.starts_with("latest:") || key.contains("proton") {
         "wine"
+    } else if key.starts_with("emu:") || key.starts_with("core:") {
+        "joystick"
     } else if key.starts_with("component:") {
         "package"
     } else if ["mako", "afmf", "vknemu", "vksumi"].contains(&key) {

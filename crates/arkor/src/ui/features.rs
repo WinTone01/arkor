@@ -877,6 +877,18 @@ impl Library {
                 GameTab::Runtime,
                 "linux-runtime",
             )),
+            GameKind::Emulated { system, .. } => rows.push((
+                self.tr("Emulator", "Emülatör"),
+                format!(
+                    "{} · {}",
+                    arkor_launch::emu::games::system_name(system),
+                    self.emu_choice(entry)
+                        .map(|c| c.label())
+                        .unwrap_or_else(|| "?".into())
+                ),
+                GameTab::Game,
+                "executable",
+            )),
         }
         let launch = self.profile.launch_options.trim().to_string();
         rows.push((

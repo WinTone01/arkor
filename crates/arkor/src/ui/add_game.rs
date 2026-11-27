@@ -22,14 +22,17 @@ pub(super) enum AddTab {
     Found,
     Manual,
     Prefix,
+    /// Games an emulator plays, from ROM folders.
+    Roms,
     Launcher,
 }
 
 impl AddTab {
-    const ALL: [AddTab; 4] = [
+    const ALL: [AddTab; 5] = [
         AddTab::Found,
         AddTab::Manual,
         AddTab::Prefix,
+        AddTab::Roms,
         AddTab::Launcher,
     ];
 }
@@ -128,6 +131,19 @@ impl Library {
         } else {
             name
         };
+        // A game an emulator plays: through its emulator.
+        if let Some(mut new) = arkor_launch::emu::games::new_game_for(&exe) {
+            if !self
+                .field_text("add-name", cx)
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                new.name = name;
+            }
+            self.add_to_library(new, cx);
+            return;
+        }
         let mut new = NewGame::windows(name, exe);
         if self.add.kind_linux {
             new.kind = GameKind::Linux;
@@ -555,6 +571,7 @@ impl Library {
             ),
             style::NavEntry::new("file-plus", self.tr("Add by hand", "Elle ekle")),
             style::NavEntry::new("wine", self.tr("From a Wine prefix", "Wine prefix'ten")),
+            style::NavEntry::new("joystick", self.tr("Emulator games", "Emülatör oyunları")),
             style::NavEntry::new("download", self.tr("Install a launcher", "Başlatıcı kur")),
         ];
         if found_count > 0 {
@@ -579,6 +596,7 @@ impl Library {
             AddTab::Found => found,
             AddTab::Manual => manual,
             AddTab::Prefix => import,
+            AddTab::Roms => self.render_add_roms(cx),
             AddTab::Launcher => launchers_card,
         });
         div()

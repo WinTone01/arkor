@@ -274,6 +274,8 @@ pub(super) enum Act {
     /// The library: adding games, and a game's own things.
     AddScan,
     AddFound(usize),
+    /// A ROM folder found on the computer: its games go into the library.
+    EmuAddSuggested(usize),
     AddCandidate(usize),
     AddFile(PathBuf),
     AddLauncher(&'static str),
@@ -631,6 +633,10 @@ pub(super) enum FolderFor {
     ImportPrefix,
     /// A new library of Steam's.
     SteamLibrary,
+    /// A folder of ROMs whose games are added.
+    Roms,
+    /// The folder of the user's BIOS files.
+    Bios,
 }
 
 /// The picture behind the screen.
@@ -3479,6 +3485,7 @@ impl Library {
             Act::QuickBack | Act::QuickHome | Act::QuickShot | Act::QuickClip => {
                 self.quick_act(act, window, cx)
             }
+            Act::EmuAddSuggested(ix) => self.emu_add_suggested(ix, cx),
             Act::AddScan
             | Act::AddFound(_)
             | Act::AddCandidate(_)
@@ -3626,6 +3633,8 @@ impl Library {
                     FolderFor::Games => Some(self.global.games_dir()),
                     FolderFor::GameFile => dirs::home_dir(),
                     FolderFor::ImportPrefix => Some(self.global.prefixes_dir()),
+                    FolderFor::Roms => self.emu_start_folder(),
+                    FolderFor::Bios => Some(arkor_launch::emu::bios_dir(&self.global.emulators)),
                     // Other disks are mounted there.
                     FolderFor::SteamLibrary => self
                         .shops
@@ -3679,6 +3688,12 @@ impl Library {
                         }
                         FolderFor::GameFile => {}
                         FolderFor::ImportPrefix => self.import_prefix(dir, cx),
+                        FolderFor::Roms => self.emu_add_folder(dir, cx),
+                        FolderFor::Bios => {
+                            self.global.emulators.bios_dir = Some(dir);
+                            let r = self.global.save();
+                            self.report(r);
+                        }
                         FolderFor::SteamLibrary => {
                             if let Some(g) = self.shops.game.as_mut() {
                                 g.steam_new = Some(dir);

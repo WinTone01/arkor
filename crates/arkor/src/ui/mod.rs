@@ -24,6 +24,7 @@ mod defaults_page;
 mod desk;
 mod downloads_page;
 mod downloads_queue;
+mod emulators;
 mod enhance;
 mod features;
 mod fields;
@@ -167,6 +168,8 @@ pub struct Library {
     /// The selected game's saves and the cloud's.
     saves: saves::SavesUi,
     mods: mods_page::ModsUi,
+    /// Emulator games: ROM folders, a game waiting for its emulator.
+    emu: emulators::EmuUi,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -253,6 +256,7 @@ impl Library {
             accent_picker: None,
             backup_prefixes: false,
             console: Default::default(),
+            emu: Default::default(),
             restore_pending: None,
             required: Default::default(),
         };
@@ -651,6 +655,7 @@ impl Library {
             GameKind::Steam { .. } => "Steam",
             GameKind::Epic { .. } => "Epic Games",
             GameKind::Amazon { .. } => "Amazon Games",
+            GameKind::Emulated { .. } => self.tr("Emulator game", "Emülatör oyunu"),
         }
     }
 
