@@ -54,6 +54,9 @@ pub(super) enum GameOpt {
     Gpu,
     Winecfg,
     Winetricks,
+    /// Run in a sandbox (no network, no home folder), and its network exception.
+    Sandbox,
+    SandboxNet,
     Tweak(&'static str),
     LaunchOptions,
     PreLaunch,
@@ -447,6 +450,8 @@ impl Library {
             GameOpt::Afmf => Value::Switch(p.layers.afmf.enabled),
             GameOpt::VkSumi => Value::Switch(p.layers.vksumi),
             GameOpt::SumiCompare => Value::Switch(p.layers.sumi.compare),
+            GameOpt::Sandbox => Value::Switch(p.sandbox.enabled),
+            GameOpt::SandboxNet => Value::Switch(p.sandbox.network),
             GameOpt::Anr => Value::Text(
                 match (&self.tools.anr_manifest, &self.tools.anr_downloaded) {
                     _ if self.tools.busy.is_some() || arkor_launch::progress::running("anr") => {
@@ -522,6 +527,8 @@ impl Library {
             GameOpt::Afmf => p.layers.afmf.enabled = !p.layers.afmf.enabled,
             GameOpt::VkSumi => p.layers.vksumi = !p.layers.vksumi,
             GameOpt::SumiCompare => p.layers.sumi.compare = !p.layers.sumi.compare,
+            GameOpt::Sandbox => p.sandbox.enabled = !p.sandbox.enabled,
+            GameOpt::SandboxNet => p.sandbox.network = !p.sandbox.network,
             GameOpt::Metric(m) => {
                 self.edit_shown_hud(|h| {
                     if !h.metrics.remove(&m) {
@@ -849,6 +856,14 @@ impl Library {
                 "Shifts colours so they are easier to tell apart.",
                 "Renkleri daha kolay ayırt edilecek şekilde kaydırır.",
             ),
+            GameOpt::Sandbox => t(
+                "No internet and none of your files, for a game you do not trust.",
+                "Güvenmediğin bir oyun için internet yok, dosyalarına erişim yok.",
+            ),
+            GameOpt::SandboxNet => t(
+                "Let the sandboxed game go online. Your files stay hidden.",
+                "Yalıtılmış oyunun internete çıkmasına izin ver. Dosyaların gizli kalır.",
+            ),
             GameOpt::Anr => t(
                 "AI frame generation in place of DLSS frame generation. Brings its own OptiScaler.",
                 "DLSS kare üretiminin yerine yapay zekâ kare üretimi. Kendi OptiScaler'ıyla gelir.",
@@ -1145,6 +1160,20 @@ impl Library {
                         o(GameOpt::Winecfg, "settings", "winecfg"),
                         o(GameOpt::Winetricks, "wrench", "winetricks"),
                     ]);
+                }
+                if !steam {
+                    tools.push(o(
+                        GameOpt::Sandbox,
+                        "shield",
+                        t("Sandbox", "Yalıtılmış çalıştır"),
+                    ));
+                    if p.sandbox.enabled {
+                        tools.push(o(
+                            GameOpt::SandboxNet,
+                            "wifi",
+                            t("Allow the internet", "İnternete izin ver"),
+                        ));
+                    }
                 }
                 tools.extend(tweaks(Category::Sharing));
                 groups.push((gt("tools"), tools));

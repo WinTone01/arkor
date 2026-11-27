@@ -709,6 +709,21 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| Some(l.render_runtime(cx)),
     },
     Feature {
+        id: "sandbox",
+        tab: GameTab::Runtime,
+        group: "tools",
+        icon: "shield",
+        name: ("Sandbox", "Yalıtılmış çalıştırma"),
+        desc: (
+            "Run a game you do not trust without the network and without your files.",
+            "Güvenmediğin bir oyunu ağ olmadan ve dosyalarına erişmeden çalıştır.",
+        ),
+        keywords: "sandbox yalıt güvenlik security bwrap bubblewrap network ağ internet offline",
+        applies: |_, g| !matches!(g.kind, GameKind::Steam { .. }),
+        active: Some(|l| l.profile.sandbox.enabled),
+        render: |l, cx| Some(l.render_sandbox(cx)),
+    },
+    Feature {
         id: "prefix-tools",
         tab: GameTab::Runtime,
         group: "tools",

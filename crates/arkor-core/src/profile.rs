@@ -63,6 +63,9 @@ pub struct Profile {
     /// Windows games: a VKD3D-Proton version of the user's choice.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vkd3d: Option<String>,
+    /// Run in a sandbox: no network, no home folder.
+    #[serde(skip_serializing_if = "Sandbox::is_off")]
+    pub sandbox: Sandbox,
 }
 
 /// What Arkor writes into Steam's own settings for a Steam game (Steam starts it).
@@ -1179,6 +1182,21 @@ mod download_rules_tests {
         assert!(r(1, 7).hour_allowed(3) && !r(1, 7).hour_allowed(7));
         assert!(r(22, 8).hour_allowed(23) && r(22, 8).hour_allowed(2));
         assert!(!r(22, 8).hour_allowed(12));
+    }
+}
+
+/// The sandbox a game can run in (see `arkor_launch::sandbox`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sandbox {
+    pub enabled: bool,
+    /// Let it use the network anyway (online games).
+    pub network: bool,
+}
+
+impl Sandbox {
+    fn is_off(&self) -> bool {
+        *self == Sandbox::default()
     }
 }
 

@@ -126,4 +126,70 @@ impl Library {
         }
         card
     }
+
+    /// The sandbox card.
+    pub(super) fn render_sandbox(&mut self, cx: &mut Context<Self>) -> Div {
+        let sb = self.profile.sandbox.clone();
+        let home = self
+            .selected_id()
+            .and_then(|id| arkor_launch::sandbox::home_of(&id).ok());
+        let mut card = widgets::section(self.tr("Sandbox", "Yalıtılmış çalıştırma"))
+            .child(
+                widgets::switch_row(
+                    "sandbox-on",
+                    self.tr("Run it in a sandbox", "Yalıtılmış çalıştır"),
+                    self.tr(
+                        "For a game from an unknown source. It cannot reach the internet or see your files: it only sees its own folder, its Wine prefix and what it needs to start. Its saves and settings are kept in a folder of its own.",
+                        "Kaynağı belli olmayan bir oyun için. İnternete çıkamaz ve dosyalarını göremez: yalnızca kendi klasörünü, Wine prefix'ini ve başlaması için gerekenleri görür. Kayıtları ve ayarları kendine ait bir klasörde tutulur.",
+                    ),
+                    sb.enabled,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.profile.sandbox.enabled = !this.profile.sandbox.enabled;
+                    this.save();
+                    cx.notify();
+                })),
+            );
+        if !sb.enabled {
+            return card;
+        }
+        card = card.child(
+            widgets::switch_row(
+                "sandbox-net",
+                self.tr("Allow the internet", "İnternete izin ver"),
+                self.tr(
+                    "For online games. Your files stay hidden either way.",
+                    "Çevrim içi oyunlar için. Dosyaların her durumda gizli kalır.",
+                ),
+                sb.network,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.profile.sandbox.network = !this.profile.sandbox.network;
+                this.save();
+                cx.notify();
+            })),
+        );
+        if arkor_launch::start::find_in_path("bwrap").is_none() {
+            card = card.child(widgets::label(self.tr(
+                "Bubblewrap (bwrap) is not installed; the game will not start until it is.",
+                "Bubblewrap (bwrap) kurulu değil; kurulana kadar oyun başlamaz.",
+            )));
+        }
+        if let Some(home) = home {
+            card = card.child(
+                div().flex().child(
+                    widgets::chip(
+                        "sandbox-home",
+                        self.tr("Open its own folder", "Kendi klasörünü aç"),
+                        false,
+                    )
+                    .on_click(move |_, _, _| {
+                        let _ = std::fs::create_dir_all(&home);
+                        let _ = std::process::Command::new("xdg-open").arg(&home).spawn();
+                    }),
+                ),
+            );
+        }
+        card
+    }
 }

@@ -318,7 +318,7 @@ pub(crate) fn umu_run() -> anyhow::Result<String> {
         .context("umu-run not found: install umu-launcher")
 }
 
-pub(crate) fn find_in_path(name: &str) -> Option<PathBuf> {
+pub fn find_in_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())

@@ -31,6 +31,7 @@ pub mod progress;
 pub mod proton_dl;
 pub mod quick;
 pub mod reshade;
+pub mod sandbox;
 pub mod saves;
 pub mod self_update;
 pub mod shops;
@@ -395,7 +396,12 @@ pub fn run(
                 .filter_map(|o| o.split_once('=').map(|(d, _)| d.to_string())),
         );
     }
-    let plan = plan(&profile, &global, &host, &game_dir, command)?;
+    let mut plan = plan(&profile, &global, &host, &game_dir, command)?;
+    if profile.sandbox.enabled && !trial.plain {
+        let mut all_env = base_env.clone();
+        all_env.extend(plan.env.clone());
+        plan.argv = sandbox::wrap(id, plan.argv, &all_env, profile.sandbox.network)?;
+    }
 
     for (path, contents) in &plan.files {
         if let Some(dir) = path.parent() {
