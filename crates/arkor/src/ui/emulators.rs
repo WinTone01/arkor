@@ -34,6 +34,14 @@ pub(super) struct EmuUi {
     /// arguments are text fields).
     own_program: Option<PathBuf>,
     own_systems: Vec<String>,
+    /// RetroAchievements: the account's name once read (`Some("")`: none), a request
+    /// running, hardcore for the emulators' sign-in.
+    ra_user: Option<String>,
+    ra_busy: bool,
+    ra_hardcore: bool,
+    /// Achievements of emulator games, by library entry, once read (an error as text).
+    achievements:
+        std::collections::HashMap<String, Result<Option<emu::ra::GameAchievements>, String>>,
     /// The versions an emulator offers, once asked for (an error as text).
     offered: std::collections::HashMap<String, Result<Vec<String>, String>>,
 }
@@ -228,6 +236,13 @@ impl Library {
         }
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
+            // The RetroAchievements account's name, read once (unsealing it runs a program).
+            let user = bg
+                .spawn(async { emu::ra::account().map(|a| a.username).unwrap_or_default() })
+                .await;
+            let _ = this.update(cx, |this, _| {
+                this.emu.ra_user.get_or_insert(user);
+            });
             loop {
                 let folders = this
                     .update(cx, |this, _| {
@@ -664,7 +679,10 @@ impl Library {
                 bios_button(self, dir),
             ));
         }
-        card
+        match self.render_achievements(entry, cx) {
+            Some(a) => div().flex().flex_col().gap_4().child(card).child(a),
+            None => card,
+        }
     }
 
     /// The Emulators page (Tools → Emulators): every emulator, what is installed, installing
@@ -686,6 +704,7 @@ impl Library {
                     .child(self.render_rom_folders(cx))
                     .child(self.render_emu_covers(cx))
                     .child(self.render_emulators(cx))
+                    .child(self.render_retroachievements(cx))
                     .child(self.render_own_emulator(cx))
                     .child(
                         div().flex().child(
@@ -701,6 +720,293 @@ impl Library {
                         ),
                     ),
             )
+    }
+
+    /// The RetroAchievements account, on the Emulators page.
+    fn render_retroachievements(&mut self, cx: &mut Context<Self>) -> Div {
+        if self.emu.ra_user.is_none() {
+            self.emu.ra_user = Some(emu::ra::account().map(|a| a.username).unwrap_or_default());
+        }
+        let user = self.emu.ra_user.clone().unwrap_or_default();
+        let mut card = widgets::section("RetroAchievements");
+        card = card.child(widgets::label(self.tr(
+            "Achievements of the games you play in emulators. Arkor reads them with your username and Web API key (on the site: Settings → Keys); it keeps the key encrypted.",
+            "Emülatörde oynadığın oyunların başarımları. Arkor bunları kullanıcı adın ve Web API anahtarınla okur (sitede: Ayarlar → Keys); anahtarı şifreli saklar.",
+        )));
+        if user.is_empty() {
+            let name = self.field(
+                "ra-user",
+                |_| String::new(),
+                self.tr("Username", "Kullanıcı adı"),
+                cx,
+                |_, _| {},
+            );
+            let key = self.secret_field("ra-key", self.tr("Web API key", "Web API anahtarı"), cx);
+            return card
+                .child(widgets::setting_row(
+                    self.tr("Username", "Kullanıcı adı"),
+                    "",
+                    div().w(px(300.)).child(name),
+                ))
+                .child(widgets::setting_row(
+                    self.tr("Web API key", "Web API anahtarı"),
+                    emu::ra::API_KEY_URL,
+                    div().w(px(300.)).child(key),
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            style::button("ra-login", self.tr("Sign in", "Giriş yap"), true)
+                                .when(self.emu.ra_busy, |b| b.opacity(0.5))
+                                .on_click(cx.listener(|this, _, _, cx| this.ra_login(cx))),
+                        )
+                        .child(
+                            style::button(
+                                "ra-site",
+                                self.tr("Open the settings page", "Ayarlar sayfasını aç"),
+                                false,
+                            )
+                            .on_click(|_, _, _| {
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(emu::ra::API_KEY_URL)
+                                    .spawn();
+                            }),
+                        ),
+                );
+        }
+        let password = self.secret_field(
+            "ra-password",
+            self.tr(
+                "Password (used once, not kept)",
+                "Şifre (bir kez kullanılır, saklanmaz)",
+            ),
+            cx,
+        );
+        let hardcore = self.emu.ra_hardcore;
+        card.child(widgets::setting_row(
+            format!("{} {user}", self.tr("Signed in as", "Giriş yapıldı:")),
+            "",
+            style::button("ra-logout", self.tr("Sign out", "Çıkış yap"), false).on_click(
+                cx.listener(|this, _, _, cx| {
+                    emu::ra::logout();
+                    this.emu.ra_user = Some(String::new());
+                    this.emu.achievements.clear();
+                    cx.notify();
+                }),
+            ),
+        ))
+        .child(widgets::divider())
+        .child(widgets::setting_row(
+            self.tr("Sign the emulators in", "Emülatörlere giriş yap"),
+            self.tr(
+                "RetroArch, PCSX2, PPSSPP and Dolphin unlock achievements while you play; DuckStation asks you itself.",
+                "RetroArch, PCSX2, PPSSPP ve Dolphin oynarken başarımları açar; DuckStation girişi kendisi sorar.",
+            ),
+            div().w(px(300.)).child(password),
+        ))
+        .child(widgets::setting_row(
+            self.tr("Hardcore mode", "Hardcore modu"),
+            self.tr("No save states, rewinding or cheats.", "Kayıt durumu, geri sarma ve hile yok."),
+            widgets::switch(hardcore).id("ra-hardcore").cursor_pointer().on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.emu.ra_hardcore = !hardcore;
+                    cx.notify();
+                },
+            )),
+        ))
+        .child(
+            div().flex().child(
+                style::button("ra-emulators", self.tr("Sign them in", "Giriş yaptır"), true)
+                    .when(self.emu.ra_busy, |b| b.opacity(0.5))
+                    .on_click(cx.listener(|this, _, _, cx| this.ra_sign_in_emulators(cx))),
+            ),
+        )
+    }
+
+    fn ra_login(&mut self, cx: &mut Context<Self>) {
+        if self.emu.ra_busy {
+            return;
+        }
+        let user = self.field_text("ra-user", cx).unwrap_or_default();
+        let key = self.field_text("ra-key", cx).unwrap_or_default();
+        self.emu.ra_busy = true;
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let r = bg.spawn(async move { emu::ra::login(&user, &key) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.emu.ra_busy = false;
+                match r {
+                    Ok(name) => {
+                        this.emu.ra_user = Some(name);
+                        this.fields.inputs.remove("ra-key");
+                        this.emu.achievements.clear();
+                        this.status = Some(
+                            this.tr(
+                                "Signed in to RetroAchievements.",
+                                "RetroAchievements'a giriş yapıldı.",
+                            )
+                            .into(),
+                        );
+                    }
+                    Err(e) => this.status = Some(format!("{e:#}").into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn ra_sign_in_emulators(&mut self, cx: &mut Context<Self>) {
+        if self.emu.ra_busy {
+            return;
+        }
+        let password = self.field_text("ra-password", cx).unwrap_or_default();
+        if password.is_empty() {
+            self.status = Some(
+                self.tr("Type your password first.", "Önce şifreni yaz.")
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        self.fields.inputs.remove("ra-password");
+        let hardcore = self.emu.ra_hardcore;
+        self.emu.ra_busy = true;
+        cx.notify();
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let r = bg
+                .spawn(async move { emu::ra::sign_in_emulators(&password, hardcore) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.emu.ra_busy = false;
+                this.status = Some(match r {
+                    Ok(done) if done.is_empty() => this
+                        .tr(
+                            "No emulator to sign in is installed.",
+                            "Giriş yaptırılacak emülatör kurulu değil.",
+                        )
+                        .into(),
+                    Ok(done) => done
+                        .into_iter()
+                        .map(|(name, r)| match r {
+                            Ok(_) => format!("{name} ✓"),
+                            Err(e) => format!("{name}: {e:#}"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                        .into(),
+                    Err(e) => format!("{e:#}").into(),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reads a game's achievements (once; again after signing in).
+    fn ra_load(&mut self, entry: &LibraryGame, cx: &mut Context<Self>) {
+        if cfg!(test) || self.emu.achievements.contains_key(&entry.id) {
+            return;
+        }
+        let Some((system, _)) = Self::emu_parts(entry) else {
+            return;
+        };
+        if emu::ra::console_for(system).is_none() {
+            return;
+        }
+        self.emu.achievements.insert(entry.id.clone(), Ok(None));
+        let (id, system, file) = (entry.id.clone(), system.to_string(), entry.exe.clone());
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let r = bg
+                .spawn(async move {
+                    emu::ra::achievements(&system, &file).map_err(|e| format!("{e:#}"))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.emu.achievements.insert(id, r);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The achievements of an emulator game, on its page.
+    fn render_achievements(&mut self, entry: &LibraryGame, cx: &mut Context<Self>) -> Option<Div> {
+        if self.emu.ra_user.is_none() {
+            self.emu.ra_user = Some(emu::ra::account().map(|a| a.username).unwrap_or_default());
+        }
+        if self.emu.ra_user.as_deref().is_none_or(str::is_empty) {
+            return None;
+        }
+        self.ra_load(entry, cx);
+        let mut card = widgets::section(self.tr("Achievements", "Başarımlar"));
+        match self.emu.achievements.get(&entry.id).cloned() {
+            None | Some(Ok(None)) => {
+                return Some(card.child(widgets::label(self.tr(
+                    "RetroAchievements does not know this file, or it is being looked up.",
+                    "RetroAchievements bu dosyayı tanımıyor ya da bakılıyor.",
+                ))));
+            }
+            Some(Err(e)) => return Some(card.child(widgets::label(e))),
+            Some(Ok(Some(g))) => {
+                let points: u64 = g.list.iter().filter(|a| a.unlocked).map(|a| a.points).sum();
+                let all: u64 = g.list.iter().map(|a| a.points).sum();
+                let page = g.page();
+                card = card.child(widgets::setting_row(
+                    format!("{} / {}", g.unlocked(), g.list.len()),
+                    format!("{points} / {all} {}", self.tr("points", "puan")),
+                    style::button("ra-page", "RetroAchievements", false).on_click(
+                        move |_, _, _| {
+                            let _ = std::process::Command::new("xdg-open").arg(&page).spawn();
+                        },
+                    ),
+                ));
+                for a in g.list.iter().take(40) {
+                    card = card.child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .items_center()
+                            .child(style::icon(
+                                if a.unlocked { "trophy" } else { "lock" },
+                                15.,
+                                if a.unlocked {
+                                    pal::accent()
+                                } else {
+                                    pal::muted()
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(if a.unlocked {
+                                                pal::text()
+                                            } else {
+                                                pal::muted()
+                                            })
+                                            .child(format!("{} · {}", a.title, a.points)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(pal::muted())
+                                            .child(a.description.clone()),
+                                    ),
+                            ),
+                    );
+                }
+            }
+        }
+        Some(card)
     }
 
     /// Adding an emulator of the user's own, and those added.
@@ -1361,12 +1667,30 @@ impl Library {
         let line = |act: Act, icon: &'static str, label: &str, value: Value| {
             Row::new(Kind::Line, vec![Item::line(act, icon, label, value)])
         };
-        let mut rows = vec![line(
-            Act::Folder(FolderFor::Bios),
-            "cpu",
-            self.tr("BIOS folder", "BIOS klasörü"),
-            Value::Text(emu::bios_dir(&self.global.emulators).display().to_string()),
-        )];
+        let ra = self.emu.ra_user.clone();
+        let mut rows = vec![
+            line(
+                Act::Folder(FolderFor::Bios),
+                "cpu",
+                self.tr("BIOS folder", "BIOS klasörü"),
+                Value::Text(emu::bios_dir(&self.global.emulators).display().to_string()),
+            ),
+            line(
+                Act::Nothing,
+                "trophy",
+                "RetroAchievements",
+                Value::Text(match ra {
+                    Some(user) if !user.is_empty() => user,
+                    None => "…".into(),
+                    Some(_) => self
+                        .tr(
+                            "sign in on the desktop: Tools → Emulators",
+                            "masaüstünden giriş yap: Araçlar → Emülatörler",
+                        )
+                        .into(),
+                }),
+            ),
+        ];
         for (ix, m) in emu::engines().iter().enumerate() {
             let installed = !discovery::find(m).is_empty();
             let act = if installed && emu::open::can_open(&m.id) {
@@ -1388,6 +1712,32 @@ impl Library {
             rows.push(row);
         }
         rows
+    }
+
+    /// Console mode: an emulator game's achievements, in a line (once read).
+    pub(super) fn emu_achievement_row(&self, entry: &str) -> Option<Row> {
+        let g = self.emu.achievements.get(entry)?.as_ref().ok()?.as_ref()?;
+        Some(Row::new(
+            Kind::Line,
+            vec![Item::line(
+                Act::Nothing,
+                "trophy",
+                self.tr("Achievements", "Başarımlar"),
+                Value::Text(format!("{} / {}", g.unlocked(), g.list.len())),
+            )],
+        ))
+    }
+
+    /// Console mode opened a game: its achievements are read, for its settings screen.
+    pub(super) fn emu_game_opened(&mut self, entry: &str, cx: &mut Context<Self>) {
+        if self.emu.ra_user.is_none() {
+            self.emu.ra_user = Some(emu::ra::account().map(|a| a.username).unwrap_or_default());
+        }
+        if self.emu.ra_user.as_deref().is_some_and(|u| !u.is_empty())
+            && let Some(g) = self.library.get(entry).cloned()
+        {
+            self.ra_load(&g, cx);
+        }
     }
 
     /// The emulator choices of an emulator game in console mode: (label, value).

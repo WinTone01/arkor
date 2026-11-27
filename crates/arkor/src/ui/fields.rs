@@ -52,6 +52,18 @@ impl Library {
         input
     }
 
+    /// A [`field`](Self::field) whose text is hidden (a password, a key).
+    pub(super) fn secret_field(
+        &mut self,
+        key: impl Into<String>,
+        placeholder: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextInput> {
+        let input = self.field(key, |_| String::new(), placeholder, cx, |_, _| {});
+        input.update(cx, |i, _| i.set_masked(true));
+        input
+    }
+
     /// A field that only acts on Enter (e.g. "add KEY=VALUE"); it is cleared afterwards.
     pub(super) fn submit_field(
         &mut self,

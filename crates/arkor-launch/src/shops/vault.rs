@@ -590,3 +590,34 @@ mod tests {
         assert!(!contains(&read(&l.sealed()), b"token"));
     }
 }
+
+/// Keeps a small secret of Arkor's own (RetroAchievements' key) at `path`: sealed with
+/// systemd's key of this computer where it can, else readable by the user only.
+pub fn write_secret(path: &Path, name: &str, plain: &[u8]) -> anyhow::Result<()> {
+    match sealer().and_then(|s| s.seal(name, plain).ok()) {
+        Some(sealed) => {
+            write_private(&suffixed(path, ".sealed"), &sealed)?;
+            let _ = std::fs::remove_file(path);
+            Ok(())
+        }
+        None => {
+            let _ = std::fs::remove_file(suffixed(path, ".sealed"));
+            write_private(path, plain)
+        }
+    }
+}
+
+/// A secret [`write_secret`] kept.
+pub fn read_secret(path: &Path, name: &str) -> Option<Vec<u8>> {
+    let sealed = suffixed(path, ".sealed");
+    if sealed.is_file() {
+        return sealer()?.unseal(name, &std::fs::read(sealed).ok()?).ok();
+    }
+    std::fs::read(path).ok()
+}
+
+/// Forgets a secret [`write_secret`] kept.
+pub fn remove_secret(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(suffixed(path, ".sealed"));
+}

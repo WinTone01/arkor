@@ -76,6 +76,8 @@ pub struct TextInput {
     /// How far the text is scrolled left, so the cursor stays visible in a long line.
     scroll: Pixels,
     is_selecting: bool,
+    /// Shows a mark for each character instead of the text (a password, a key).
+    masked: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -95,7 +97,14 @@ impl TextInput {
             last_bounds: None,
             scroll: px(0.),
             is_selecting: false,
+            masked: false,
         }
+    }
+
+    /// Hides what is typed (each character shows as a mark of the same length in bytes, so
+    /// the cursor and selection stay where they are).
+    pub fn set_masked(&mut self, masked: bool) {
+        self.masked = masked;
     }
 
     /// A form field: cursor at the end, greyed hint shown while empty.
@@ -206,7 +215,8 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        // A hidden field's text does not leave it.
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -214,7 +224,7 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -485,6 +495,18 @@ impl Element for TextElement {
         let showing_placeholder = input.content.is_empty() && !input.placeholder.is_empty();
         let content = if showing_placeholder {
             input.placeholder.clone()
+        } else if input.masked {
+            input
+                .content
+                .chars()
+                .map(|c| match c.len_utf8() {
+                    1 => "*",
+                    2 => "·",
+                    3 => "•",
+                    _ => "🔒",
+                })
+                .collect::<String>()
+                .into()
         } else {
             input.content.clone()
         };

@@ -56,6 +56,8 @@ usage:
   arkor clip                              save a clip of the running game (bind it to a key)
   arkor roms [--add] [FOLDER...]          games in ROM folders (the usual ones without a
                                           folder); --add puts them in the library
+  arkor achievements login <user> <web api key> | logout | sign-in-emulators [--hardcore]
+                   | <id>                 RetroAchievements of emulator games
   arkor emulators [install <id> | remove <id> | open <id> | core <core> | bios
                   | launchbox [<system> <rom name>]]
                                           emulators: what is installed, getting them, BIOS
@@ -123,6 +125,82 @@ fn roms(args: &[String]) -> anyhow::Result<()> {
         println!("{} games (--add puts them in the library)", found.len());
     }
     Ok(())
+}
+
+/// `arkor achievements …`: RetroAchievements of emulator games.
+fn achievements(args: &[String]) -> anyhow::Result<()> {
+    use arkor_launch::emu::ra;
+    match args.first().map(String::as_str) {
+        Some("login") => {
+            // The key on a command line shows in the process list; read it from stdin too.
+            let key = match args.get(2) {
+                Some(k) => k.clone(),
+                None => {
+                    let mut k = String::new();
+                    std::io::stdin().read_line(&mut k)?;
+                    k
+                }
+            };
+            println!("signed in as {}", ra::login(arg(args, 1)?, &key)?);
+            Ok(())
+        }
+        Some("logout") => {
+            ra::logout();
+            println!("signed out");
+            Ok(())
+        }
+        Some("sign-in-emulators") => {
+            let hardcore = args.iter().any(|a| a == "--hardcore");
+            eprint!("RetroAchievements password (for the emulators' token, not kept): ");
+            let mut password = String::new();
+            std::io::stdin().read_line(&mut password)?;
+            for (name, r) in ra::sign_in_emulators(password.trim_end_matches('\n'), hardcore)? {
+                match r {
+                    Ok(o) => println!("{name}: {o:?}"),
+                    Err(e) => println!("{name}: {e:#}"),
+                }
+            }
+            Ok(())
+        }
+        Some(id) => {
+            let id: GameId = id.parse()?;
+            let library = Library::load()?;
+            let game = library.get(&id.id).context("not in the library")?;
+            let GameKind::Emulated { system, .. } = &game.kind else {
+                anyhow::bail!("{} is not an emulator game", game.name);
+            };
+            match ra::achievements(system, &game.exe)? {
+                None => println!(
+                    "no achievements (no account, or RetroAchievements does not know this file)"
+                ),
+                Some(g) => {
+                    println!(
+                        "{}: {}/{} · {}",
+                        g.title,
+                        g.unlocked(),
+                        g.list.len(),
+                        g.page()
+                    );
+                    for a in &g.list {
+                        println!(
+                            "  [{}] {} ({} points)",
+                            if a.unlocked { "x" } else { " " },
+                            a.title,
+                            a.points
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+        None => {
+            match ra::account() {
+                Some(a) => println!("signed in as {}", a.username),
+                None => println!("not signed in"),
+            }
+            Ok(())
+        }
+    }
 }
 
 /// `arkor emulators [install <id> | remove <id> | core <core> | bios]`.
@@ -295,6 +373,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some("roms") => roms(&args[1..]),
         Some("emulators") => emulators(&args[1..]),
+        Some("achievements") => achievements(&args[1..]),
         Some("trouble") => {
             use arkor_launch::trouble;
             let id: GameId = arg(&args, 1)?.parse()?;

@@ -697,6 +697,7 @@ impl Library {
                 )
             })
             .collect();
+        rows.extend(self.emu_achievement_row(id));
         rows.push(Row::new(
             Kind::Line,
             vec![Item::line(

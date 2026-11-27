@@ -2599,6 +2599,7 @@ impl Library {
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == *id) {
                     self.select(Selection::Game(ix), cx);
                 }
+                self.emu_game_opened(id, cx);
                 self.console.focus.remove(&screen);
             }
             Screen::ShopGame(shop, id) => {
