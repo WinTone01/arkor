@@ -2823,7 +2823,11 @@ impl Library {
         if !window.is_window_active() && !login {
             if nav == Nav::Toggle {
                 // Over a game: the quick menu. Else Arkor comes forward.
-                let quick = self.console.on && self.quick_open(window, cx);
+                let quick = if self.console.on {
+                    self.quick_open(window, cx)
+                } else {
+                    self.quick_open_from_desktop(window, cx)
+                };
                 if !quick && self.running.is_empty() {
                     window.activate_window();
                 }

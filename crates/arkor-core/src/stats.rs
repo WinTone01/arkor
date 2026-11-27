@@ -128,6 +128,104 @@ pub fn sessions() -> Vec<Session> {
         .collect()
 }
 
+fn append_line(name: &str, line: &impl Serialize) -> anyhow::Result<()> {
+    use std::io::Write;
+    let path = dirs::state_dir()
+        .context("no XDG state dir")?
+        .join("arkor")
+        .join(name);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    f.write_all(format!("{}\n", serde_json::to_string(line)?).as_bytes())?;
+    Ok(())
+}
+
+fn read_lines<T: serde::de::DeserializeOwned>(name: &str) -> Vec<T> {
+    dirs::state_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("arkor").join(name)).ok())
+        .map(|t| {
+            t.lines()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A note written for the journal (`notes.jsonl`): when, about which game, what.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub at: u64,
+    /// The library id of the game, or empty for a note about the day.
+    pub game: String,
+    pub text: String,
+}
+
+/// Adds a note to today's journal.
+pub fn add_note(game: &str, text: &str) -> anyhow::Result<()> {
+    let text = text.trim();
+    anyhow::ensure!(!text.is_empty(), "the note is empty");
+    append_line(
+        "notes.jsonl",
+        &Note {
+            at: now(),
+            game: game.to_string(),
+            text: text.to_string(),
+        },
+    )
+}
+
+/// Every note, oldest first.
+pub fn notes() -> Vec<Note> {
+    read_lines("notes.jsonl")
+}
+
+/// When a game's status changed (`status-history.jsonl`), so the statistics know the day a
+/// game was beaten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusChange {
+    pub at: u64,
+    pub game: String,
+    /// `None` = no status any more.
+    pub status: Option<crate::library::PlayStatus>,
+}
+
+/// Notes that `game`'s status became `status` now.
+pub fn record_status(game: &str, status: Option<crate::library::PlayStatus>) {
+    let _ = append_line(
+        "status-history.jsonl",
+        &StatusChange {
+            at: now(),
+            game: game.to_string(),
+            status,
+        },
+    );
+}
+
+pub fn status_history() -> Vec<StatusChange> {
+    read_lines("status-history.jsonl")
+}
+
+/// The games beaten in `year`: (game, when), each once, by its last time it became beaten.
+pub fn beaten_in(history: &[StatusChange], year: i32) -> Vec<(String, u64)> {
+    let mut last: BTreeMap<String, Option<u64>> = BTreeMap::new();
+    for c in history {
+        let beaten = c.status == Some(crate::library::PlayStatus::Beaten);
+        last.insert(c.game.clone(), beaten.then_some(c.at));
+    }
+    let mut out: Vec<(String, u64)> = last
+        .into_iter()
+        .filter_map(|(g, at)| Some((g, at?)))
+        .filter(|(_, at)| local_day(*at).year == year)
+        .collect();
+    out.sort_by_key(|(_, at)| *at);
+    out
+}
+
 /// A day of the calendar, in this computer's time zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Day {
@@ -288,6 +386,30 @@ pub fn format_duration(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_games_beaten_in_a_year_by_their_last_change() {
+        use crate::library::PlayStatus::*;
+        let noon = |d: u64| 1_767_268_800 + d * 86_400; // 2026-01-01 12:00 UTC
+        let ch = |game: &str, at, status| StatusChange {
+            at,
+            game: game.into(),
+            status,
+        };
+        let h = vec![
+            ch("a", noon(10), Some(Beaten)),
+            ch("b", noon(20), Some(Beaten)),
+            ch("b", noon(30), Some(Playing)),
+            ch("c", noon(40), Some(Beaten)),
+        ];
+        let year = local_day(noon(10)).year;
+        let beaten = beaten_in(&h, year);
+        assert_eq!(
+            beaten.iter().map(|(g, _)| g.as_str()).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+        assert!(beaten_in(&h, year + 1).is_empty());
+    }
 
     #[test]
     fn sums_years_streaks_and_journal() {

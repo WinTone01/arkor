@@ -1738,6 +1738,7 @@ impl Library {
                 ),
             ))
             .child(hero)
+            .children(self.render_now_playing(cx))
             .children(self.render_saves_question(cx));
         let mut content = div().flex().flex_col().gap_4();
 

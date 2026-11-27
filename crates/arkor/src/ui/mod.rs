@@ -44,6 +44,7 @@ mod library_groups;
 mod library_views;
 mod loader;
 mod mods_page;
+mod now_playing;
 mod palette;
 mod presets;
 mod protons;

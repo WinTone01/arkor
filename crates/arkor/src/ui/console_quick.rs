@@ -26,6 +26,9 @@ pub(super) struct QuickState {
     fps: u32,
     /// Gamescope limits its frames, not MangoHud.
     gamescope: bool,
+    /// Opened from the desktop: console mode was turned on just for the menu, and goes off
+    /// again when it closes.
+    pub(super) from_desktop: bool,
 }
 
 const FPS: [u32; 12] = [0, 30, 40, 45, 60, 72, 90, 120, 144, 165, 180, 240];
@@ -55,6 +58,28 @@ impl Library {
         self.quick_show(window, cx)
     }
 
+    /// From the desktop, over a running game: console mode comes on for the menu only.
+    pub(super) fn quick_open_from_desktop(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.console.on || self.quick_game().is_none() {
+            return false;
+        }
+        self.toggle_console(window, cx);
+        let shown = self.quick_show(window, cx);
+        self.console.quick.from_desktop = shown;
+        shown
+    }
+
+    /// Console mode turned on only for the menu goes off again.
+    fn quick_leave_desktop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.console.quick.from_desktop) && self.console.on {
+            self.toggle_console(window, cx);
+        }
+    }
+
     /// The menu comes over the game.
     fn quick_show(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((entry, pid)) = self.quick_game() else {
@@ -63,7 +88,9 @@ impl Library {
         let id = arkor_core::GameId::new(arkor_core::Store::Local, &entry);
         let pids = quick::processes(pid);
         let hud = quick::hud_file(&id);
+        let from_desktop = self.console.quick.from_desktop;
         self.console.quick = QuickState {
+            from_desktop,
             shown: hud.as_deref().is_some_and(quick::hud_shown),
             fps: hud.as_deref().map_or(0, quick::fps_limit),
             gamescope: quick::in_gamescope(&pids),
@@ -99,6 +126,7 @@ impl Library {
         if matches!(self.console.screen(), Screen::Quick(_)) {
             self.console_back(cx);
         }
+        self.quick_leave_desktop(window, cx);
         // As they are now: a launcher may have started the game itself since.
         let pids = match self.quick_game() {
             Some((_, pid)) if !cfg!(test) => quick::processes(pid),
@@ -164,7 +192,14 @@ impl Library {
     pub(super) fn quick_act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
             Act::QuickBack => self.quick_back(window, cx),
-            Act::QuickHome => self.console_open(Screen::Home, cx),
+            Act::QuickHome => {
+                if self.console.quick.from_desktop {
+                    // Back to the desktop window, on the game's page.
+                    self.quick_leave_desktop(window, cx);
+                } else {
+                    self.console_open(Screen::Home, cx)
+                }
+            }
             Act::QuickShot => self.quick_shot(window, cx),
             Act::QuickClip => self.quick_clip(window, cx),
             _ => {}
