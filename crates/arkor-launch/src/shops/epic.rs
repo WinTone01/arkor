@@ -254,9 +254,13 @@ pub(super) fn updates(games: &[Installed]) -> anyhow::Result<Vec<(Installed, Str
 /// Epic's overlay (EOS: friends, achievements and invites in games that use Epic Online
 /// Services), as legendary installs it once for every game and turns on per prefix.
 pub fn eos_overlay(prefix: &std::path::Path, on: bool) -> anyhow::Result<()> {
-    if on {
+    // In Arkor's own folder (legendary's default is `~/legendary/.overlay`).
+    let path = shop_dir(Shop::Epic)?.join("eos-overlay");
+    if on && std::fs::read_dir(&path).map_or(true, |mut d| d.next().is_none()) {
         let mut install = helper::command(Shop::Epic)?;
-        install.args(["-y", "eos-overlay", "install"]);
+        install
+            .args(["-y", "eos-overlay", "install", "--path"])
+            .arg(&path);
         let out = helper::output(install)?;
         anyhow::ensure!(
             out.ok,
@@ -272,6 +276,9 @@ pub fn eos_overlay(prefix: &std::path::Path, on: bool) -> anyhow::Result<()> {
         "--prefix",
     ])
     .arg(prefix);
+    if on {
+        cmd.arg("--path").arg(&path);
+    }
     let out = helper::output(cmd)?;
     anyhow::ensure!(out.ok, "{}", out.error());
     Ok(())
@@ -279,6 +286,25 @@ pub fn eos_overlay(prefix: &std::path::Path, on: bool) -> anyhow::Result<()> {
 
 /// Whether Epic's overlay is on in `prefix` (its registry names the overlay's folder).
 pub fn eos_overlay_on(prefix: &std::path::Path) -> bool {
-    std::fs::read_to_string(prefix.join("user.reg"))
-        .is_ok_and(|r| r.contains("EOSOverlayPath") || r.contains("EOS Overlay"))
+    std::fs::read_to_string(prefix.join("user.reg")).is_ok_and(|r| {
+        r.split("\n[").any(|k| {
+            k.starts_with("SOFTWARE\\\\Epic Games\\\\EOS]") && k.contains("\"OverlayPath\"")
+        })
+    })
+}
+
+#[cfg(test)]
+mod eos_tests {
+    #[test]
+    fn tells_the_overlay_on_from_the_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("user.reg"),
+            "WINE REGISTRY Version 2\n\n[SOFTWARE\\\\Epic Games\\\\EOS] 1795800000\n\"OverlayPath\"=\"Z:/x\"\n",
+        )
+        .unwrap();
+        assert!(super::eos_overlay_on(dir.path()));
+        std::fs::write(dir.path().join("user.reg"), "WINE REGISTRY Version 2\n").unwrap();
+        assert!(!super::eos_overlay_on(dir.path()));
+    }
 }

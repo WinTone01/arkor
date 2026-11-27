@@ -28,6 +28,7 @@ mod emulators;
 mod enhance;
 mod features;
 mod fields;
+mod friends;
 mod game_info;
 mod game_page;
 mod gamepad;
@@ -189,6 +190,8 @@ pub struct Library {
     info: game_info::InfoUi,
     info_igdb: Option<bool>,
     stats_ui: stats_page::StatsUi,
+    /// Steam friends (with Steam control on), read every minute while the window is open.
+    friends: friends::FriendsUi,
     /// The command palette (Ctrl+K), when open.
     palette: Option<palette::Palette>,
     /// Why downloads wait (asked every few seconds while the Downloads page shows).
@@ -286,6 +289,7 @@ impl Library {
             info_igdb: None,
             stats_ui: Default::default(),
             palette: None,
+            friends: Default::default(),
             downloads_hold: None,
             downloads_hold_at: None,
             restore_pending: None,
@@ -1056,6 +1060,7 @@ fn open_main(open: Option<String>, cx: &mut App) -> Option<MainWindow> {
                 lib.watch_nxm(cx);
                 lib.emu_watch(cx);
                 lib.info_fill_all(cx);
+                lib.friends_watch(cx);
                 lib.startup_updates(cx);
                 lib
             })

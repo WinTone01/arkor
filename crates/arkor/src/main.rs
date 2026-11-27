@@ -16,6 +16,8 @@ usage:
   arkor nxm <nxm://link>                  install a mod from Nexus Mods (Mod Manager Download)
   arkor url <arkor://launch/ID | arkor://open/PAGE | heroic://launch/…>
                                           follow a link (a shortcut, a browser)
+  arkor steam control on|off              Arkor's control of Steam (its developer port)
+  arkor friends [--names]                 Steam friends online (Steam control on)
   arkor list                              print the library
   arkor system                            machine, desktop and tool report (for bug reports)
   arkor detect                            print games found in other launchers
@@ -329,6 +331,34 @@ fn main() -> anyhow::Result<()> {
                 Link::Launch(id) => std::process::exit(arkor_launch::start::start(&id)?),
                 Link::Open(page) => ui::run(Some(page), false),
             }
+        }
+        // Arkor's control of Steam through its developer port (Steam restarts, unless a game
+        // runs: then it takes effect the next time Steam starts).
+        Some("steam") if args.get(1).map(String::as_str) == Some("control") => {
+            let on = match args.get(2).map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => anyhow::bail!("arkor steam control on|off"),
+            };
+            let mut global = arkor_core::Global::load_or_import()?;
+            global.steam_control = on;
+            global.save()?;
+            arkor_launch::steam_control::apply(on)?;
+            println!("Steam control {}", if on { "on" } else { "off" });
+            Ok(())
+        }
+        // Steam friends, as the client knows them (needs Steam control on).
+        Some("friends") => {
+            let list = arkor_launch::steam_control::friends()?;
+            let online = list.iter().filter(|f| f.online()).count();
+            let playing = list.iter().filter(|f| f.app != 0).count();
+            println!("{} friends, {online} online, {playing} playing", list.len());
+            if args.get(1).map(String::as_str) == Some("--names") {
+                for f in list.iter().filter(|f| f.online()) {
+                    println!("  {} {}", f.name, f.game);
+                }
+            }
+            Ok(())
         }
         Some("list") => list(),
         Some("system") => {

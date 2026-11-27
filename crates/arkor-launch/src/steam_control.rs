@@ -493,3 +493,48 @@ mod tests {
         }
     }
 }
+
+/// A friend on Steam, as the client knows them now.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Friend {
+    pub name: String,
+    /// 0 offline, 1 online, 2 busy, 3 away, 4 snooze, 5 looking to trade, 6 looking to play.
+    pub state: u32,
+    /// The game they play (its app id; 0 none) and its name.
+    pub app: u32,
+    pub game: String,
+    /// Unix time they were last online.
+    pub last_seen: u64,
+    pub avatar: String,
+}
+
+impl Friend {
+    pub fn online(&self) -> bool {
+        self.state != 0
+    }
+}
+
+/// The friends Steam's client knows, online ones first (playing before the rest). Needs the
+/// port (Steam control on). Blocking.
+pub fn friends() -> anyhow::Result<Vec<Friend>> {
+    let js = r#"JSON.stringify((() => {
+        const f = friendStore.allFriends || [];
+        return f.map(x => x.persona).filter(p => p).map(p => ({
+            name: p.m_strPlayerName || "",
+            state: p.m_ePersonaState || 0,
+            app: p.m_unGamePlayedAppID || 0,
+            game: p.m_strGameExtraInfo || "",
+            last_seen: p.m_rtLastSeenOnline || 0,
+            avatar: p.m_strAvatarHash || ""
+        }));
+    })())"#;
+    let v = run(js)?;
+    let text = v.as_str().context("Steam answered no list")?;
+    let mut list: Vec<Friend> = serde_json::from_str(text)?;
+    list.sort_by(|a, b| {
+        (b.online(), b.app != 0)
+            .cmp(&(a.online(), a.app != 0))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(list)
+}

@@ -321,6 +321,9 @@ impl Library {
             }
         }
 
+        if let Some(friends) = self.render_friends(cx) {
+            side = side.child(friends);
+        }
         side = side.child(div().flex_1());
         if let Some(note) = self.render_update_note(cx) {
             side = side.child(note);
