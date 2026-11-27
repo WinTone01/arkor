@@ -2027,7 +2027,7 @@ impl Library {
 
 impl Library {
     /// Installs, updates or removes ANR FG off the UI thread.
-    fn anr_job(&mut self, what: &'static str, cx: &mut Context<Self>) {
+    pub(super) fn anr_job(&mut self, what: &'static str, cx: &mut Context<Self>) {
         use arkor_launch::anr;
         let Some(id) = self.selected_id() else { return };
         let target = self.tools.target.clone();

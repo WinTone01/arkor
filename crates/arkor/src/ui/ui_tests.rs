@@ -639,6 +639,12 @@ fn console_game_settings_change_the_profile() {
     let saved = Profile::load(&id).unwrap();
     assert_eq!(saved.launch_options, "-dx11");
     assert_eq!(saved.gamescope.refresh, Some(75));
+    // ANR FG is in the console too, under frame generation.
+    assert!(view.read_with(cx, |l, _| {
+        l.game_cat_rows(GameCat::Smooth)
+            .iter()
+            .any(|r| r.items[0].act == Act::Opt(Opt::Game(GameOpt::Anr)))
+    }));
     // Back to the categories, then the game's screen.
     cx.simulate_keystrokes("escape escape");
     assert_eq!(

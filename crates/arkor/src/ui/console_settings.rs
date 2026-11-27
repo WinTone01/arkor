@@ -35,10 +35,16 @@ pub(super) enum GameOpt {
     LsfgPerformance,
     Mako,
     Afmf,
+    /// ANR FG: shows whether it is in the game; pressed, it downloads, installs or removes it.
+    Anr,
     NoSleep,
     VkBasalt,
     Cas,
     VkSumi,
+    /// One of vkSumi's colour controls.
+    Sumi(arkor_core::layers::SumiKnob),
+    SumiCompare,
+    SumiDaltonize,
     Proton,
     ProtonLog,
     LinuxRuntime,
@@ -330,6 +336,31 @@ impl Library {
                 out.extend(self.categories().into_iter().map(|c| (c.clone(), c)));
                 out
             }
+            GameOpt::Sumi(k) => {
+                let (lo, hi, step) = k.range();
+                (lo..=hi)
+                    .step_by(step as usize)
+                    .map(|v| (k.show(v), v.to_string()))
+                    .collect()
+            }
+            GameOpt::SumiDaltonize => arkor_core::layers::Daltonize::ALL
+                .into_iter()
+                .map(|d| {
+                    let name = match d {
+                        arkor_core::layers::Daltonize::Off => self.tr("Off", "Kapalı"),
+                        arkor_core::layers::Daltonize::Protan => {
+                            self.tr("Red-blind", "Kırmızı körlüğü")
+                        }
+                        arkor_core::layers::Daltonize::Deutan => {
+                            self.tr("Green-blind", "Yeşil körlüğü")
+                        }
+                        arkor_core::layers::Daltonize::Tritan => {
+                            self.tr("Blue-blind", "Mavi körlüğü")
+                        }
+                    };
+                    (s(name), s(d.key()))
+                })
+                .collect(),
             GameOpt::LsfgMultiplier => (2..=4).map(|n| (format!("{n}×"), n.to_string())).collect(),
             GameOpt::LsfgFlow => [25u32, 40, 50, 60, 75, 85, 100]
                 .iter()
@@ -393,6 +424,8 @@ impl Library {
             GameOpt::LsfgMultiplier => p.lsfg.multiplier.to_string(),
             GameOpt::LsfgFlow => p.lsfg.flow_scale.to_string(),
             GameOpt::Proton => p.proton.clone().unwrap_or_default(),
+            GameOpt::Sumi(k) => p.layers.sumi.get(k).to_string(),
+            GameOpt::SumiDaltonize => p.layers.sumi.daltonize.key().into(),
             _ => String::new(),
         }
     }
@@ -413,6 +446,26 @@ impl Library {
             GameOpt::Mako => Value::Switch(p.layers.mako.enabled),
             GameOpt::Afmf => Value::Switch(p.layers.afmf.enabled),
             GameOpt::VkSumi => Value::Switch(p.layers.vksumi),
+            GameOpt::SumiCompare => Value::Switch(p.layers.sumi.compare),
+            GameOpt::Anr => Value::Text(
+                match (&self.tools.anr_manifest, &self.tools.anr_downloaded) {
+                    _ if self.tools.busy.is_some() || arkor_launch::progress::running("anr") => {
+                        self.tr("Working…", "Çalışıyor…").to_string()
+                    }
+                    (Some(m), _) => format!(
+                        "{} {} · {}",
+                        self.tr("Installed", "Kurulu"),
+                        m.version,
+                        self.tr("A removes", "A kaldırır")
+                    ),
+                    (None, Some(_)) => self
+                        .tr("Not installed · A installs", "Kurulu değil · A kurar")
+                        .to_string(),
+                    (None, None) => self
+                        .tr("Not downloaded · A downloads", "İndirilmedi · A indirir")
+                        .to_string(),
+                },
+            ),
             GameOpt::Hidden => Value::Switch(self.entry().is_some_and(|e| e.hidden)),
             GameOpt::Winecfg | GameOpt::Winetricks => Value::None,
             GameOpt::LaunchOptions | GameOpt::PreLaunch | GameOpt::PostLaunch => {
@@ -468,6 +521,7 @@ impl Library {
             GameOpt::Mako => p.layers.mako.enabled = !p.layers.mako.enabled,
             GameOpt::Afmf => p.layers.afmf.enabled = !p.layers.afmf.enabled,
             GameOpt::VkSumi => p.layers.vksumi = !p.layers.vksumi,
+            GameOpt::SumiCompare => p.layers.sumi.compare = !p.layers.sumi.compare,
             GameOpt::Metric(m) => {
                 self.edit_shown_hud(|h| {
                     if !h.metrics.remove(&m) {
@@ -492,6 +546,19 @@ impl Library {
     pub(super) fn game_opt_set(&mut self, o: GameOpt, key: &str) {
         let num = key.parse::<u32>().ok();
         match o {
+            GameOpt::Sumi(k) => {
+                if let Ok(v) = key.parse::<i32>() {
+                    self.profile.layers.sumi.set(k, v);
+                }
+            }
+            GameOpt::SumiDaltonize => {
+                if let Some(d) = arkor_core::layers::Daltonize::ALL
+                    .into_iter()
+                    .find(|d| d.key() == key)
+                {
+                    self.profile.layers.sumi.daltonize = d;
+                }
+            }
             GameOpt::Hud => {
                 let mode = match key {
                     "off" => HudMode::Off,
@@ -773,6 +840,19 @@ impl Library {
                 "A command that runs after the game closes.",
                 "Oyun kapandıktan sonra çalışan bir komut.",
             ),
+            GameOpt::Sumi(k) => self.sumi_name(k).1,
+            GameOpt::SumiCompare => t(
+                "Half the screen graded, half as the game draws it.",
+                "Ekranın yarısı ayarlı, yarısı oyunun çizdiği gibi.",
+            ),
+            GameOpt::SumiDaltonize => t(
+                "Shifts colours so they are easier to tell apart.",
+                "Renkleri daha kolay ayırt edilecek şekilde kaydırır.",
+            ),
+            GameOpt::Anr => t(
+                "AI frame generation in place of DLSS frame generation. Brings its own OptiScaler.",
+                "DLSS kare üretiminin yerine yapay zekâ kare üretimi. Kendi OptiScaler'ıyla gelir.",
+            ),
             GameOpt::Hidden | GameOpt::Category | GameOpt::Name | GameOpt::NewCategory => "",
         }
     }
@@ -940,6 +1020,9 @@ impl Library {
                 if gpus.amd {
                     fg.push(o(GameOpt::Afmf, "layers", "AFMF"));
                 }
+                if prefix {
+                    fg.push(o(GameOpt::Anr, "brain", "ANR FG"));
+                }
                 fg.extend(tweaks(Category::FrameGen));
                 groups.push((gt("framegen"), fg));
                 groups.push((gt("latency"), tweaks(Category::Latency)));
@@ -965,6 +1048,25 @@ impl Library {
                     "palette",
                     t("Colour grading (vkSumi)", "Renk düzenleme (vkSumi)"),
                 ));
+                if p.layers.vksumi {
+                    for k in arkor_core::layers::SumiKnob::ALL {
+                        v.push((
+                            GameOpt::Sumi(k),
+                            "sliders-horizontal",
+                            self.sumi_name(k).0.to_string(),
+                        ));
+                    }
+                    v.push(o(
+                        GameOpt::SumiCompare,
+                        "columns-2",
+                        t("Split compare", "Bölünmüş karşılaştırma"),
+                    ));
+                    v.push(o(
+                        GameOpt::SumiDaltonize,
+                        "eye",
+                        t("Colour blindness", "Renk körlüğü"),
+                    ));
+                }
                 groups.push((gt("effects"), v));
                 let mut sc = vec![o(GameOpt::Gamescope, "monitor", "Gamescope")];
                 if p.gamescope.enabled {

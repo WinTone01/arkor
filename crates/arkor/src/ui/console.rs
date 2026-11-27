@@ -3981,6 +3981,16 @@ impl Library {
                 };
                 self.run_tool(tool, label.into(), cx);
             }
+            Opt::Game(GameOpt::Anr) => {
+                if self.tools.busy.is_some() || arkor_launch::progress::running("anr") {
+                } else if self.tools.anr_manifest.is_some() {
+                    self.anr_job("remove", cx);
+                } else if self.tools.anr_downloaded.is_some() {
+                    self.anr_job("install", cx);
+                } else {
+                    self.enqueue_download("anr", cx);
+                }
+            }
             Opt::Game(o) if o.is_text() => {
                 let text = self.game_opt_text(*o);
                 self.console.edit = Some((*o, text));
