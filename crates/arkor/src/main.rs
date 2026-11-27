@@ -50,6 +50,7 @@ usage:
   arkor layer list | install <vksumi|vknemu|mako> | remove <id>
                                           extra Vulkan layers (user folder)
   arkor saves status <id> | sync <id> [--keep here|cloud] | upload <id>
+              | places <id> | backup <id>
               | copy <id> | list <id> | restore <id> <copy>
                                           saves of Epic and GOG games: the cloud, and copies
   arkor trouble <id>                      why a game did not start, and what helps
@@ -697,6 +698,33 @@ fn saves(args: &[String]) -> anyhow::Result<()> {
                 say(&r?);
             }
         }
+        // After the game ended: up to the cloud (Epic, GOG), and a copy here (any game).
+        Some("after") => {
+            if let Some(r) = saves::after_exit(&id) {
+                match r {
+                    Ok(r) => say(&r),
+                    Err(e) => eprintln!("arkor: the saves were not synced: {e:#}"),
+                }
+            }
+            saves::backup_after_play(&id);
+        }
+        Some("places") => {
+            let (name, places) = saves::local_places(&id)?;
+            println!("{name}");
+            for p in places {
+                let filter = p.filter.include.join(", ");
+                println!(
+                    "  {}{}",
+                    p.path.display(),
+                    if filter.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  ({filter})")
+                    }
+                );
+            }
+        }
+        Some("backup") => println!("{} kept", saves::backup(&id, saves::Why::Manual)?),
         Some("copy") => println!("{} kept", saves::copy_now(&saves::find(&id)?)?),
         Some("list") => {
             for s in saves::copies(&id) {

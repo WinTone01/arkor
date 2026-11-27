@@ -23,6 +23,8 @@ pub enum Why {
     BeforeRestore,
     /// Asked for.
     Manual,
+    /// After the game was played (saves of any game, found through Ludusavi's manifest).
+    AfterPlay,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

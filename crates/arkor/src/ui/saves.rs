@@ -454,6 +454,7 @@ impl Library {
             Why::Cloud => self.tr("the cloud's", "buluttaki"),
             Why::BeforeRestore => self.tr("before putting back", "geri yüklemeden önce"),
             Why::Manual => self.tr("kept by you", "sen sakladın"),
+            Why::AfterPlay => self.tr("after playing", "oynadıktan sonra"),
         }
     }
 

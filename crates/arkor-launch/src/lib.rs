@@ -403,18 +403,16 @@ pub fn run(
     Ok(status.code().unwrap_or(1))
 }
 
-/// Uploads what the game saved, in a process of its own: whoever started the game need not
-/// wait for it, and stopping the game does not stop it.
+/// After the game ended, in a process of its own (whoever started the game need not wait for
+/// it, and stopping the game does not stop it): uploads what it saved to the store's cloud,
+/// and keeps a copy of its saves here (any game).
 fn upload_saves(id: &GameId) {
     use std::os::unix::process::CommandExt;
-    if !saves::follows(id) {
-        return;
-    }
     let Ok(me) = std::env::current_exe() else {
         return;
     };
     let mut cmd = std::process::Command::new(me);
-    cmd.args(["saves", "upload"])
+    cmd.args(["saves", "after"])
         .arg(id.to_string())
         .stdin(std::process::Stdio::null());
     // SAFETY: only an async-signal-safe syscall between fork and exec.

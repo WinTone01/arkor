@@ -5,6 +5,7 @@
 //! known which side changed. When both did, nothing is touched until the user chose a side.
 //! Before anything is put over saves a copy is kept ([`snapshots`]).
 
+pub mod local;
 pub mod ludusavi;
 mod places;
 mod remote;
@@ -253,6 +254,58 @@ fn changed_here(game: &CloudGame, dir: &Path) -> bool {
         let base = state.places.get(&p.name).and_then(|s| s.base.clone());
         Tree::read(&p.path, &p.filter).map(|t| t.print()).ok() != base
     })
+}
+
+// ---- Saves of any game (Ludusavi) ----
+
+/// The save folders of a library game this computer has, found through Ludusavi's manifest
+/// (fetched first when there is none yet); the manifest's name for the game. Blocking.
+pub fn local_places(id: &GameId) -> anyhow::Result<(String, Vec<Place>)> {
+    let library = Library::load()?;
+    let game = library
+        .get(&id.id)
+        .with_context(|| format!("`{id}` is not in the library"))?;
+    let global = Global::load_or_import()?;
+    let w = local::where_of(game, &global).context("the game's folder is not there")?;
+    let index = ludusavi::load()?;
+    let steam = match &game.kind {
+        GameKind::Steam { appid } => appid.parse().ok(),
+        _ => None,
+    };
+    let (name, saves) = ludusavi::lookup(&index, &game.name, steam)
+        .with_context(|| format!("Ludusavi does not know where {} keeps its saves", game.name))?;
+    Ok((name.to_string(), w.places(saves)))
+}
+
+/// Keeps a copy of a game's saves (any game, as Ludusavi knows it) when they changed since
+/// the last one; how many places got one. Blocking.
+pub fn backup(id: &GameId, why: Why) -> anyhow::Result<usize> {
+    let (_, places) = local_places(id)?;
+    with_dir(id, |dir| {
+        let mut made = 0;
+        for place in &places {
+            match snapshots::take(dir, place, &place.path, why) {
+                Ok(s) => made += s.is_some() as usize,
+                // A place too large or unreadable is no reason to skip the others.
+                Err(e) => eprintln!("arkor: {}: {e:#}", place.path.display()),
+            }
+        }
+        Ok(made)
+    })
+}
+
+/// After a game ended: a copy of what it saved, unless switched off. Blocking.
+pub fn backup_after_play(id: &GameId) {
+    if Global::load_or_import().is_ok_and(|g| g.no_save_backups) {
+        return;
+    }
+    // Refreshed now and then; an old index serves meanwhile.
+    let _ = ludusavi::refresh(false);
+    match backup(id, Why::AfterPlay) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("arkor: kept a copy of the saves ({n} folders)"),
+        Err(e) => eprintln!("arkor: no copy of the saves: {e:#}"),
+    }
 }
 
 /// Keeps a copy of the game's saves as they are now. Blocking.

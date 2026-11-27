@@ -390,6 +390,10 @@ pub struct Global {
     pub pad_glyphs: Option<String>,
     /// Saves of Epic and GOG games do not follow the store's cloud (they do unless turned off).
     pub no_cloud_saves: bool,
+    /// Copies of every game's saves after it is played are switched off (written only when
+    /// set, so older Arkor versions still read the file).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_save_backups: bool,
     /// How loud console mode's own sounds are, in percent (0 = silent, `None` = 70).
     pub console_volume: Option<u8>,
     /// Console mode darkens after this many minutes without input (`None`: 5, 0: never).

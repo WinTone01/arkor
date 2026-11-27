@@ -50,7 +50,7 @@ fn matches(rel: &str, pattern: &str) -> bool {
     rel.ends_with(&pattern) || wildcard(rel.as_bytes(), pattern.as_bytes())
 }
 
-fn wildcard(text: &[u8], pattern: &[u8]) -> bool {
+pub(super) fn wildcard(text: &[u8], pattern: &[u8]) -> bool {
     let (mut t, mut p) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while t < text.len() {
