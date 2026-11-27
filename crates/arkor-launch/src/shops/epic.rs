@@ -250,3 +250,35 @@ pub(super) fn updates(games: &[Installed]) -> anyhow::Result<Vec<(Installed, Str
         })
         .collect())
 }
+
+/// Epic's overlay (EOS: friends, achievements and invites in games that use Epic Online
+/// Services), as legendary installs it once for every game and turns on per prefix.
+pub fn eos_overlay(prefix: &std::path::Path, on: bool) -> anyhow::Result<()> {
+    if on {
+        let mut install = helper::command(Shop::Epic)?;
+        install.args(["-y", "eos-overlay", "install"]);
+        let out = helper::output(install)?;
+        anyhow::ensure!(
+            out.ok,
+            "the Epic overlay was not installed: {}",
+            out.error()
+        );
+    }
+    let mut cmd = helper::command(Shop::Epic)?;
+    cmd.args([
+        "-y",
+        "eos-overlay",
+        if on { "enable" } else { "disable" },
+        "--prefix",
+    ])
+    .arg(prefix);
+    let out = helper::output(cmd)?;
+    anyhow::ensure!(out.ok, "{}", out.error());
+    Ok(())
+}
+
+/// Whether Epic's overlay is on in `prefix` (its registry names the overlay's folder).
+pub fn eos_overlay_on(prefix: &std::path::Path) -> bool {
+    std::fs::read_to_string(prefix.join("user.reg"))
+        .is_ok_and(|r| r.contains("EOSOverlayPath") || r.contains("EOS Overlay"))
+}

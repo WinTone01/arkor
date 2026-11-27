@@ -167,6 +167,20 @@ fn achievements(args: &[String]) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        // A GOG product: what GOG counted (play time, achievements).
+        Some(id) if id.starts_with("gog:") => {
+            let (minutes, list) = arkor_launch::shops::gog::game_stats(&id[4..])?;
+            println!(
+                "{} min · {}/{} achievements",
+                minutes,
+                list.iter().filter(|a| a.unlocked).count(),
+                list.len()
+            );
+            for a in list.iter().take(10) {
+                println!("  [{}] {}", if a.unlocked { "x" } else { " " }, a.name);
+            }
+            Ok(())
+        }
         Some(id) => {
             let id: GameId = id.parse()?;
             let library = Library::load()?;

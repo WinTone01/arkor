@@ -8,8 +8,8 @@
 
 mod amazon;
 pub mod covers;
-mod epic;
-mod gog;
+pub mod epic;
+pub mod gog;
 pub mod helper;
 mod steam;
 pub mod vault;

@@ -22,6 +22,8 @@ pub(super) struct InfoUi {
     /// What is known, by library entry (an error as text).
     known: HashMap<String, Result<Option<GameInfo>, String>>,
     pictures: HashMap<String, Vec<Picture>>,
+    /// What GOG counted for GOG games: minutes and achievements (an error as text).
+    gog: HashMap<String, Result<(u64, Vec<arkor_launch::shops::gog::Achievement>), String>>,
 }
 
 impl Library {
@@ -163,6 +165,95 @@ impl Library {
         .detach();
     }
 
+    /// The GOG product id of a library game (`gog:<id>` origin), if it is one.
+    fn gog_product(entry: &arkor_core::library::LibraryGame) -> Option<String> {
+        let o = entry.origin.as_deref()?;
+        let id = o.strip_prefix("gog:")?;
+        id.chars()
+            .all(|c| c.is_ascii_digit())
+            .then(|| id.to_string())
+    }
+
+    /// GOG's play time and achievements of a GOG game (read once in the background).
+    fn gog_part(
+        &mut self,
+        entry: &arkor_core::library::LibraryGame,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let product = Self::gog_product(entry)?;
+        if !self.info.gog.contains_key(&entry.id) && !cfg!(test) {
+            self.info.gog.insert(entry.id.clone(), Ok((0, Vec::new())));
+            let id = entry.id.clone();
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let r = bg
+                    .spawn(async move {
+                        arkor_launch::shops::gog::game_stats(&product).map_err(|e| format!("{e:#}"))
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.info.gog.insert(id, r);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        let (minutes, list) = match self.info.gog.get(&entry.id)? {
+            Ok(v) => v.clone(),
+            Err(e) => return Some(div().child(widgets::label(format!("GOG: {e}")))),
+        };
+        let got = list.iter().filter(|a| a.unlocked).count();
+        let mut part = div().flex().flex_col().gap_2().child(widgets::setting_row(
+            "GOG",
+            format!(
+                "{} · {} {}/{}",
+                arkor_core::stats::format_duration(minutes * 60),
+                self.tr("achievements", "başarım"),
+                got,
+                list.len()
+            ),
+            div(),
+        ));
+        for a in list.iter().filter(|a| a.unlocked || !a.hidden).take(30) {
+            part = part.child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .items_center()
+                    .child(style::icon(
+                        if a.unlocked { "trophy" } else { "lock" },
+                        14.,
+                        if a.unlocked {
+                            pal::accent()
+                        } else {
+                            pal::muted()
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if a.unlocked {
+                                        pal::text()
+                                    } else {
+                                        pal::muted()
+                                    })
+                                    .child(a.name.clone()),
+                            )
+                            .child(div().text_xs().text_color(pal::muted()).child(format!(
+                                "{} · %{:.1}",
+                                a.description,
+                                a.rarity as f32 / 10.
+                            ))),
+                    ),
+            );
+        }
+        Some(part)
+    }
+
     /// The "About" card of the selected game.
     pub(super) fn render_about(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let entry = self.entry().cloned()?;
@@ -212,6 +303,9 @@ impl Library {
                 "",
                 statuses,
             ));
+        if let Some(gog) = self.gog_part(&entry, cx) {
+            card = card.child(widgets::divider()).child(gog);
+        }
 
         let known = self.info.known.get(&entry.id).cloned();
         let Some(Ok(Some(i))) = known else {

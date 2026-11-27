@@ -67,6 +67,68 @@ pub(super) fn logout() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One of a GOG game's achievements, with whether the account has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Achievement {
+    pub name: String,
+    pub description: String,
+    pub unlocked: bool,
+    /// How many players have it, in per mille.
+    pub rarity: u32,
+    /// Hidden until unlocked.
+    pub hidden: bool,
+}
+
+/// What GOG counted for a game: minutes played (from GOG Galaxy and Arkor), and its
+/// achievements (empty when it has none). Blocking (two requests).
+pub fn game_stats(product_id: &str) -> anyhow::Result<(u64, Vec<Achievement>)> {
+    anyhow::ensure!(
+        product_id.chars().all(|c| c.is_ascii_digit()),
+        "not a GOG product id"
+    );
+    let c = credentials()?;
+    let minutes = tools::http_get_bearer(
+        &format!(
+            "https://gameplay.gog.com/games/{product_id}/users/{}/sessions",
+            c.user_id
+        ),
+        &c.access_token,
+    )
+    .ok()
+    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    .and_then(|v| v["time_sum"].as_u64())
+    .unwrap_or(0);
+    let achievements = tools::http_get_bearer(
+        &format!(
+            "https://gameplay.gog.com/clients/{product_id}/users/{}/achievements",
+            c.user_id
+        ),
+        &c.access_token,
+    )
+    .ok()
+    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    .map(|v| parse_achievements(&v))
+    .unwrap_or_default();
+    Ok((minutes, achievements))
+}
+
+pub(crate) fn parse_achievements(v: &Value) -> Vec<Achievement> {
+    v["items"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|i| Achievement {
+                    name: i["name"].as_str().unwrap_or_default().to_string(),
+                    description: i["description"].as_str().unwrap_or_default().to_string(),
+                    unlocked: i["date_unlocked"].as_str().is_some_and(|d| !d.is_empty()),
+                    rarity: (i["rarity"].as_f64().unwrap_or(0.0) * 10.0).round() as u32,
+                    hidden: !i["visible"].as_bool().unwrap_or(true),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn owned() -> anyhow::Result<Vec<Owned>> {
     let login = credentials()?;
     let mut out = Vec::new();

@@ -332,6 +332,20 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| Some(l.render_protonfix(cx)),
     },
     Feature {
+        id: "eos-overlay",
+        tab: GameTab::Runtime,
+        icon: "users",
+        name: ("Epic overlay", "Epic katmanı"),
+        desc: (
+            "Epic's friends, achievements and invites inside games that use Epic Online Services.",
+            "Epic Online Services kullanan oyunlarda Epic'in arkadaşları, başarımları ve davetleri.",
+        ),
+        keywords: "eos overlay epic friends achievements arkadaş başarım katman",
+        applies: |_, g| matches!(g.kind, GameKind::Epic { .. }),
+        active: None,
+        render: |l, cx| l.render_eos(cx),
+    },
+    Feature {
         id: "dxvk",
         tab: GameTab::Runtime,
         icon: "layers",

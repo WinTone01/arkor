@@ -1036,6 +1036,46 @@ impl Library {
         card
     }
 
+    /// Epic's overlay in an Epic game's prefix.
+    pub(super) fn render_eos(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let entry = self.entry().cloned()?;
+        let prefix = entry.effective_prefix(&self.global.prefixes_dir());
+        let on = arkor_launch::shops::epic::eos_overlay_on(&prefix);
+        Some(
+            widgets::section(self.tr("Epic overlay", "Epic katmanı")).child(widgets::setting_row(
+                self.tr("In this game's prefix", "Bu oyunun prefix'inde"),
+                self.tr(
+                    "Downloaded once (legendary), then turned on per prefix.",
+                    "Bir kez indirilir (legendary), sonra prefix başına açılır.",
+                ),
+                widgets::switch(on)
+                    .id("eos")
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let prefix = prefix.clone();
+                        this.status = Some(this.tr("Working…", "Yapılıyor…").into());
+                        cx.notify();
+                        let bg = cx.background_executor().clone();
+                        cx.spawn(async move |this, cx| {
+                            let r = bg
+                                .spawn(async move {
+                                    arkor_launch::shops::epic::eos_overlay(&prefix, !on)
+                                })
+                                .await;
+                            let _ = this.update(cx, |this, cx| {
+                                this.status = Some(match r {
+                                    Ok(()) => this.tr("Done.", "Tamam.").into(),
+                                    Err(e) => format!("{e:#}").into(),
+                                });
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    })),
+            )),
+        )
+    }
+
     /// DXVK and VKD3D-Proton versions of this game.
     pub(super) fn render_dxvk(&mut self, cx: &mut Context<Self>) -> Div {
         use arkor_launch::dxvk::Kind;
