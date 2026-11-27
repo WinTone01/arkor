@@ -416,7 +416,10 @@ impl Library {
             }
             any = true;
             found_count += 1;
-            let source = format!("{} · {}", d.game.id.store.as_str(), d.game.id.id);
+            let source = match d.game.id.store {
+                arkor_core::Store::Client => self.store_name(&d.game.id),
+                _ => format!("{} · {}", d.game.id.store.as_str(), d.game.id.id),
+            };
             let row = div()
                 .flex()
                 .items_center()

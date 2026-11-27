@@ -6,6 +6,7 @@
 pub mod amazon;
 pub mod bottles;
 pub mod carry;
+pub mod clients;
 pub mod epic;
 pub mod faugus;
 pub mod gog;
@@ -61,6 +62,7 @@ pub fn detect() -> (Vec<Detected>, Vec<anyhow::Error>) {
         heroic::sideload_games(),
         lutris::games(),
         bottles::games(),
+        clients::games(),
     ] {
         games.extend(found);
         errors.extend(errs);
@@ -112,7 +114,12 @@ pub fn to_new_game(game: &Game) -> anyhow::Result<NewGame> {
         Store::Amazon => Ok(base(GameKind::Amazon {
             id: game.id.id.clone(),
         })),
-        Store::Gog | Store::Heroic | Store::Faugus | Store::Lutris | Store::Bottles => {
+        Store::Gog
+        | Store::Heroic
+        | Store::Faugus
+        | Store::Lutris
+        | Store::Bottles
+        | Store::Client => {
             let target = source_target(&game.id)?;
             Ok(NewGame {
                 name: game.name.clone(),
@@ -141,6 +148,7 @@ fn source_target(id: &GameId) -> anyhow::Result<ExeTarget> {
         Store::Faugus => faugus::launch_target(&id.id),
         Store::Lutris => lutris::launch_target(&id.id),
         Store::Bottles => bottles::launch_target(&id.id),
+        Store::Client => clients::launch_target(&id.id),
         _ => anyhow::bail!("{} games have no executable target", id.store.as_str()),
     }
 }

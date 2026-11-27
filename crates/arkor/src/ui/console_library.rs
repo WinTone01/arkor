@@ -285,7 +285,7 @@ impl Library {
         rows
     }
 
-    fn store_name(&self, id: &arkor_core::GameId) -> String {
+    pub(super) fn store_name(&self, id: &arkor_core::GameId) -> String {
         use arkor_core::Store;
         match id.store {
             Store::Steam => "Steam",
@@ -296,6 +296,13 @@ impl Library {
             Store::Lutris => "Lutris",
             Store::Faugus => "Faugus",
             Store::Bottles => "Bottles",
+            Store::Client => match id.id.split('/').next() {
+                Some("battle") => "Battle.net",
+                Some("ea") => "EA app",
+                Some("ubisoft") => "Ubisoft Connect",
+                Some("rockstar") => "Rockstar",
+                _ => "",
+            },
             _ => "",
         }
         .to_string()

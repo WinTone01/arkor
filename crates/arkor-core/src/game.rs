@@ -21,10 +21,12 @@ pub enum Store {
     Local,
     /// Programs added to a bottle of Bottles.
     Bottles,
+    /// Games installed inside Battle.net, the EA app, Ubisoft Connect or Rockstar's launcher.
+    Client,
 }
 
 impl Store {
-    pub const ALL: [Store; 9] = [
+    pub const ALL: [Store; 10] = [
         Store::Steam,
         Store::Epic,
         Store::Gog,
@@ -34,6 +36,7 @@ impl Store {
         Store::Lutris,
         Store::Local,
         Store::Bottles,
+        Store::Client,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Store {
             Store::Lutris => "lutris",
             Store::Local => "local",
             Store::Bottles => "bottles",
+            Store::Client => "client",
         }
     }
 }

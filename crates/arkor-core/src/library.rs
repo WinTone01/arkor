@@ -104,6 +104,17 @@ impl LibraryGame {
 
     pub fn to_game(&self) -> Game {
         let install_dir = match &self.kind {
+            // A launcher's game runs the launcher's program from the game's own folder.
+            GameKind::Windows
+                if self
+                    .origin
+                    .as_deref()
+                    .is_some_and(|o| o.starts_with("client:")) =>
+            {
+                self.working_dir
+                    .clone()
+                    .or_else(|| self.exe.parent().map(Path::to_path_buf))
+            }
             GameKind::Windows | GameKind::Linux | GameKind::Emulated { .. } => {
                 self.exe.parent().map(Path::to_path_buf)
             }
