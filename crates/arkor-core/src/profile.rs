@@ -552,9 +552,6 @@ pub struct Appearance {
     pub reduce_motion: bool,
     /// Picture for `Backdrop::Image`.
     pub backdrop_image: Option<PathBuf>,
-    /// The accent follows the desktop's (KDE's, GNOME's, or a pywal/wallust palette).
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub accent_desktop: bool,
 }
 
 /// What a new install looks like: dark, violet, Crystal panels over the Drift background,
@@ -571,7 +568,6 @@ impl Default for Appearance {
             font_size: None,
             reduce_motion: false,
             backdrop_image: None,
-            accent_desktop: false,
         }
     }
 }

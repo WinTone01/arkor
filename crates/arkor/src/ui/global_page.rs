@@ -401,20 +401,7 @@ impl Library {
             window.appearance(),
             gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
         );
-        let mut look = self.global.appearance.clone();
-        if look.accent_desktop {
-            // Read again every few seconds: the desktop's colour may change.
-            let stale = self
-                .desktop_accent
-                .is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(5));
-            if stale && !cfg!(test) {
-                self.desktop_accent =
-                    Some((std::time::Instant::now(), super::desktop_accent::read()));
-            }
-            if let Some((_, Some(c))) = self.desktop_accent {
-                look.accent = Some(c);
-            }
-        }
+        let look = self.global.appearance.clone();
         let key = (look.clone(), system_light);
         if self.synced_look.as_ref() != Some(&key) {
             super::sync_kit_theme(&look, cx);
@@ -883,21 +870,6 @@ impl Library {
                     "Vurgularda, anahtarlarda ve logoda kullanılır.",
                 ),
                 accents.into_any_element(),
-            ))
-            .child(row(
-                self.tr("Accent from the desktop", "Vurgu rengi masaüstünden"),
-                self.tr(
-                    "Follow KDE's or GNOME's accent, or a pywal / wallust palette.",
-                    "KDE'nin ya da GNOME'un vurgu rengini, veya pywal / wallust paletini izle.",
-                ),
-                widgets::switch(a.accent_desktop)
-                    .id("accent-desktop")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.desktop_accent = None;
-                        this.edit_look(cx, |l| l.accent_desktop = !l.accent_desktop)
-                    }))
-                    .into_any_element(),
             ))
             .child(row(
                 self.tr("Panel style", "Panel stili"),

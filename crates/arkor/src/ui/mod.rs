@@ -22,7 +22,6 @@ mod console_view;
 mod cover_art;
 mod defaults_page;
 mod desk;
-mod desktop_accent;
 mod downloads_page;
 mod downloads_queue;
 mod emulators;
@@ -190,8 +189,6 @@ pub struct Library {
     info: game_info::InfoUi,
     info_igdb: Option<bool>,
     stats_ui: stats_page::StatsUi,
-    /// The desktop's accent colour and when it was read (for "follow the desktop").
-    desktop_accent: Option<(std::time::Instant, Option<u32>)>,
     /// The command palette (Ctrl+K), when open.
     palette: Option<palette::Palette>,
     /// Why downloads wait (asked every few seconds while the Downloads page shows).
@@ -289,7 +286,6 @@ impl Library {
             info_igdb: None,
             stats_ui: Default::default(),
             palette: None,
-            desktop_accent: None,
             downloads_hold: None,
             downloads_hold_at: None,
             restore_pending: None,
