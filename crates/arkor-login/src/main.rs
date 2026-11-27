@@ -11,6 +11,13 @@
 //! gamepad reaches what the page's script cannot (a "not a robot" box in a frame of its own):
 //! each click is one press of the user's button, nothing is clicked by itself.
 //!
+//! `arkor-login browse <url>` is a mod browser instead (Nexus Mods, Thunderstore): its
+//! logins are kept (cookies in `~/.local/share/arkor/browser`) and it stays open. What the
+//! sites hand to a mod manager is printed, one line each, for Arkor to install:
+//! `nxm <link>` (Nexus' "Mod Manager Download"), `ts <namespace> <name> <version>`
+//! (Thunderstore's "Install with Mod Manager") and `file <path>` (a file downloaded by hand,
+//! saved in `~/Downloads/Arkor`).
+//!
 //! It is a program of its own because Arkor's window toolkit cannot hold a browser.
 
 mod pointer;
@@ -28,6 +35,10 @@ const EPIC_DONE: &str = "https://www.epicgames.com/id/api/redirect";
 
 enum Done {
     Code(String),
+    /// A line for Arkor; the browser stays open.
+    Line(String),
+    /// A page that asked for a window of its own: shown here instead.
+    Open(String),
     /// A button of the gamepad, from Arkor.
     Nav(String),
     /// The pointer is wanted, here.
@@ -57,6 +68,54 @@ fn pad_script(turkish: bool) -> String {
     include_str!("pad.js").replace("__LABELS__", labels)
 }
 
+/// Where the mod browser may start.
+fn browsable(url: &str) -> bool {
+    [
+        "https://www.nexusmods.com/",
+        "https://users.nexusmods.com/",
+        "https://next.nexusmods.com/",
+        "https://thunderstore.io/",
+    ]
+    .iter()
+    .any(|p| url.starts_with(p))
+}
+
+/// What the mod browser tells Arkor about a page it was sent to; `None`: an ordinary page.
+/// `Some(None)`: not for a browser (another program's link), so it is not followed.
+fn handoff(url: &str) -> Option<Option<String>> {
+    if url.starts_with("nxm://") {
+        return Some(Some(format!("nxm {url}")));
+    }
+    // ror2mm://v1/install/thunderstore.io/<namespace>/<name>/<version>/
+    if let Some(rest) = url.strip_prefix("ror2mm://v1/install/") {
+        let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+        // Thunderstore's names: letters, digits and `_`, versions with dots; never `..`.
+        let plain = |s: &&str| {
+            s.starts_with(|c: char| c.is_ascii_alphanumeric())
+                && !s.contains("..")
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        };
+        return Some(match parts.as_slice() {
+            [_, ns, name, version] if [ns, name, version].iter().all(|p| plain(p)) => {
+                Some(format!("ts {ns} {name} {version}"))
+            }
+            _ => None,
+        });
+    }
+    let web = ["https://", "http://", "about:", "blob:", "data:"];
+    (!web.iter().any(|w| url.starts_with(w))).then_some(None)
+}
+
+/// Where a file downloaded by hand in the mod browser goes.
+fn downloads_dir() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let base = std::env::var_os("XDG_DOWNLOAD_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(&home).join("Downloads"));
+    Some(base.join("Arkor"))
+}
+
 /// Whether `url` is where the store hands over the code (GOG and Amazon put it in the
 /// address).
 fn carries_code(store: &str, url: &str) -> bool {
@@ -81,10 +140,14 @@ fn main() {
     if !url.starts_with("https://") && !local {
         std::process::exit(2);
     }
+    if store == "browse" && !browsable(&url) && !local {
+        std::process::exit(2);
+    }
     let title = match store.as_str() {
         "epic" => "Epic Games",
         "gog" => "GOG",
         "amazon" => "Amazon Games",
+        "browse" => "Mods",
         _ => std::process::exit(2),
     };
     let result = std::panic::catch_unwind(|| run(&store, &url, title, console, turkish));
@@ -106,11 +169,16 @@ fn run(
     console: bool,
     turkish: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let browse = store == "browse";
     let event_loop = EventLoopBuilder::<Done>::with_user_event().build();
     let mut builder = WindowBuilder::new()
         .with_title(format!("Arkor · {title}"))
-        .with_inner_size(LogicalSize::new(520.0, 760.0))
-        .with_always_on_top(true);
+        .with_inner_size(if browse {
+            LogicalSize::new(1280.0, 860.0)
+        } else {
+            LogicalSize::new(520.0, 760.0)
+        })
+        .with_always_on_top(!browse);
     if console {
         builder = builder.with_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
     }
@@ -146,7 +214,21 @@ fn run(
             else send();
         }})();"#
     );
-    let builder = WebViewBuilder::new()
+    // The mod browser keeps its logins; a store's login window starts afresh every time.
+    let mut context = wry::WebContext::new(std::env::var_os("HOME").filter(|_| browse).map(|h| {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(&h).join(".local/share"))
+            .join("arkor/browser")
+    }));
+    let builder = if browse {
+        WebViewBuilder::new_with_web_context(&mut context)
+    } else {
+        WebViewBuilder::new()
+    };
+    let line_proxy = event_loop.create_proxy();
+    let open_proxy = event_loop.create_proxy();
+    let builder = builder
         .with_url(url)
         .with_initialization_script(&script)
         .with_initialization_script(if console {
@@ -161,12 +243,58 @@ fn run(
             }
         })
         .with_navigation_handler(move |to: String| {
+            if store_nav == "browse" {
+                return match handoff(&to) {
+                    None => true,
+                    Some(line) => {
+                        if let Some(line) = line {
+                            let _ = nav_proxy.send_event(Done::Line(line));
+                        }
+                        false
+                    }
+                };
+            }
             if carries_code(&store_nav, &to) {
                 let _ = nav_proxy.send_event(Done::Code(to));
                 return false;
             }
             true
         });
+    let builder = if browse {
+        builder
+            // Links that open a window of their own open here (one window for the gamepad).
+            .with_new_window_req_handler(move |to, _| {
+                let _ = open_proxy.send_event(Done::Open(to));
+                wry::NewWindowResponse::Deny
+            })
+            .with_download_started_handler(|url, path| {
+                let Some(dir) = downloads_dir() else {
+                    return false;
+                };
+                let _ = std::fs::create_dir_all(&dir);
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_owned())
+                    .or_else(|| {
+                        url.split(['?', '#'])
+                            .next()
+                            .and_then(|u| u.rsplit('/').next())
+                            .filter(|n| !n.is_empty())
+                            .map(Into::into)
+                    })
+                    .unwrap_or_else(|| "mod.zip".into());
+                *path = dir.join(name);
+                true
+            })
+            .with_download_completed_handler(move |_, path, ok| {
+                if let (true, Some(path)) = (ok, path) {
+                    let _ = line_proxy.send_event(Done::Line(format!("file {}", path.display())));
+                }
+            })
+    } else {
+        let _ = (line_proxy, open_proxy);
+        builder
+    };
 
     #[cfg(target_os = "linux")]
     let webview = {
@@ -222,6 +350,16 @@ fn run(
                 pointer.show(x, y);
                 hints(true);
             }
+            Event::UserEvent(Done::Line(line)) => {
+                let mut out = std::io::stdout();
+                let _ = writeln!(out, "{line}");
+                let _ = out.flush();
+            }
+            Event::UserEvent(Done::Open(to)) => {
+                if to.starts_with("https://") {
+                    let _ = webview.load_url(&to);
+                }
+            }
             Event::UserEvent(Done::Code(code)) => {
                 let mut out = std::io::stdout();
                 let _ = writeln!(out, "{code}");
@@ -246,6 +384,33 @@ mod tests {
         assert_eq!(point(r#"{"x":12.5,"y":40}"#), Some((12.5, 40.)));
         assert_eq!(point("null"), None);
         assert_eq!(point(""), None);
+    }
+
+    #[test]
+    fn hands_mod_manager_links_to_arkor() {
+        assert_eq!(
+            handoff("nxm://repo/mods/1/files/81?key=k&expires=1"),
+            Some(Some(
+                "nxm nxm://repo/mods/1/files/81?key=k&expires=1".into()
+            ))
+        );
+        assert_eq!(
+            handoff("ror2mm://v1/install/thunderstore.io/BepInEx/BepInExPack/5.4.2100/"),
+            Some(Some("ts BepInEx BepInExPack 5.4.2100".into()))
+        );
+        assert_eq!(
+            handoff("ror2mm://v1/install/x/../a/b/"),
+            Some(None),
+            "only plain names"
+        );
+        assert_eq!(
+            handoff("steam://run/1"),
+            Some(None),
+            "other programs' links stay here"
+        );
+        assert_eq!(handoff("https://www.nexusmods.com/repo/mods/1"), None);
+        assert!(browsable("https://thunderstore.io/c/repo/"));
+        assert!(!browsable("https://example.com/"));
     }
 
     #[test]
