@@ -234,6 +234,82 @@ pub fn install(
     }
 }
 
+/// Installs a Thunderstore package with what it depends on (BepInEx…), the newest version
+/// unless one is named, then places the mods; the package's name. No login is needed.
+pub fn install_thunderstore(
+    c: &mut Client,
+    link: &Link,
+    namespace: &str,
+    name: &str,
+    version: Option<&str>,
+) -> anyhow::Result<String> {
+    let version = match version {
+        Some(v) => v.to_string(),
+        None => {
+            let v = c.job(
+                "thunderstore.packages.versions.start",
+                json!({"game": link.game, "namespace": namespace, "package": name}),
+                |_| {},
+            )?;
+            newest_version(&v["version_catalog"])
+                .ok_or_else(|| anyhow::anyhow!("{namespace}-{name} has no version to install"))?
+        }
+    };
+    let plan = c.job(
+        "thunderstore.install.plan.start",
+        params(
+            link,
+            json!({"namespace": namespace, "package": name, "version": version}),
+        ),
+        |_| {},
+    )?;
+    let plan = &plan["plan"];
+    c.job(
+        "thunderstore.install.start",
+        params(
+            link,
+            json!({
+                "plan_id": plan["id"],
+                "revision": plan["revision"],
+                "confirm": true,
+                "if_exists": "replace",
+                "installer_policy": "defaults",
+            }),
+        ),
+        |_| {},
+    )?;
+    deploy(c, link)?;
+    Ok(format!("{namespace}-{name}"))
+}
+
+/// The version a catalogue recommends, else its newest.
+fn newest_version(catalog: &Value) -> Option<String> {
+    catalog["recommended_version"]
+        .as_str()
+        .or_else(|| catalog["versions"][0]["version"].as_str())
+        .map(str::to_string)
+}
+
+/// The game's BepInEx package on Thunderstore (`BepInEx/BepInExPack`, or one made for the
+/// game such as `denikson/BepInExPack_Valheim`), when its community has one.
+pub fn find_bepinex(c: &mut Client, link: &Link) -> anyhow::Result<Option<(String, String)>> {
+    let v = c.job(
+        "thunderstore.packages.search.start",
+        json!({"game": link.game, "query": "BepInExPack", "sort": "most-downloaded"}),
+        |_| {},
+    )?;
+    Ok(pick_bepinex(&v["packages"]))
+}
+
+fn pick_bepinex(packages: &Value) -> Option<(String, String)> {
+    packages
+        .as_array()?
+        .iter()
+        .filter_map(|p| Some((p["namespace"].as_str()?, p["name"].as_str()?)))
+        .find(|(_, n)| n.starts_with("BepInExPack"))
+        .map(|(ns, n)| (ns.to_string(), n.to_string()))
+}
+
 /// Places the profile's mods in the game folder (as links). Blocking.
 pub fn deploy(c: &mut Client, link: &Link) -> anyhow::Result<()> {
     c.job(
@@ -346,6 +422,38 @@ mod tests {
         restore(&mut c, &link).unwrap();
     }
 
+    /// BepInEx from Thunderstore for R.E.P.O., over the network: `ARKOR_TEST_AMETHYST_NET`
+    /// starts Amethyst in a sandbox with network whose home has `Games/REPO/REPO.exe` and
+    /// a prefix at `Games/pfx`.
+    #[test]
+    #[ignore = "needs a sandboxed Amethyst with network"]
+    fn bepinex_from_thunderstore() {
+        let serve = std::env::var("ARKOR_TEST_AMETHYST_NET").expect("ARKOR_TEST_AMETHYST_NET");
+        let mut c = Client::spawn(std::process::Command::new(serve)).unwrap();
+        let games = link::games(&mut c).unwrap();
+        let repo = link::best_match(&games, "R.E.P.O.", Some("3241660"))
+            .unwrap()
+            .clone();
+        let place = link::Place {
+            game_dir: "/home/user/Games/REPO".into(),
+            prefix: Some("/home/user/Games/pfx".into()),
+            steam_appid: None,
+        };
+        let id = arkor_core::GameId::new(arkor_core::Store::Local, "repo-test");
+        let link = link::connect(&mut c, &id, &repo, &place).unwrap();
+        let (ns, name) = find_bepinex(&mut c, &link)
+            .unwrap()
+            .expect("a BepInEx pack");
+        eprintln!("pack: {ns}/{name}");
+        install_thunderstore(&mut c, &link, &ns, &name, None).unwrap();
+        let mods = list(&mut c, &link).unwrap();
+        eprintln!(
+            "mods: {:?}",
+            mods.iter().map(|m| &m.name).collect::<Vec<_>>()
+        );
+        assert!(!mods.is_empty());
+    }
+
     #[test]
     fn reads_a_mod_list() {
         let v: Value = serde_json::from_str(
@@ -386,6 +494,33 @@ mod tests {
         .unwrap();
         assert_eq!(needs_of(&m), ["Core Lib", "Melonloader"]);
         assert!(needs_of(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn picks_the_bepinex_pack_and_its_version() {
+        let found = json!([
+            {"namespace": "Someone", "name": "MoreSlots"},
+            {"namespace": "denikson", "name": "BepInExPack_Valheim"},
+            {"namespace": "BepInEx", "name": "BepInExPack"}
+        ]);
+        assert_eq!(
+            pick_bepinex(&found),
+            Some(("denikson".into(), "BepInExPack_Valheim".into())),
+            "the most downloaded one that is a pack"
+        );
+        assert_eq!(pick_bepinex(&json!([])), None);
+        assert_eq!(
+            newest_version(
+                &json!({"recommended_version": "5.4.2100", "versions": [{"version": "6.0"}]})
+            ),
+            Some("5.4.2100".into())
+        );
+        assert_eq!(
+            newest_version(
+                &json!({"recommended_version": null, "versions": [{"version": "1.2.0"}]})
+            ),
+            Some("1.2.0".into())
+        );
     }
 
     #[test]
