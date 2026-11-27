@@ -83,7 +83,8 @@ impl Library {
         self.sys_load(AppCat::Power, cx);
         self.cue(Cue::Open);
         window.activate_window();
-        if !cfg!(test) && super::desk::available() {
+        if !cfg!(test) {
+            // Where the desktop has no way, this only notes that Arkor asked for itself.
             cx.background_executor()
                 .spawn(async { super::desk::show_arkor() })
                 .detach();
@@ -114,6 +115,10 @@ impl Library {
                 })
                 .detach();
         } else {
+            super::desk::note(
+                "back to the game",
+                "no way on this desktop; Arkor minimised",
+            );
             window.minimize_window();
         }
     }

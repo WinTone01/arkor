@@ -22,6 +22,7 @@
   <a href="#uninstall"><b>Uninstall</b></a> ·
   <a href="#screenshots"><b>Screenshots</b></a> ·
   <a href="#features"><b>Features</b></a> ·
+  <a href="#desktops"><b>Desktops</b></a> ·
   <a href="#first-steps"><b>First steps</b></a> ·
   <a href="#command-line"><b>Command line</b></a> ·
   <a href="#files"><b>Files</b></a>
@@ -268,6 +269,25 @@ what is missing with one click: `mangohud`, `gamescope`, `winetricks`, `steam`, 
   </tr>
 </table>
 
+<a id="desktops"></a>
+
+## <img src="docs/icons/console.svg" width="30" align="top"> Desktops
+
+Arkor runs on any Linux desktop. Console mode has to bring its own window over a running
+game, which every desktop allows in its own way, so how well it works there differs:
+
+| Desktop | Library window | Console mode | Notes |
+| --- | --- | --- | --- |
+| **KDE Plasma** | ✅ | ✅ Full | Where Arkor is made and tested; screen settings, Steam's windows kept away |
+| **Hyprland · Sway · niri** | ✅ | 🧪 Experimental | Brought forward with `hyprctl` · `swaymsg` · `niri msg`; not tested on real setups yet |
+| **GNOME** | ✅ (own title bar) | ⚠️ Limited | The pad's middle button cannot bring Arkor over a game yet |
+| **Others** (XFCE, Cinnamon, X11 sessions…) | ✅ | ❓ Untested | Reports welcome |
+
+Using one of the untested ones? **System → Copy diagnostics** (or `arkor system`) copies a
+report of your desktop and what its windows answered Arkor: paste it into an
+[issue](https://github.com/WinTone01/arkor/issues/new/choose). It holds no names, logins
+or files of yours.
+
 <a id="first-steps"></a>
 
 ## <img src="docs/icons/start.svg" width="30" align="top"> First steps
@@ -304,6 +324,7 @@ Everything in the window is also scriptable:
 | `arkor saves sync \| list \| restore <id>` | Cloud saves of Epic and GOG games, and copies of them |
 | `arkor backup create \| restore <file>` | Backs up or restores Arkor's data |
 | `arkor update [--check]` | Updates Arkor to the latest release |
+| `arkor system` | A report of the computer, the desktop and the tools Arkor uses, for bug reports |
 
 Run `arkor help` for the full list.
 

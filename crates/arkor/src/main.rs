@@ -14,7 +14,7 @@ usage:
   arkor open <global|add|stores|protons|id>
                                           open the window on a page
   arkor list                              print the library
-  arkor system                            machine info and tool status
+  arkor system                            machine, desktop and tool report (for bug reports)
   arkor detect                            print games found in other launchers
   arkor add <exe> [--name N] [--prefix P] [--linux] [-- ARGS...]
                                           add a game by hand
@@ -68,16 +68,7 @@ fn main() -> anyhow::Result<()> {
         Some("open") => ui::run(Some(arg(&args, 1)?.clone()), false),
         Some("list") => list(),
         Some("system") => {
-            for (label, value) in arkor_launch::tools::system_info() {
-                println!("{label:<12} {value}");
-            }
-            println!();
-            for t in arkor_launch::tools::tool_status() {
-                match t.found {
-                    Some(v) => println!("✓ {:<28} {v}", t.name),
-                    None => println!("✗ {:<28} sudo pacman -S {}", t.name, t.package),
-                }
-            }
+            print!("{}", arkor_launch::tools::diagnostics());
             Ok(())
         }
         Some("detect") => detect(),

@@ -94,7 +94,7 @@ impl Library {
         if std::mem::take(&mut self.console.come_back) && !window.is_window_active() {
             window.activate_window();
             // Over a game the desktop may not let Arkor ask for itself.
-            if !self.running.is_empty() && !cfg!(test) && super::desk::available() {
+            if !self.running.is_empty() && !cfg!(test) {
                 cx.background_executor()
                     .spawn(async { super::desk::show_arkor() })
                     .detach();

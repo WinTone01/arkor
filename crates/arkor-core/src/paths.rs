@@ -43,6 +43,12 @@ pub fn mangohud_user_config() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// `~/.local/state/arkor/desk.log`: what was asked of the desktop's windows, and its answer.
+pub fn desk_log() -> anyhow::Result<PathBuf> {
+    let state = dirs::state_dir().context("no XDG state dir")?;
+    Ok(state.join("arkor/desk.log"))
+}
+
 /// `~/.local/state/arkor/logs/<id>.log`: output of the last launch of a game.
 pub fn launch_log(id: &crate::GameId) -> anyhow::Result<PathBuf> {
     let state = dirs::state_dir().context("no XDG state dir")?;

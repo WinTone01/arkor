@@ -41,6 +41,44 @@ fn desk() -> Option<Desk> {
     })
 }
 
+/// Notes what was asked and how it went in `desk.log` (kept small), for a report to tell
+/// what happened on a desktop nobody here has.
+pub(super) fn note(what: &str, how: &str) {
+    if cfg!(test) {
+        return;
+    }
+    let Ok(path) = arkor_core::paths::desk_log() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Past 64 KiB the older half is dropped.
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 64 * 1024)
+        && let Ok(text) = std::fs::read_to_string(&path)
+    {
+        let lines: Vec<&str> = text.lines().collect();
+        let _ = std::fs::write(&path, lines[lines.len() / 2..].join("\n") + "\n");
+    }
+    let name = match desk() {
+        Some(d) => format!("{d:?}"),
+        None => std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "unknown".into()),
+    };
+    let line = format!("{} {name} {what}: {how}\n", arkor_core::stats::now());
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+fn said(ok: bool) -> &'static str {
+    if ok { "ok" } else { "failed" }
+}
+
 /// Whether windows can be brought to the front here.
 pub(super) fn available() -> bool {
     !cfg!(test) && desk().is_some()
@@ -147,46 +185,47 @@ fn hypr_game(clients: &str, pids: &[u32]) -> Option<String> {
 
 /// Brings Arkor's window to the front. Blocking.
 pub(super) fn show_arkor() {
-    match desk() {
-        Some(Desk::Kwin) => kwin::show_arkor(),
-        Some(Desk::Hyprland) => {
-            hypr_focus("class:^(arkor)$");
+    let ok = match desk() {
+        Some(Desk::Kwin) => {
+            kwin::show_arkor();
+            true
         }
-        Some(Desk::Sway) => {
-            sway_focus(r#"[app_id="^arkor$"]"#);
-        }
+        Some(Desk::Hyprland) => hypr_focus("class:^(arkor)$"),
+        Some(Desk::Sway) => sway_focus(r#"[app_id="^arkor$"]"#),
         Some(Desk::Niri) => {
-            if let Some(id) = niri_pick(&niri_windows(), |w| w["app_id"] == "arkor") {
-                niri_focus(id);
-            }
+            niri_pick(&niri_windows(), |w| w["app_id"] == "arkor").is_some_and(niri_focus)
         }
-        None => {}
-    }
+        None => {
+            return note(
+                "arkor to the front",
+                "no way on this desktop; Arkor asked itself",
+            );
+        }
+    };
+    note("arkor to the front", said(ok));
 }
 
 /// Brings Steam's windows to the front. Blocking.
 pub(super) fn show_steam() {
-    match desk() {
-        Some(Desk::Kwin) => kwin::show_steam(),
-        Some(Desk::Hyprland) => {
-            hypr_focus("class:^(steam)$");
+    let ok = match desk() {
+        Some(Desk::Kwin) => {
+            kwin::show_steam();
+            true
         }
-        Some(Desk::Sway) => {
-            sway_focus(r#"[class="^steam$"]"#);
-        }
+        Some(Desk::Hyprland) => hypr_focus("class:^(steam)$"),
+        Some(Desk::Sway) => sway_focus(r#"[class="^steam$"]"#),
         Some(Desk::Niri) => {
-            if let Some(id) = niri_pick(&niri_windows(), |w| w["app_id"] == "steam") {
-                niri_focus(id);
-            }
+            niri_pick(&niri_windows(), |w| w["app_id"] == "steam").is_some_and(niri_focus)
         }
-        None => {}
-    }
+        None => return note("steam to the front", "no way on this desktop"),
+    };
+    note("steam to the front", said(ok));
 }
 
 /// Brings a running game's window (one of `pids`') to the front; `false` when it could not.
 /// Blocking.
 pub(super) fn show_game(pids: &[u32]) -> bool {
-    match desk() {
+    let ok = match desk() {
         Some(Desk::Kwin) => kwin::show_game(pids),
         Some(Desk::Hyprland) => run("hyprctl", &["-j", "clients"])
             .and_then(|c| hypr_game(&c, pids))
@@ -202,26 +241,27 @@ pub(super) fn show_game(pids: &[u32]) -> bool {
             .is_some_and(niri_focus)
         }
         None => false,
-    }
+    };
+    note(
+        &format!("game to the front ({} processes)", pids.len()),
+        said(ok),
+    );
+    ok
 }
 
 /// Brings the window of process `pid` to the front (one that opened behind a game). Blocking.
 pub(super) fn show_process(pid: u32) {
-    match desk() {
-        Some(Desk::Kwin) => kwin::show_process(pid),
-        Some(Desk::Hyprland) => {
-            hypr_focus(&format!("pid:{pid}"));
+    let ok = match desk() {
+        Some(Desk::Kwin) => {
+            kwin::show_process(pid);
+            true
         }
-        Some(Desk::Sway) => {
-            sway_focus(&format!("[pid={pid}]"));
-        }
-        Some(Desk::Niri) => {
-            if let Some(id) = niri_pick(&niri_windows(), |w| w["pid"] == pid) {
-                niri_focus(id);
-            }
-        }
-        None => {}
-    }
+        Some(Desk::Hyprland) => hypr_focus(&format!("pid:{pid}")),
+        Some(Desk::Sway) => sway_focus(&format!("[pid={pid}]")),
+        Some(Desk::Niri) => niri_pick(&niri_windows(), |w| w["pid"] == pid).is_some_and(niri_focus),
+        None => return,
+    };
+    note("login window to the front", said(ok));
 }
 
 #[cfg(test)]

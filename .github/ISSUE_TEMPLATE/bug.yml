@@ -1,0 +1,50 @@
+name: Something does not work
+description: A bug, or something that behaves differently on your desktop
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: desktop
+    attributes:
+      label: Desktop
+      options:
+        - KDE Plasma
+        - GNOME
+        - Hyprland
+        - Sway
+        - niri
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Where
+      options:
+        - Library window
+        - Console mode (gamepad)
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: pad
+    attributes:
+      label: Gamepad
+      description: If it is about console mode, which controller.
+      placeholder: e.g. Xbox Series controller over Bluetooth
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostics
+      description: >
+        In Arkor, System → Copy diagnostics, or the output of `arkor system`. It holds
+        no names, logins or files of yours.
+      render: text
+    validations:
+      required: true

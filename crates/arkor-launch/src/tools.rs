@@ -437,6 +437,133 @@ pub fn system_info() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// What helps tell why something does not work on this desktop: Arkor's version, the
+/// computer, the desktop's tools, the programs Arkor uses, and the last things asked of the
+/// desktop's windows. Nothing personal: no names, paths of the home folder, or logins.
+pub fn diagnostics() -> String {
+    let mut out = format!("Arkor {}\n", crate::self_update::current_version());
+    for (label, value) in system_info() {
+        out.push_str(&format!("{label}: {value}\n"));
+    }
+    let env = |k: &str| std::env::var(k).unwrap_or_else(|_| "-".into());
+    out.push_str(&format!(
+        "Desktop env: XDG_CURRENT_DESKTOP={} XDG_SESSION_DESKTOP={} WAYLAND_DISPLAY={} DISPLAY={}\n",
+        env("XDG_CURRENT_DESKTOP"),
+        env("XDG_SESSION_DESKTOP"),
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() { "set" } else { "-" },
+        if std::env::var_os("DISPLAY").is_some() { "set" } else { "-" },
+    ));
+    let sockets: Vec<&str> = [
+        ("HYPRLAND_INSTANCE_SIGNATURE", "hyprland"),
+        ("SWAYSOCK", "sway"),
+        ("NIRI_SOCKET", "niri"),
+    ]
+    .into_iter()
+    .filter(|(k, _)| std::env::var_os(k).is_some())
+    .map(|(_, n)| n)
+    .collect();
+    out.push_str(&format!(
+        "Compositor sockets: {}\n",
+        if sockets.is_empty() {
+            "-".into()
+        } else {
+            sockets.join(", ")
+        }
+    ));
+    let tools = [
+        "gdbus",
+        "hyprctl",
+        "swaymsg",
+        "niri",
+        "kscreen-doctor",
+        "spectacle",
+        "gnome-screenshot",
+        "grim",
+        "maim",
+        "scrot",
+        "pkexec",
+        "notify-send",
+        "wpctl",
+        "powerprofilesctl",
+        "nmcli",
+        "bluetoothctl",
+        "xdg-open",
+        "xdg-terminal-exec",
+    ];
+    let (have, lack): (Vec<&str>, Vec<&str>) = tools.into_iter().partition(|t| in_path(t));
+    out.push_str(&format!("Desktop tools: {}\n", have.join(" ")));
+    out.push_str(&format!("Missing: {}\n", lack.join(" ")));
+    out.push_str(&format!("Portals: {}\n", portals().join(" ")));
+    out.push_str(&format!(
+        "Polkit agent: {}\n",
+        if polkit_agent() {
+            "running"
+        } else {
+            "none found"
+        }
+    ));
+    out.push_str("\nPrograms:\n");
+    for t in tool_status() {
+        match t.found {
+            Some(v) => out.push_str(&format!("  ok {} {v}\n", t.name)),
+            None => out.push_str(&format!("  -- {} (package {})\n", t.name, t.package)),
+        }
+    }
+    let log = arkor_core::paths::desk_log()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    let last: Vec<&str> = log.lines().rev().take(30).collect();
+    if !last.is_empty() {
+        out.push_str("\nWindows (last first):\n");
+        for l in last {
+            out.push_str(&format!("  {l}\n"));
+        }
+    }
+    out
+}
+
+/// The desktop portals installed (`/usr/share/xdg-desktop-portal/portals/*.portal`).
+fn portals() -> Vec<String> {
+    let mut list: Vec<String> = std::fs::read_dir("/usr/share/xdg-desktop-portal/portals")
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .strip_suffix(".portal")
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    list.sort();
+    if list.is_empty() {
+        list.push("none".into());
+    }
+    list
+}
+
+/// Whether a polkit agent (what asks for the password for pkexec) runs for this session.
+fn polkit_agent() -> bool {
+    let Ok(procs) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    procs.flatten().any(|e| {
+        let comm = std::fs::read_to_string(e.path().join("comm")).unwrap_or_default();
+        let cmd = std::fs::read(e.path().join("cmdline")).unwrap_or_default();
+        let cmd = String::from_utf8_lossy(&cmd).to_lowercase();
+        let comm = comm.trim().to_lowercase();
+        (cmd.contains("polkit") && (cmd.contains("agent") || cmd.contains("authentication")))
+            || comm.contains("polkit-kde-auth")
+            || comm.contains("polkit-gnome")
+            || comm == "gnome-shell"
+            || comm == "hyprpolkitagent"
+            || comm == "lxpolkit"
+            || comm == "mate-polkit"
+    })
+}
+
 /// GPU name from `lspci` (VGA/3D controller line).
 fn gpu_name() -> Option<String> {
     let out = std::process::Command::new("lspci").output().ok()?;

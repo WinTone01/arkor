@@ -169,23 +169,29 @@ impl Library {
             .child(
                 style::button(
                     "copy-system",
-                    self.tr("Copy details", "Bilgileri kopyala"),
+                    self.tr("Copy diagnostics", "Teşhis bilgisini kopyala"),
                     false,
                 )
                 .child(style::icon("copy", 13., pal::muted()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let text: String = this
-                        .system
-                        .info
-                        .as_ref()
-                        .map(|(i, _)| i.iter().map(|(k, v)| format!("{k}: {v}\n")).collect())
-                        .unwrap_or_default();
-                    cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                        "Arkor {}\n{text}",
-                        arkor_launch::self_update::current_version()
-                    )));
-                    this.status = Some(this.tr("Copied.", "Kopyalandı.").into());
-                    cx.notify();
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    // The whole report, for an issue: the desktop's tools and what its windows
+                    // answered too (it asks pacman, so not here).
+                    let bg = cx.background_executor().clone();
+                    cx.spawn(async move |this, cx| {
+                        let text = bg.spawn(async { tools::diagnostics() }).await;
+                        let _ = this.update(cx, |this, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            this.status = Some(
+                                this.tr(
+                                    "Copied: paste it into the issue.",
+                                    "Kopyalandı: hata bildirimine yapıştırabilirsin.",
+                                )
+                                .into(),
+                            );
+                            cx.notify();
+                        });
+                    })
+                    .detach();
                 })),
             );
 
