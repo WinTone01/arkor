@@ -2228,3 +2228,60 @@ fn ctrl_plus_and_minus_change_the_text_size() {
     cx.simulate_keystrokes("ctrl-0");
     assert_eq!(size(cx), 14);
 }
+
+#[test]
+fn hidden_games_wait_for_the_pin() {
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let mut lib = GameLibrary::load().unwrap();
+    lib.get_mut("test-game").unwrap().hidden = true;
+    lib.save().unwrap();
+    let mut global = arkor_core::Global::load_or_import().unwrap();
+    global.hidden_pin = Some(arkor_core::profile::pin::make("2468").unwrap());
+    global.save().unwrap();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("library"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update(cx, |l, cx| {
+        assert!(l.visible.is_empty(), "the hidden game is not listed");
+        l.toggle_hidden(cx);
+        assert!(
+            l.pin_asking && !l.filter.show_hidden,
+            "the PIN is asked first"
+        );
+    });
+    cx.run_until_parked();
+    let input = view.read_with(cx, |l, _| {
+        l.fields.inputs.get("pin-ask").map(|(i, _)| i.clone())
+    });
+    let input = input.expect("the PIN field is shown");
+    input.update(cx, |i, cx| i.set_text("1111", cx));
+    view.update(cx, |_, cx| {
+        input.update(cx, |_, cx| {
+            cx.emit(super::text_input::InputEvent::Submit("1111".into()))
+        })
+    });
+    cx.run_until_parked();
+    assert!(
+        view.read_with(cx, |l, _| !l.filter.show_hidden),
+        "a wrong PIN does nothing"
+    );
+    view.update(cx, |_, cx| {
+        input.update(cx, |_, cx| {
+            cx.emit(super::text_input::InputEvent::Submit("2468".into()))
+        })
+    });
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |l, _| l.filter.show_hidden && l.visible.len() == 1));
+}

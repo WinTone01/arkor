@@ -223,6 +223,7 @@ impl Library {
                 .flex_col()
                 .gap_4()
                 .child(self.render_app_update(cx))
+                .child(self.render_pin_settings(cx))
                 .child(
                     widgets::section(self.tr("Language", "Dil")).child(widgets::setting_row(
                         self.tr("Interface language", "Arayüz dili"),

@@ -310,4 +310,129 @@ impl Library {
                 ),
             )
     }
+
+    /// Hidden games are behind a PIN not typed yet.
+    pub(super) fn hidden_locked(&self) -> bool {
+        self.global.hidden_pin.is_some() && !self.hidden_unlocked
+    }
+
+    /// The PIN asked before hidden games show.
+    pub(super) fn pin_card(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.pin_asking {
+            return None;
+        }
+        let input = self.secret_field(
+            "pin-ask",
+            self.tr("PIN, then Enter", "PIN, sonra Enter"),
+            cx,
+        );
+        let sub_input = input.clone();
+        if !self.fields.inputs.contains_key("pin-ask-sub") {
+            let sub = cx.subscribe(
+                &sub_input,
+                |this, input, ev: &super::text_input::InputEvent, cx| {
+                    if let super::text_input::InputEvent::Submit(text) = ev {
+                        let ok = this
+                            .global
+                            .hidden_pin
+                            .as_deref()
+                            .is_some_and(|k| arkor_core::profile::pin::check(k, text));
+                        if ok {
+                            this.hidden_unlocked = true;
+                            this.pin_asking = false;
+                            this.filter.show_hidden = true;
+                            this.apply_filter();
+                        } else {
+                            this.status = Some(this.tr("Wrong PIN", "PIN yanlış").into());
+                        }
+                        input.update(cx, |i, cx| i.set_text("", cx));
+                        cx.notify();
+                    }
+                },
+            );
+            self.fields
+                .inputs
+                .insert("pin-ask-sub".into(), (input.clone(), sub));
+        }
+        Some(
+            super::style::card()
+                .p_4()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(super::style::icon("lock", 16., pal::accent_light()))
+                .child(div().flex_1().text_sm().child(self.tr(
+                    "Hidden games are locked. Type the PIN to show them.",
+                    "Gizli oyunlar kilitli. Göstermek için PIN'i yaz.",
+                )))
+                .child(div().w(px(180.)).child(input))
+                .child(
+                    widgets::chip("pin-cancel", self.tr("Cancel", "Vazgeç"), false).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.pin_asking = false;
+                            cx.notify();
+                        }),
+                    ),
+                ),
+        )
+    }
+
+    /// Settings: set, change or remove the PIN of hidden games.
+    pub(super) fn render_pin_settings(&mut self, cx: &mut Context<Self>) -> Div {
+        let has = self.global.hidden_pin.is_some();
+        let set = self.submit_field(
+            "pin-set",
+            if has {
+                self.tr(
+                    "Current PIN to remove it, then Enter",
+                    "Kaldırmak için şimdiki PIN, sonra Enter",
+                )
+            } else {
+                self.tr(
+                    "New PIN (4+ digits), then Enter",
+                    "Yeni PIN (4+ rakam), sonra Enter",
+                )
+            },
+            cx,
+            |this, text, cx| {
+                match this.global.hidden_pin.clone() {
+                    Some(k) => {
+                        if arkor_core::profile::pin::check(&k, text) {
+                            this.global.hidden_pin = None;
+                            let r = this.global.save();
+                            this.report(r);
+                        } else {
+                            this.status = Some(this.tr("Wrong PIN", "PIN yanlış").into());
+                        }
+                    }
+                    None => match arkor_core::profile::pin::make(text) {
+                        Ok(k) => {
+                            this.global.hidden_pin = Some(k);
+                            this.hidden_unlocked = false;
+                            this.filter.show_hidden = false;
+                            this.apply_filter();
+                            let r = this.global.save();
+                            this.report(r);
+                        }
+                        Err(e) => this.status = Some(format!("{e:#}").into()),
+                    },
+                }
+                cx.notify();
+            },
+        );
+        set.update(cx, |i, _| i.set_masked(true));
+        widgets::section(self.tr("Hidden games PIN", "Gizli oyunlar için PIN"))
+            .child(widgets::label(if has {
+                self.tr(
+                    "Hidden games show only after the PIN is typed (once per start of Arkor). It keeps them from a quick look, it is not encryption.",
+                    "Gizli oyunlar yalnızca PIN yazıldıktan sonra görünür (Arkor her açıldığında bir kez). Göz atanlardan saklar; şifreleme değildir.",
+                )
+            } else {
+                self.tr(
+                    "Keep hidden games behind a PIN, for example when others use this computer.",
+                    "Gizli oyunları bir PIN arkasında tut; örneğin bu bilgisayarı başkaları da kullanıyorsa.",
+                )
+            }))
+            .child(div().w(px(320.)).child(set))
+    }
 }

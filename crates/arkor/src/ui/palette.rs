@@ -93,7 +93,11 @@ impl Library {
             self.tr("Look for updates", "Güncellemeleri denetle").into(),
             Do::Updates,
         ));
+        let locked = self.hidden_locked();
         for (ix, g) in self.games.iter().enumerate() {
+            if locked && self.library.get(&g.id.id).is_some_and(|e| e.hidden) {
+                continue;
+            }
             out.push((
                 "play",
                 format!("{} {}", self.tr("Play", "Oyna:"), g.name),

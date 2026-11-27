@@ -437,6 +437,9 @@ pub struct Global {
     /// Keeping statuses, ratings, notes and play time the same on several computers.
     #[serde(skip_serializing_if = "SyncSettings::is_off")]
     pub sync: SyncSettings,
+    /// The PIN that guards "show hidden games", as `salt:sha256` (`None` = no PIN).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden_pin: Option<String>,
     /// How many games the user wants to beat in a year (0 = no goal).
     #[serde(skip_serializing_if = "is_zero")]
     pub beat_goal: u32,
@@ -1441,5 +1444,56 @@ impl SyncSettings {
 
     pub fn is_on(&self) -> bool {
         !self.is_off()
+    }
+}
+
+/// The PIN of hidden games: a privacy screen (hidden games stay out of the lists until it
+/// is typed), kept as a salted hash.
+pub mod pin {
+    use sha2::{Digest, Sha256};
+
+    fn hash(salt: &str, pin: &str) -> String {
+        let mut h = Sha256::new();
+        h.update(salt.as_bytes());
+        h.update(b":");
+        h.update(pin.trim().as_bytes());
+        format!("{:x}", h.finalize())
+    }
+
+    /// What to keep for `pin` (digits, at least four).
+    pub fn make(pin: &str) -> anyhow::Result<String> {
+        let pin = pin.trim();
+        anyhow::ensure!(
+            pin.len() >= 4 && pin.chars().all(|c| c.is_ascii_digit()),
+            "a PIN is at least four digits"
+        );
+        let salt = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+                ^ u128::from(std::process::id())
+        );
+        Ok(format!("{salt}:{}", hash(&salt, pin)))
+    }
+
+    /// Whether `pin` is the one `kept` was made from.
+    pub fn check(kept: &str, pin: &str) -> bool {
+        kept.split_once(':')
+            .is_some_and(|(salt, h)| hash(salt, pin) == h)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn checks_the_pin() {
+            let kept = super::make("2468").unwrap();
+            assert!(super::check(&kept, "2468"));
+            assert!(super::check(&kept, " 2468 "));
+            assert!(!super::check(&kept, "1357"));
+            assert!(!kept.contains("2468"));
+            assert!(super::make("12").is_err() && super::make("abcd").is_err());
+        }
     }
 }

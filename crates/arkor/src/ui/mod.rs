@@ -177,6 +177,10 @@ pub struct Library {
     search: Option<(gpui::Entity<text_input::TextInput>, gpui::Subscription)>,
     /// "Save this view" asks for a name.
     views_naming: bool,
+    /// The PIN of hidden games was typed in this session.
+    hidden_unlocked: bool,
+    /// "Hidden games" asks for the PIN.
+    pin_asking: bool,
     /// The library before the last change to several games, and what that change was.
     undo: Option<(String, GameLibrary)>,
     search_text: String,
@@ -276,6 +280,8 @@ impl Library {
             visible: Vec::new(),
             search: None,
             views_naming: false,
+            hidden_unlocked: false,
+            pin_asking: false,
             undo: None,
             search_text: String::new(),
             focus: None,
@@ -720,6 +726,11 @@ impl Library {
     }
 
     fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
+        if !self.filter.show_hidden && self.hidden_locked() {
+            self.pin_asking = true;
+            cx.notify();
+            return;
+        }
         self.filter.show_hidden = !self.filter.show_hidden;
         self.apply_filter();
         cx.notify();

@@ -109,7 +109,7 @@ impl Library {
                 *f == Filter::Favorites,
             ));
         }
-        if self.library.games.iter().any(|g| g.hidden) {
+        if self.library.games.iter().any(|g| g.hidden) && !self.hidden_locked() {
             pills.push(Item::pill(
                 Act::Filter(Filter::Hidden),
                 "eye-off",
