@@ -1,4 +1,4 @@
-//! The pointer moved with the gamepad, for what the page's script cannot reach. The left stick
+//! The pointer moved with the gamepad (drawn by the page's script, see `pad.js`). The left stick
 //! moves it (any direction, faster the further it is pushed), the right one scrolls, the
 //! d-pad moves it too; A is its button, down as long as it is held. Everything it does in the
 //! page is what the user's hand does on the gamepad: nothing is moved or clicked by itself.
@@ -139,17 +139,21 @@ struct State {
     last: Option<(String, Instant, u32)>,
 }
 
+/// Draws the pointer: where its tip is, whether A is held, whether it shows.
+type Paint = dyn Fn((f64, f64), bool, bool);
+
 #[derive(Clone)]
 pub struct Pointer {
     page: gtk::Widget,
-    /// A see-through layer over the page that the pointer is drawn on: a page drawn by the
-    /// graphics card (WebKit's own compositing) would cover anything drawn on it directly.
-    canvas: gtk::Widget,
+    /// Draws it: in the page itself (`x`, `y`, held down, shown), so it shows however the
+    /// page is drawn. A GTK layer over a page the graphics card draws hid the page on some
+    /// machines, and one drawn on the page widget was covered by it.
+    paint: Rc<Paint>,
     state: Rc<RefCell<State>>,
 }
 
 impl Pointer {
-    pub fn new(page: gtk::Widget, canvas: gtk::Widget) -> Self {
+    pub fn new(page: gtk::Widget, paint: impl Fn((f64, f64), bool, bool) + 'static) -> Self {
         let state = Rc::new(RefCell::new(State {
             at: (0., 0.),
             out: false,
@@ -158,26 +162,26 @@ impl Pointer {
             pad_held: 0.,
             last: None,
         }));
-        // Drawn by the window itself over the page: no waiting for the page's script.
-        let s = state.clone();
-        canvas.connect_local("draw", true, move |args| {
-            let state = s.borrow();
-            if state.out
-                && let Ok(cr) = args[1].get::<gtk::cairo::Context>()
-            {
-                draw(&cr, state.at, state.down);
-            }
-            Some(false.to_value())
-        });
         Self {
             page,
-            canvas,
+            paint: Rc::new(paint),
             state,
         }
     }
 
     pub fn out(&self) -> bool {
         self.state.borrow().out
+    }
+
+    /// Where it is (or was last).
+    pub fn at(&self) -> (f64, f64) {
+        self.state.borrow().at
+    }
+
+    /// Draws it again where it is (a new page has no pointer of its own yet).
+    pub fn repaint(&self) {
+        let s = self.state.borrow();
+        (self.paint)(s.at, s.down, s.out);
     }
 
     pub fn show(&self, x: f64, y: f64) {
@@ -188,7 +192,7 @@ impl Pointer {
             }
             (s.at, s.frame, s.pad_held, s.last) = ((x, y), None, 0., None);
         }
-        self.canvas.queue_draw();
+        self.repaint();
         send(&self.page, What::Move, (x, y), false);
         let me = self.clone();
         // With every refresh of the screen, as long as it is out.
@@ -204,7 +208,7 @@ impl Pointer {
     pub fn hide(&self) {
         self.press(false);
         self.state.borrow_mut().out = false;
-        self.canvas.queue_draw();
+        self.repaint();
     }
 
     /// One frame: moves and scrolls by how the sticks are held.
@@ -255,10 +259,7 @@ impl Pointer {
             (from, s.at, s.down)
         };
         if from != to {
-            for (x, y) in [from, to] {
-                self.canvas
-                    .queue_draw_area(x as i32 - 12, y as i32 - 12, 48, 52);
-            }
+            (self.paint)(to, down, true);
             send(&self.page, What::Move, to, down);
         }
     }
@@ -273,7 +274,7 @@ impl Pointer {
             s.down = down;
             s.at
         };
-        self.canvas.queue_draw();
+        self.repaint();
         send(
             &self.page,
             if down { What::Press } else { What::Release },
@@ -306,34 +307,6 @@ impl Pointer {
         let step = (8. + 7. * f64::from(run)).min(64.);
         self.move_by(dx * step, dy * step);
     }
-}
-
-/// An arrow with its tip at `at`.
-fn draw(cr: &gtk::cairo::Context, (x, y): (f64, f64), down: bool) {
-    let _ = cr.save();
-    cr.translate(x, y);
-    if down {
-        cr.scale(0.9, 0.9);
-    }
-    cr.move_to(0., 0.);
-    for (px, py) in [
-        (0., 25.),
-        (6., 19.5),
-        (10., 28.5),
-        (14., 26.7),
-        (10.2, 18.),
-        (18., 17.5),
-    ] {
-        cr.line_to(px, py);
-    }
-    cr.close_path();
-    cr.set_source_rgb(1., 1., 1.);
-    let _ = cr.fill_preserve();
-    cr.set_source_rgb(0.43, 0.16, 0.85);
-    cr.set_line_width(1.8);
-    cr.set_line_join(gtk::cairo::LineJoin::Round);
-    let _ = cr.stroke();
-    let _ = cr.restore();
 }
 
 enum What {

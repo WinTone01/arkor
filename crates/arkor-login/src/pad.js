@@ -1,5 +1,7 @@
-// Console mode in the login window: a gamepad (its buttons come from Arkor as `nav` calls)
-// moves between the page's fields and buttons, and an on-screen keyboard types.
+// Console mode in the login and mod windows: the gamepad moves a pointer over the page (the
+// window moves it and clicks with it; here it is only drawn), and a text field that is
+// clicked opens an on-screen keyboard, whose keys the gamepad's buttons then press (they
+// come from the window as `nav` calls while it is open).
 (function () {
   if (window.__arkor) return;
   const L = __LABELS__;
@@ -22,7 +24,12 @@
     #__arkor-hints { position: fixed; left: 0; right: 0; bottom: 0; height: 56px; z-index: 2147483646;
       display: flex; gap: 28px; align-items: center; justify-content: flex-end; padding: 0 40px;
       background: linear-gradient(transparent, #0c0b12ee 45%); color: #d4d4d8; font: 500 16px system-ui, sans-serif; }
-    #__arkor-hints b { border: 1px solid #ffffff55; border-radius: 8px; padding: 2px 8px; margin-right: 8px; }`;
+    #__arkor-hints b { border: 1px solid #ffffff55; border-radius: 8px; padding: 2px 8px; margin-right: 8px; }
+    #__arkor-cursor { position: fixed; left: 0; top: 0; width: 22px; height: 30px; z-index: 2147483647;
+      pointer-events: none; display: none; filter: drop-shadow(0 2px 3px #0008); transform-origin: 0 0; }`;
+  const ARROW = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30">
+    <path d="M1 1 L1 26 L7 20.5 L11 29.5 L15 27.7 L11.2 19 L19 18.5 Z" fill="#fff" stroke="#6d28d9"
+      stroke-width="1.8" stroke-linejoin="round"/></svg>`;
 
   function ready(f) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", f);
@@ -36,22 +43,46 @@
     h.id = "__arkor-hints";
     document.body.appendChild(h);
     hints();
+    // A text field clicked with the pointer: the keyboard comes up for it.
+    document.addEventListener("mousedown", (e) => {
+      const t = e.target && e.target.closest ? e.target.closest("input,textarea") : null;
+      if (isText(t)) setTimeout(() => { current = t; openKbd(); }, 0);
+    }, true);
   });
 
   function hints() {
     const h = document.getElementById("__arkor-hints");
     if (!h) return;
-    const list = ptr
-      ? [["A", L.click], ["B", L.leave], ["☰", L.close]]
-      : [["A", L.choose], ["B", L.back], ["X", L.pointer], ["☰", L.close]];
+    const list = kbd
+      ? [["A", L.choose], ["B", L.done], ["X", "⌫"], ["Y", L.space]]
+      : ptr
+        ? [["A", L.click], ["B", L.back], ["☰", L.close]]
+        : [["A", L.choose], ["B", L.back], ["X", L.pointer], ["☰", L.close]];
     h.innerHTML = list.map(([k, t]) => `<span><b>${k}</b>${t}</span>`).join("");
   }
-  // The window draws the pointer and moves it; here only the hints change.
+  // The window moves the pointer; here only the hints change.
   A.pointer = function (on) {
     ptr = on;
-    if (on) { closeKbd(); mark(null); }
+    if (on) mark(null);
     hints();
   };
+  // Draws the pointer with its tip at x, y (smaller while A is held), or hides it.
+  A.cursor = function (x, y, down, on) {
+    let c = document.getElementById("__arkor-cursor");
+    if (!c) {
+      if (!on || !document.body) return;
+      c = document.createElement("div");
+      c.id = "__arkor-cursor";
+      c.innerHTML = ARROW;
+      document.body.appendChild(c);
+    }
+    c.style.display = on ? "block" : "none";
+    c.style.transform = `translate(${x}px, ${y}px)` + (down ? " scale(.9)" : "");
+  };
+  // Tells the window whether the keyboard has the gamepad.
+  function tell(open) {
+    try { window.ipc.postMessage(open ? "arkor:kbd:1" : "arkor:kbd:0"); } catch (_) {}
+  }
   // Where the pointer starts: beside a frame (the user takes it to the box), else in the
   // middle of what has the focus.
   function pointerAt() {
@@ -152,10 +183,15 @@
     document.body.appendChild(kbd);
     kx = 4; ky = 1;
     draw();
+    hints();
+    tell(true);
   }
   function closeKbd() {
-    if (kbd) kbd.remove();
+    if (!kbd) return;
+    kbd.remove();
     kbd = null;
+    hints();
+    tell(false);
   }
   function type(text) {
     if (current) current.focus({ preventScroll: true });
@@ -169,7 +205,7 @@
       case "sym": sym = !sym; break;
       case "space": type(" "); break;
       case "bksp": document.execCommand("delete"); break;
-      case "done": closeKbd(); move(0, 1); return;
+      case "done": closeKbd(); if (!ptr) move(0, 1); return;
     }
     draw();
   }

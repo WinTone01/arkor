@@ -43,21 +43,10 @@ enum Done {
     Ready,
     /// A button of the gamepad, from Arkor.
     Nav(String),
-    /// The pointer is wanted, here.
-    Pointer(f64, f64),
+    /// The page's on-screen keyboard opened (`true`) or closed: it has the gamepad then.
+    Keyboard(bool),
     /// A was pressed or let go (read from the gamepad directly).
     Press(bool),
-}
-
-/// What the page's script answered: `{"x":…,"y":…}`.
-fn point(answer: &str) -> Option<(f64, f64)> {
-    let number = |key: &str| -> Option<f64> {
-        let rest = answer.split_once(&format!("\"{key}\":"))?.1;
-        let end = rest.find([',', '}'])?;
-        rest[..end].trim().parse().ok()
-    };
-    let (x, y) = (number("x")?, number("y")?);
-    (x.is_finite() && y.is_finite()).then_some((x, y))
 }
 
 /// The page's gamepad script, with its words in the user's language.
@@ -242,6 +231,7 @@ fn run(
         // Dark until the page draws itself (no white flash).
         .with_background_color((12, 11, 18, 255))
         .with_on_page_load_handler(move |event, _| {
+            // Every page: the first brings the window up, each one gets the pointer drawn.
             if matches!(event, wry::PageLoadEvent::Finished) {
                 let _ = ready_proxy.send_event(Done::Ready);
             }
@@ -255,8 +245,17 @@ fn run(
         })
         .with_ipc_handler(move |req| {
             let text = req.body().to_string();
-            if text.contains("authorizationCode") {
-                let _ = proxy.send_event(Done::Code(text));
+            match text.as_str() {
+                "arkor:kbd:1" => {
+                    let _ = proxy.send_event(Done::Keyboard(true));
+                }
+                "arkor:kbd:0" => {
+                    let _ = proxy.send_event(Done::Keyboard(false));
+                }
+                _ if text.contains("authorizationCode") => {
+                    let _ = proxy.send_event(Done::Code(text));
+                }
+                _ => {}
             }
         })
         .with_navigation_handler(move |to: String| {
@@ -313,72 +312,83 @@ fn run(
         builder
     };
 
-    // The page, with a see-through layer over it for the gamepad's pointer.
-    let (webview, canvas) = {
-        use gtk::prelude::*;
+    #[cfg(target_os = "linux")]
+    let webview = {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
         let vbox = window.default_vbox().ok_or("no window box")?;
-        let overlay = gtk::Overlay::new();
-        vbox.pack_start(&overlay, true, true, 0);
-        let canvas = gtk::DrawingArea::new();
-        overlay.add_overlay(&canvas);
-        overlay.set_overlay_pass_through(&canvas, true);
-        let webview = builder.build_gtk(&overlay)?;
-        overlay.show_all();
-        (webview, canvas)
+        builder.build_gtk(vbox)?
     };
+    #[cfg(not(target_os = "linux"))]
+    let webview = builder.build(&window)?;
+    let webview = std::rc::Rc::new(webview);
 
-    let pointer_proxy = event_loop.create_proxy();
+    // The gamepad's pointer, drawn by the page's script (see `pad.js`).
+    let drawn = webview.clone();
     let pointer = pointer::Pointer::new(
-        gtk::prelude::Cast::upcast(wry::WebViewExtUnix::webview(&webview)),
-        gtk::prelude::Cast::upcast(canvas),
+        gtk::prelude::Cast::upcast(wry::WebViewExtUnix::webview(&*webview)),
+        move |(x, y), down, on| {
+            let _ = drawn.evaluate_script(&format!(
+                "window.__arkor && window.__arkor.cursor({x:.1},{y:.1},{down},{on})"
+            ));
+        },
     );
     let mut shown = false;
+    // The page's keyboard has the gamepad.
+    let mut keyboard = false;
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
-        // The page shows the pointer's hints while it is out.
-        let hints = |on: bool| {
-            let _ =
-                webview.evaluate_script(&format!("window.__arkor && window.__arkor.pointer({on})"));
-        };
         match event {
-            Event::UserEvent(Done::Press(down)) => pointer.press(down),
-            Event::UserEvent(Done::Nav(nav)) => match nav.as_str() {
-                // The menu button leaves the login.
-                "menu" => std::process::exit(1),
-                "back" | "extra" if pointer.out() => {
-                    pointer.hide();
-                    hints(false);
+            Event::UserEvent(Done::Press(down)) => {
+                if !keyboard {
+                    pointer.press(down);
                 }
+            }
+            Event::UserEvent(Done::Nav(nav)) => match nav.as_str() {
+                // The menu button leaves the window.
+                "menu" => std::process::exit(1),
                 n if cfg!(debug_assertions) && n.contains(' ') => pointer::pretend(n),
+                // The keyboard's keys.
+                n if keyboard && n.chars().all(|c| c.is_ascii_lowercase()) => {
+                    let _ = webview
+                        .evaluate_script(&format!("window.__arkor && window.__arkor.nav({n:?})"));
+                }
+                "back" => {
+                    let _ = webview.evaluate_script("history.back()");
+                }
                 n if pointer.out() => {
                     // The gamepad is read directly; without that, Arkor's steps do.
                     if !pointer::direct() {
                         pointer.step(n);
                     }
                 }
-                n if n.chars().all(|c| c.is_ascii_lowercase()) => {
-                    let proxy = pointer_proxy.clone();
-                    let _ = webview.evaluate_script_with_callback(
-                        &format!("window.__arkor && window.__arkor.nav({n:?})"),
-                        move |answer| {
-                            if let Some((x, y)) = point(&answer) {
-                                let _ = proxy.send_event(Done::Pointer(x, y));
-                            }
-                        },
-                    );
-                }
                 _ => {}
             },
-            Event::UserEvent(Done::Pointer(x, y)) => {
-                pointer.show(x, y);
-                hints(true);
+            Event::UserEvent(Done::Keyboard(open)) => {
+                keyboard = open;
+                if !console {
+                } else if open {
+                    pointer.hide();
+                } else {
+                    let at = pointer.at();
+                    pointer.show(at.0, at.1);
+                }
             }
             Event::UserEvent(Done::Ready) => {
                 if !std::mem::replace(&mut shown, true) {
                     window.set_visible(true);
                     window.set_focus();
+                }
+                // Console mode: the pointer is there from the start, in the middle.
+                if console && !keyboard {
+                    if pointer.out() {
+                        pointer.repaint();
+                    } else {
+                        let size = window.inner_size().to_logical::<f64>(window.scale_factor());
+                        pointer.show(size.width / 2., size.height / 2.);
+                    }
+                    let _ =
+                        webview.evaluate_script("window.__arkor && window.__arkor.pointer(true)");
                 }
             }
             Event::UserEvent(Done::Line(line)) => {
@@ -409,13 +419,6 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_where_the_pointer_starts() {
-        assert_eq!(point(r#"{"x":12.5,"y":40}"#), Some((12.5, 40.)));
-        assert_eq!(point("null"), None);
-        assert_eq!(point(""), None);
-    }
 
     #[test]
     fn hands_mod_manager_links_to_arkor() {
