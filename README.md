@@ -183,6 +183,17 @@ stay, so installing again picks up where you left off. Installed as a package? U
 
 <p align="center"><sub>Dark or light, any accent colour, glass styles, animated backgrounds or your own picture · English and Turkish · Arkor updates itself.</sub></p>
 
+**Also:** a list view, ready-made shelves (favourites, never played, a store, a genre) and
+picking several games at once (Ctrl/Shift+click, Ctrl+A) · each game's description, genres,
+age ratings, screenshots and trailers (Steam's store, VNDB, or IGDB with your own key), your
+rating and status · **Statistics**: a year in review, charts and the play journal · the
+graphics card a game renders on (laptops with two) · DXVK and VKD3D-Proton versions per game
+· UMU-Proton, Proton-EM and Proton-Sarek · downloads that wait offline, on metered
+connections or outside chosen hours · **Ctrl+K** command palette, **Ctrl +/−/0** text size ·
+`arkor://launch/<id>` links (and Heroic's) · Arkor's games in Sunshine for Moonlight ·
+Bottles' programs, and favourites, categories and play time carried over from Heroic,
+Lutris and Faugus.
+
 <a id="console-mode"></a>
 
 ## <img src="docs/icons/console.svg" width="30" align="top"> Console mode
@@ -380,6 +391,9 @@ running game, which every desktop allows in its own way:
 | `arkor trouble <id>` | Why a game did not start, and what helps |
 | `arkor saves sync \| list \| restore \| places \| backup <id>` | Cloud saves, save backups and their copies |
 | `arkor clip` | Saves a clip of the running game (bind it to a key) |
+| `arkor url <arkor://… \| heroic://…>` | Follows a link: starts a game or opens a page |
+| `arkor info <id>` | What is known about a game (description, genres, age ratings) |
+| `arkor dxvk [install \| remove <dxvk\|vkd3d> [version]]` | DXVK / VKD3D-Proton versions games can use |
 | `arkor roms [--add] [folder…]` | Games in ROM folders (the usual ones without a folder); `--add` adds them |
 | `arkor emulators [install \| remove \| open <id> \| core <core> \| bios \| launchbox]` | Emulators: what is installed, getting and opening them, BIOS status, LaunchBox |
 | `arkor achievements [login <user> \| logout \| sign-in-emulators \| <id>]` | RetroAchievements of emulator games |
