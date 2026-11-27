@@ -54,7 +54,15 @@ pub struct Mako {
     pub scaling: bool,
     /// Scaling factor in percent (e.g. 150 = 1.5x).
     pub scaling_factor: u32,
+    /// GPU capacity kept free (0, 5, 10, 15 or 20 %) so frame pacing stays even when the
+    /// card would otherwise run at 100 % (MAKO 4.6+).
+    pub gpu_headroom: u32,
+    /// Let MAKO brighten HDR pictures itself (off: the game's own HDR brightness is kept).
+    pub hdr_exposure: bool,
 }
+
+/// The GPU headroom steps MAKO takes.
+pub const MAKO_HEADROOM: [u32; 5] = [0, 5, 10, 15, 20];
 
 impl Default for Mako {
     fn default() -> Self {
@@ -65,6 +73,8 @@ impl Default for Mako {
             performance_mode: false,
             scaling: false,
             scaling_factor: 150,
+            gpu_headroom: 0,
+            hdr_exposure: false,
         }
     }
 }
@@ -125,6 +135,12 @@ impl Layers {
         let m = &self.mako;
         if m.enabled || m.scaling {
             set("MAKO_ENV", "1".into());
+            if !m.hdr_exposure {
+                set("MAKO_DISABLE_HDR_EXPOSURE", "1".into());
+            }
+            if m.gpu_headroom > 0 {
+                set("MAKO_GPU_HEADROOM_PERCENT", m.gpu_headroom.to_string());
+            }
         }
         if m.enabled {
             set("ENABLE_MAKO", "1".into());
@@ -194,6 +210,10 @@ mod tests {
         assert_eq!(env["MAKO_DLL_PATH"], "/x/Lossless.dll");
         assert_eq!(env["ENABLE_FOO"], "1");
         assert!(!env.contains_key("ENABLE_MAKO_SPATIAL_SCALING"));
+        assert_eq!(env["MAKO_DISABLE_HDR_EXPOSURE"], "1");
+        assert!(!env.contains_key("MAKO_GPU_HEADROOM_PERCENT"));
+        l.mako.gpu_headroom = 10;
+        assert_eq!(l.env(None)["MAKO_GPU_HEADROOM_PERCENT"], "10");
         l.toggle_other("ENABLE_FOO", "1");
         assert!(!l.env(None).contains_key("ENABLE_FOO"));
     }

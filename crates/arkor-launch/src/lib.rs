@@ -224,6 +224,17 @@ pub fn plan(
     env.extend(host.gpu_env.iter().cloned());
     env.extend(profile.tweaks_env());
     env.extend(profile.layers.env(host.lossless_dll.as_deref()));
+    if profile.layers.mako.enabled || profile.layers.mako.scaling {
+        // MAKO keeps its own per-game settings under the game's program name.
+        let exe = command
+            .iter()
+            .rev()
+            .find(|a| a.to_ascii_lowercase().ends_with(".exe"))
+            .unwrap_or(&command[0]);
+        if let Some(stem) = Path::new(exe).file_stem().and_then(|s| s.to_str()) {
+            env.insert("MAKO_PROFILE".into(), stem.to_string());
+        }
+    }
     if profile.layers.afmf.enabled && profile.gamescope.enabled {
         // afmf-linux needs to know it runs inside gamescope (more images, skip gamescope itself).
         env.insert("AFMF_GAMESCOPE".into(), "1".into());

@@ -2424,6 +2424,43 @@ impl Library {
                 ));
             }
             card = card.child(row);
+            let mut headroom = div().flex().flex_wrap().gap_2();
+            for (ix, pct) in arkor_core::layers::MAKO_HEADROOM.into_iter().enumerate() {
+                let label = if pct == 0 {
+                    self.tr("Off", "Kapalı").to_string()
+                } else {
+                    format!("{pct}%")
+                };
+                headroom = headroom.child(
+                    widgets::chip(("mako-headroom", ix), label, l.mako.gpu_headroom == pct)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.edit_layers(cx, move |l| l.mako.gpu_headroom = pct)
+                        })),
+                );
+            }
+            card = card
+                .child(widgets::setting_row(
+                    self.tr("Spare GPU power", "GPU'da boş pay"),
+                    self.tr(
+                        "Keeps part of the graphics card free so the generated frames come evenly. Try 10% if the picture stutters while the card is at 100%.",
+                        "Ekran kartının bir kısmını boş tutar, böylece üretilen kareler düzenli gelir. Kart %100'deyken görüntü takılıyorsa %10'u dene.",
+                    ),
+                    headroom,
+                ))
+                .child(
+                    widgets::switch_row(
+                        "mako-hdr",
+                        self.tr("MAKO's HDR brightness", "MAKO'nun HDR parlaklığı"),
+                        self.tr(
+                            "Off keeps the game's own HDR brightness. Turn on only if HDR looks too dark with MAKO.",
+                            "Kapalıyken oyunun kendi HDR parlaklığı korunur. Yalnızca MAKO ile HDR fazla karanlık görünürse aç.",
+                        ),
+                        l.mako.hdr_exposure,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.edit_layers(cx, |l| l.mako.hdr_exposure = !l.mako.hdr_exposure)
+                    })),
+                );
         }
         card
     }

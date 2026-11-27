@@ -528,6 +528,9 @@ impl Library {
             self.t().group_other,
         ];
         let mut card = widgets::section(self.t().metrics_section);
+        if let Some(choice) = self.hud_gpu_choice(hud, cx) {
+            card = card.child(choice).child(widgets::divider());
+        }
         for (gi, (title, metrics)) in titles.into_iter().zip(GROUPS).enumerate() {
             let on = metrics.iter().filter(|m| hud.metrics.contains(m)).count();
             let mut grid = div().flex().flex_wrap().gap_1();
@@ -573,6 +576,86 @@ impl Library {
                 .child(grid);
         }
         card
+    }
+
+    /// On computers with more than one graphics card: which one the HUD reports
+    /// (MangoHud's `pci_dev`, or `gpu_list` for all of them).
+    fn hud_gpu_choice(&self, hud: &HudSettings, cx: &mut Context<Self>) -> Option<Div> {
+        let cards = self.tools.cards.clone();
+        if cards.len() < 2 {
+            return None;
+        }
+        let all = (0..cards.len())
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let current_dev = hud.get("pci_dev").map(String::from);
+        let all_on = hud.get("gpu_list") == Some(all.as_str());
+        let mut row = div().flex().flex_wrap().gap_2();
+        row = row.child(
+            widgets::chip(
+                ("hud-gpu", 0usize),
+                self.tr("Automatic", "Otomatik"),
+                current_dev.is_none() && hud.get("gpu_list").is_none(),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.edit_hud(cx, |h| {
+                    h.set("pci_dev", None);
+                    h.set("gpu_list", None);
+                })
+            })),
+        );
+        for (ix, card) in cards.iter().enumerate() {
+            let slot = card.slot.clone();
+            let label = if card.boot {
+                format!("{} · {}", card.label(), self.tr("screen", "ekran"))
+            } else {
+                card.label()
+            };
+            row = row.child(
+                widgets::chip(
+                    ("hud-gpu", ix + 1),
+                    label,
+                    current_dev.as_deref() == Some(slot.as_str()),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let slot = slot.clone();
+                    this.edit_hud(cx, move |h| {
+                        h.set("gpu_list", None);
+                        h.set("pci_dev", Some(&slot));
+                    })
+                })),
+            );
+        }
+        row = row.child(
+            widgets::chip(
+                ("hud-gpu", cards.len() + 1),
+                self.tr("All cards", "Tüm kartlar"),
+                all_on,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let all = all.clone();
+                this.edit_hud(cx, move |h| {
+                    h.set("pci_dev", None);
+                    h.set("gpu_list", Some(&all));
+                })
+            })),
+        );
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(widgets::subheading(self.tr(
+                    "Graphics card shown",
+                    "Gösterilen ekran kartı",
+                )))
+                .child(widgets::label(self.tr(
+                    "This computer has more than one graphics card. Pick the one the game runs on, so the GPU numbers are about it.",
+                    "Bu bilgisayarda birden çok ekran kartı var. Oyunun çalıştığı kartı seç; GPU değerleri o karta ait olsun.",
+                )))
+                .child(row),
+        )
     }
 
     fn flag_item(
