@@ -244,6 +244,12 @@ pub fn plan(
         // afmf-linux needs to know it runs inside gamescope (more images, skip gamescope itself).
         env.insert("AFMF_GAMESCOPE".into(), "1".into());
     }
+    if profile.layers.vksumi {
+        // The game's own grading, as GOverlay does it (the layer reads it at start).
+        let conf = game_dir.join("vkSumi.conf");
+        env.insert("VKSUMI_CONFIG_FILE".into(), conf.display().to_string());
+        files.push((conf, profile.layers.sumi.render()));
+    }
     if profile.vkbasalt.enabled {
         let conf = game_dir.join("vkBasalt.conf");
         env.insert("ENABLE_VKBASALT".into(), "1".into());

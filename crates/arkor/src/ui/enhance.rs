@@ -2927,7 +2927,297 @@ impl Library {
         if !self.layer_present("ENABLE_VKSUMI") || self.tools.layer_tools[0] {
             card = card.child(self.layer_install_row(0, cx));
         }
-        card
+        if !l.vksumi {
+            return card;
+        }
+        use arkor_core::layers::{Daltonize, SumiKnob::*};
+        let groups = [
+            (
+                self.tr("Light", "Işık"),
+                &[Brightness, Contrast, Exposure, Gamma][..],
+            ),
+            (
+                self.tr(
+                    "Dark, middle and bright parts",
+                    "Karanlık, orta ve parlak bölgeler",
+                ),
+                &[Shadows, Midtones, Highlights][..],
+            ),
+            (
+                self.tr("Colour", "Renk"),
+                &[Saturation, Vibrance, Hue, Temperature, Tint][..],
+            ),
+            (
+                self.tr("Red, green and blue", "Kırmızı, yeşil ve mavi"),
+                &[RedGain, GreenGain, BlueGain][..],
+            ),
+        ];
+        card = card.child(widgets::label(self.tr(
+            "0 means no change. The game reads these when it starts; Shift_R+F9 (or the key below) turns the grading off and on while you play.",
+            "0 değişiklik yok demektir. Oyun bunları başlarken okur; oynarken Sağ Shift+F9 (ya da aşağıdaki tuş) renk ayarını kapatıp açar.",
+        )));
+        for (title, knobs) in groups {
+            card = card.child(widgets::subheading(title));
+            for &k in knobs {
+                card = card.child(self.sumi_row(k, l.sumi.get(k), cx));
+            }
+        }
+        let mut dalt = div().flex().flex_wrap().gap_2();
+        for (ix, d) in Daltonize::ALL.into_iter().enumerate() {
+            let name = match d {
+                Daltonize::Off => self.tr("Off", "Kapalı"),
+                Daltonize::Protan => self.tr("Red-blind (protan)", "Kırmızı körlüğü (protan)"),
+                Daltonize::Deutan => self.tr("Green-blind (deutan)", "Yeşil körlüğü (deutan)"),
+                Daltonize::Tritan => self.tr("Blue-blind (tritan)", "Mavi körlüğü (tritan)"),
+            };
+            dalt = dalt.child(
+                widgets::chip(("sumi-dalt", ix), name, l.sumi.daltonize == d).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.edit_layers(cx, |l| l.sumi.daltonize = d)
+                    }),
+                ),
+            );
+        }
+        let key = self.field(
+            "sumi-key",
+            |this| this.profile.layers.sumi.toggle_key.clone(),
+            "Shift_R+F9",
+            cx,
+            |this, text| {
+                this.profile.layers.sumi.toggle_key = text.trim().to_string();
+                this.save();
+            },
+        );
+        card.child(widgets::subheading(self.tr("Options", "Seçenekler")))
+            .child(
+                widgets::switch_row(
+                    "sumi-compare",
+                    self.tr("Split compare", "Bölünmüş karşılaştırma"),
+                    self.tr(
+                        "Half the screen graded, half as the game draws it, to see the difference.",
+                        "Ekranın yarısı ayarlı, yarısı oyunun çizdiği gibi; farkı görmek için.",
+                    ),
+                    l.sumi.compare,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.edit_layers(cx, |l| l.sumi.compare = !l.sumi.compare)
+                })),
+            )
+            .child(widgets::setting_row(
+                self.tr("Colour blindness", "Renk körlüğü"),
+                self.tr(
+                    "Shifts colours so they are easier to tell apart.",
+                    "Renkleri daha kolay ayırt edilecek şekilde kaydırır.",
+                ),
+                dalt,
+            ))
+            .child(widgets::setting_row(
+                self.tr("On/off key", "Aç/kapa tuşu"),
+                self.tr(
+                    "Works in X11 and XWayland games (most Proton games).",
+                    "X11 ve XWayland oyunlarında çalışır (çoğu Proton oyunu).",
+                ),
+                div().w(px(180.)).child(key),
+            ))
+            .child(
+                div().flex().child(
+                    widgets::chip(
+                        "sumi-reset",
+                        self.tr("Reset all to 0", "Hepsini 0'a döndür"),
+                        false,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.edit_layers(cx, |l| l.sumi.reset())),
+                    ),
+                ),
+            )
+    }
+
+    /// A vkSumi control's name and what it does.
+    pub(super) fn sumi_name(
+        &self,
+        k: arkor_core::layers::SumiKnob,
+    ) -> (&'static str, &'static str) {
+        use arkor_core::layers::SumiKnob::*;
+        match k {
+            Brightness => (
+                self.tr("Brightness", "Parlaklık"),
+                self.tr(
+                    "Lighter or darker everywhere.",
+                    "Her yeri aydınlatır ya da karartır.",
+                ),
+            ),
+            Contrast => (
+                self.tr("Contrast", "Kontrast"),
+                self.tr(
+                    "More or less difference between light and dark.",
+                    "Açık ile koyu arasındaki farkı artırır ya da azaltır.",
+                ),
+            ),
+            Exposure => (
+                self.tr("Exposure", "Pozlama"),
+                self.tr(
+                    "Like a camera's exposure: more or less light.",
+                    "Fotoğraf makinesindeki gibi: daha çok ya da daha az ışık.",
+                ),
+            ),
+            Gamma => (
+                self.tr("Gamma", "Gama"),
+                self.tr(
+                    "Lifts or lowers the middle tones.",
+                    "Orta tonları yükseltir ya da düşürür.",
+                ),
+            ),
+            Shadows => (
+                self.tr("Shadows", "Gölgeler"),
+                self.tr(
+                    "Only the dark parts. Raise it to see more in dark scenes.",
+                    "Yalnızca karanlık bölgeler. Karanlık sahnelerde daha çok görmek için artır.",
+                ),
+            ),
+            Midtones => (
+                self.tr("Midtones", "Orta tonlar"),
+                self.tr(
+                    "Only the middle brightness.",
+                    "Yalnızca orta parlaklıktaki bölgeler.",
+                ),
+            ),
+            Highlights => (
+                self.tr("Highlights", "Parlak bölgeler"),
+                self.tr(
+                    "Only the bright parts. Lower it if the sky is too bright.",
+                    "Yalnızca parlak bölgeler. Gökyüzü fazla parlaksa azalt.",
+                ),
+            ),
+            Saturation => (
+                self.tr("Saturation", "Doygunluk"),
+                self.tr(
+                    "Stronger or paler colours.",
+                    "Daha güçlü ya da daha soluk renkler.",
+                ),
+            ),
+            Vibrance => (
+                self.tr("Vibrance", "Canlılık"),
+                self.tr(
+                    "Livens up dull colours, leaves strong ones alone.",
+                    "Soluk renkleri canlandırır, güçlü olanlara dokunmaz.",
+                ),
+            ),
+            Hue => (
+                self.tr("Hue", "Renk tonu"),
+                self.tr(
+                    "Turns every colour around the colour wheel.",
+                    "Her rengi renk çemberinde döndürür.",
+                ),
+            ),
+            Temperature => (
+                self.tr("Temperature", "Sıcaklık"),
+                self.tr(
+                    "Warmer (yellow) or cooler (blue).",
+                    "Daha sıcak (sarı) ya da daha soğuk (mavi).",
+                ),
+            ),
+            Tint => (
+                self.tr("Tint", "Renk kayması"),
+                self.tr("Towards green or magenta.", "Yeşile ya da eflatuna doğru."),
+            ),
+            RedGain => (
+                self.tr("Red", "Kırmızı"),
+                self.tr("More or less red.", "Daha çok ya da daha az kırmızı."),
+            ),
+            GreenGain => (
+                self.tr("Green", "Yeşil"),
+                self.tr("More or less green.", "Daha çok ya da daha az yeşil."),
+            ),
+            BlueGain => (
+                self.tr("Blue", "Mavi"),
+                self.tr("More or less blue.", "Daha çok ya da daha az mavi."),
+            ),
+        }
+    }
+
+    /// One control: its name and help, − and +, a bar that fills from the middle, the value.
+    fn sumi_row(&self, k: arkor_core::layers::SumiKnob, v: i32, cx: &mut Context<Self>) -> Div {
+        use super::style::pal;
+        let (name, help) = self.sumi_name(k);
+        let (lo, hi, _) = k.range();
+        let ix = k as usize;
+        const BAR: f32 = 200.;
+        let half = BAR / 2.;
+        let frac = if v >= 0 {
+            v as f32 / hi as f32
+        } else {
+            v as f32 / lo as f32
+        };
+        let fill = (half * frac).max(if v != 0 { 2. } else { 0. });
+        let bar = div()
+            .relative()
+            .w(px(BAR))
+            .h(px(6.))
+            .rounded_full()
+            .bg(pal::text().opacity(0.12))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .h_full()
+                    .rounded_full()
+                    .bg(pal::accent())
+                    .w(px(fill))
+                    .left(px(if v >= 0 { half } else { half - fill })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-3.))
+                    .left(px(half - 1.))
+                    .w(px(2.))
+                    .h(px(12.))
+                    .bg(pal::muted()),
+            );
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .py_1()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(name),
+                    )
+                    .child(div().text_xs().text_color(pal::muted()).child(help)),
+            )
+            .child(widgets::step_button(("sumi-", ix), "−").on_click(
+                cx.listener(move |this, _, _, cx| this.edit_layers(cx, |l| l.sumi.step(k, false))),
+            ))
+            .child(bar)
+            .child(widgets::step_button(("sumi+", ix), "+").on_click(
+                cx.listener(move |this, _, _, cx| this.edit_layers(cx, |l| l.sumi.step(k, true))),
+            ))
+            .child(
+                div()
+                    .id(("sumi-val", ix))
+                    .w(px(56.))
+                    .text_sm()
+                    .text_right()
+                    .cursor_pointer()
+                    .text_color(if v == 0 {
+                        pal::muted()
+                    } else {
+                        pal::accent_light()
+                    })
+                    .child(k.show(v))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.edit_layers(cx, |l| l.sumi.set(k, 0))
+                    })),
+            )
     }
 
     pub(super) fn render_afmf(&mut self, cx: &mut Context<Self>) -> Div {

@@ -10,11 +10,198 @@ use serde::{Deserialize, Serialize};
 pub struct Layers {
     pub vknemu: VkNemu,
     pub mako: Mako,
-    /// vkSumi colour grading with the user's `~/.config/vkSumi/vkSumi.conf`.
+    /// vkSumi colour grading, with `sumi`'s values (a per-game `vkSumi.conf`).
     pub vksumi: bool,
+    pub sumi: Sumi,
     pub afmf: Afmf,
     /// Other implicit layers to enable, as `KEY=VALUE` (their `enable_environment`).
     pub other: BTreeSet<String>,
+}
+
+/// One of vkSumi's colour controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SumiKnob {
+    Brightness,
+    Contrast,
+    Exposure,
+    Gamma,
+    Shadows,
+    Midtones,
+    Highlights,
+    Saturation,
+    Vibrance,
+    Hue,
+    Temperature,
+    Tint,
+    RedGain,
+    GreenGain,
+    BlueGain,
+}
+
+impl SumiKnob {
+    pub const ALL: [SumiKnob; 15] = [
+        SumiKnob::Brightness,
+        SumiKnob::Contrast,
+        SumiKnob::Exposure,
+        SumiKnob::Gamma,
+        SumiKnob::Shadows,
+        SumiKnob::Midtones,
+        SumiKnob::Highlights,
+        SumiKnob::Saturation,
+        SumiKnob::Vibrance,
+        SumiKnob::Hue,
+        SumiKnob::Temperature,
+        SumiKnob::Tint,
+        SumiKnob::RedGain,
+        SumiKnob::GreenGain,
+        SumiKnob::BlueGain,
+    ];
+
+    /// The key in `vkSumi.conf`.
+    pub fn key(self) -> &'static str {
+        match self {
+            SumiKnob::Brightness => "brightness",
+            SumiKnob::Contrast => "contrast",
+            SumiKnob::Exposure => "exposure",
+            SumiKnob::Gamma => "gamma",
+            SumiKnob::Shadows => "shadows",
+            SumiKnob::Midtones => "midtones",
+            SumiKnob::Highlights => "highlights",
+            SumiKnob::Saturation => "saturation",
+            SumiKnob::Vibrance => "vibrance",
+            SumiKnob::Hue => "hue_deg",
+            SumiKnob::Temperature => "temperature",
+            SumiKnob::Tint => "tint",
+            SumiKnob::RedGain => "red_gain",
+            SumiKnob::GreenGain => "green_gain",
+            SumiKnob::BlueGain => "blue_gain",
+        }
+    }
+
+    /// (lowest, highest, one step), in hundredths (degrees for the hue).
+    pub fn range(self) -> (i32, i32, i32) {
+        match self {
+            SumiKnob::Exposure => (-300, 300, 10),
+            SumiKnob::Hue => (-180, 180, 5),
+            _ => (-100, 100, 5),
+        }
+    }
+
+    /// The value as `vkSumi.conf` and the screen show it.
+    pub fn show(self, v: i32) -> String {
+        if self == SumiKnob::Hue {
+            format!("{v}°")
+        } else {
+            format!("{:.2}", v as f32 / 100.)
+        }
+    }
+}
+
+/// Colour-blindness correction vkSumi can apply.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Daltonize {
+    #[default]
+    Off,
+    Protan,
+    Deutan,
+    Tritan,
+}
+
+impl Daltonize {
+    pub const ALL: [Daltonize; 4] = [
+        Daltonize::Off,
+        Daltonize::Protan,
+        Daltonize::Deutan,
+        Daltonize::Tritan,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Daltonize::Off => "off",
+            Daltonize::Protan => "protan",
+            Daltonize::Deutan => "deutan",
+            Daltonize::Tritan => "tritan",
+        }
+    }
+}
+
+/// vkSumi's colour grading for a game. Every value 0 is "no change"; values are hundredths
+/// (exposure -3..3, others -1..1), the hue in degrees.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sumi {
+    pub values: BTreeMap<String, i32>,
+    /// Left half graded, right half as the game draws it, to compare.
+    pub compare: bool,
+    pub daltonize: Daltonize,
+    /// Key that turns the grading off and on in game.
+    pub toggle_key: String,
+}
+
+impl Default for Sumi {
+    fn default() -> Self {
+        Self {
+            values: BTreeMap::new(),
+            compare: false,
+            daltonize: Daltonize::Off,
+            toggle_key: "Shift_R+F9".into(),
+        }
+    }
+}
+
+impl Sumi {
+    pub fn get(&self, k: SumiKnob) -> i32 {
+        self.values.get(k.key()).copied().unwrap_or(0)
+    }
+
+    pub fn set(&mut self, k: SumiKnob, v: i32) {
+        let (lo, hi, _) = k.range();
+        let v = v.clamp(lo, hi);
+        if v == 0 {
+            self.values.remove(k.key());
+        } else {
+            self.values.insert(k.key().into(), v);
+        }
+    }
+
+    /// One step up (`up`) or down.
+    pub fn step(&mut self, k: SumiKnob, up: bool) {
+        let step = k.range().2;
+        self.set(k, self.get(k) + if up { step } else { -step });
+    }
+
+    /// Every value back to "no change".
+    pub fn reset(&mut self) {
+        self.values.clear();
+    }
+
+    /// The `vkSumi.conf` for these values.
+    pub fn render(&self) -> String {
+        let mut out = String::from(
+            "# Written by Arkor for this game; changes here are replaced at the next start.\n\
+             PER_GAME_CONFIG_CREATION = false\n\nenabled = true\n",
+        );
+        let key = self.toggle_key.trim();
+        if !key.is_empty() {
+            out.push_str(&format!("toggle_keys = {key}\n"));
+        }
+        out.push_str(&format!(
+            "compare = {}\ndaltonize = {}\n\n",
+            self.compare,
+            self.daltonize.key()
+        ));
+        for k in SumiKnob::ALL {
+            let v = self.get(k);
+            let text = if k == SumiKnob::Hue {
+                format!("{v}.0")
+            } else {
+                format!("{:.2}", v as f32 / 100.)
+            };
+            out.push_str(&format!("{} = {text}\n", k.key()));
+        }
+        out
+    }
 }
 
 /// vkNemu: drops the frame rate when there is no input for a while.
@@ -216,5 +403,27 @@ mod tests {
         assert_eq!(l.env(None)["MAKO_GPU_HEADROOM_PERCENT"], "10");
         l.toggle_other("ENABLE_FOO", "1");
         assert!(!l.env(None).contains_key("ENABLE_FOO"));
+    }
+
+    #[test]
+    fn sumi_values_stay_in_range_and_render() {
+        let mut s = Sumi::default();
+        s.set(SumiKnob::Exposure, 999);
+        assert_eq!(s.get(SumiKnob::Exposure), 300);
+        s.step(SumiKnob::Hue, false);
+        assert_eq!(s.get(SumiKnob::Hue), -5);
+        s.step(SumiKnob::Saturation, true);
+        s.daltonize = Daltonize::Deutan;
+        let conf = s.render();
+        assert!(conf.contains("exposure = 3.00\n"));
+        assert!(conf.contains("hue_deg = -5.0\n"));
+        assert!(conf.contains("saturation = 0.05\n"));
+        assert!(conf.contains("contrast = 0.00\n"));
+        assert!(conf.contains("daltonize = deutan\n"));
+        assert!(conf.contains("toggle_keys = Shift_R+F9\n"));
+        s.set(SumiKnob::Saturation, 0);
+        assert!(!s.values.contains_key("saturation"));
+        let back: Layers = toml::from_str("vksumi = true\n[sumi]\ncompare = true\n").unwrap();
+        assert!(back.sumi.compare && back.sumi.toggle_key == "Shift_R+F9");
     }
 }
