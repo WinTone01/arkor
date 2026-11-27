@@ -267,6 +267,7 @@ impl Library {
         }
         let toolbar = self.library_toolbar(cx).child(self.library_shelves(cx));
         let bar = self.picked_bar(cx);
+        let offer = self.render_copies_offer(cx);
         if self.global.library_list {
             let list = if self.visible.is_empty() {
                 div().py_8().text_color(pal::muted()).child(self.tr(
@@ -281,6 +282,7 @@ impl Library {
                 .flex_col()
                 .gap_5()
                 .child(title)
+                .children(offer)
                 .child(toolbar)
                 .children(bar)
                 .child(list);
@@ -386,6 +388,7 @@ impl Library {
             .flex_col()
             .gap_5()
             .child(title)
+            .children(offer)
             .child(toolbar)
             .children(bar)
             .child(tiles)

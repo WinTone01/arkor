@@ -74,6 +74,27 @@ pub struct LibraryGame {
     /// Where the user is with the game.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<PlayStatus>,
+    /// Another copy of the game `copy_of` is (from another store): kept out of the lists
+    /// (hidden), played from that game's page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<String>,
+}
+
+/// A title reduced to letters and digits, for telling that two entries are the same game.
+pub fn title_key(name: &str) -> String {
+    let lower = name.to_lowercase();
+    let mut out: String = lower.chars().filter(|c| c.is_alphanumeric()).collect();
+    for tail in [
+        "gameoftheyearedition",
+        "goty",
+        "definitiveedition",
+        "enhancededition",
+    ] {
+        if out.len() > tail.len() + 3 && out.ends_with(tail) {
+            out.truncate(out.len() - tail.len());
+        }
+    }
+    out
 }
 
 /// Where the user is with a game.
@@ -251,6 +272,7 @@ impl Library {
                     cover: None,
                     rating: None,
                     status: None,
+                    copy_of: None,
                 })
                 .collect(),
         };
@@ -324,8 +346,84 @@ impl Library {
             cover: None,
             rating: None,
             status: None,
+            copy_of: None,
         });
         id
+    }
+
+    /// The other copies of `id` (entries whose `copy_of` is it).
+    pub fn copies_of(&self, id: &str) -> Vec<&LibraryGame> {
+        self.games
+            .iter()
+            .filter(|g| g.copy_of.as_deref() == Some(id))
+            .collect()
+    }
+
+    /// Makes `copy` a copy of `main`: out of the lists, played from `main`'s page. Copies of
+    /// `copy` move to `main`.
+    pub fn link_copy(&mut self, main: &str, copy: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(main != copy, "a game cannot be a copy of itself");
+        anyhow::ensure!(self.get(main).is_some(), "`{main}` is not in the library");
+        let main = self
+            .get(main)
+            .and_then(|g| g.copy_of.clone())
+            .unwrap_or_else(|| main.to_string());
+        for g in &mut self.games {
+            if g.copy_of.as_deref() == Some(copy) {
+                g.copy_of = Some(main.clone());
+            }
+        }
+        let g = self
+            .get_mut(copy)
+            .with_context(|| format!("`{copy}` is not in the library"))?;
+        g.copy_of = Some(main);
+        g.hidden = true;
+        Ok(())
+    }
+
+    /// Makes a copy a game of its own again.
+    pub fn unlink_copy(&mut self, copy: &str) {
+        if let Some(g) = self.get_mut(copy)
+            && g.copy_of.take().is_some()
+        {
+            g.hidden = false;
+        }
+    }
+
+    /// Makes `copy` the one shown and played; the game it was a copy of becomes its copy.
+    pub fn make_main(&mut self, copy: &str) -> anyhow::Result<()> {
+        let main = self
+            .get(copy)
+            .and_then(|g| g.copy_of.clone())
+            .with_context(|| format!("`{copy}` is not a copy"))?;
+        let (hidden, favorite, category, status, rating) = {
+            let m = self.get(&main).context("the main copy is gone")?;
+            (m.hidden, m.favorite, m.category.clone(), m.status, m.rating)
+        };
+        if let Some(g) = self.get_mut(copy) {
+            g.copy_of = None;
+            g.hidden = false;
+            // What the user set on the game stays with it.
+            g.favorite |= favorite;
+            g.category = g.category.take().or(category);
+            g.status = g.status.or(status);
+            g.rating = g.rating.or(rating);
+        }
+        let _ = hidden;
+        self.link_copy(copy, &main)
+    }
+
+    /// Groups of entries that look like the same game (same title, not already linked), the
+    /// first of each the one to keep shown.
+    pub fn same_games(&self) -> Vec<Vec<String>> {
+        let mut by_key: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for g in self.games.iter().filter(|g| g.copy_of.is_none()) {
+            let key = title_key(&g.name);
+            if key.len() >= 3 {
+                by_key.entry(key).or_default().push(g.id.clone());
+            }
+        }
+        by_key.into_values().filter(|ids| ids.len() > 1).collect()
     }
 
     /// Copies a game under a new id ("<name> (copy)"); its profile is copied by the caller.
@@ -353,6 +451,14 @@ impl Library {
 
     pub fn remove(&mut self, id: &str) {
         self.games.retain(|g| g.id != id);
+        // Its copies: the first becomes the shown one, the rest its copies.
+        let copies: Vec<String> = self.copies_of(id).iter().map(|g| g.id.clone()).collect();
+        if let Some((first, rest)) = copies.split_first() {
+            self.unlink_copy(first);
+            for other in rest {
+                let _ = self.link_copy(first, other);
+            }
+        }
     }
 
     /// Other games using the same prefix as `id` (to warn before deleting a shared prefix).
@@ -495,5 +601,29 @@ mod tests {
             "{text}"
         );
         assert_eq!(toml::from_str::<Library>(&text).unwrap(), lib);
+    }
+
+    #[test]
+    fn copies_link_swap_and_survive_removal() {
+        let mut lib = Library::default();
+        let a = lib.add(NewGame::windows("Cyberpunk 2077", "/gog/c.exe".into()));
+        let b = lib.add(NewGame::windows("Cyberpunk 2077®", "/epic/c.exe".into()));
+        let c = lib.add(NewGame::windows("Hades", "/h.exe".into()));
+        assert_eq!(lib.same_games(), vec![vec![a.clone(), b.clone()]]);
+        assert_eq!(
+            title_key("The Witcher 3: Wild Hunt - Game of the Year Edition"),
+            "thewitcher3wildhunt"
+        );
+        lib.link_copy(&a, &b).unwrap();
+        assert!(lib.get(&b).unwrap().hidden);
+        assert_eq!(lib.copies_of(&a).len(), 1);
+        assert!(lib.same_games().is_empty());
+        lib.get_mut(&a).unwrap().favorite = true;
+        lib.make_main(&b).unwrap();
+        assert!(!lib.get(&b).unwrap().hidden && lib.get(&b).unwrap().favorite);
+        assert_eq!(lib.get(&a).unwrap().copy_of.as_deref(), Some(b.as_str()));
+        lib.remove(&b);
+        assert!(lib.get(&a).unwrap().copy_of.is_none() && !lib.get(&a).unwrap().hidden);
+        assert!(lib.link_copy(&c, &c).is_err());
     }
 }

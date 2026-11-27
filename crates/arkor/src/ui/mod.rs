@@ -19,6 +19,7 @@ mod console_steam;
 mod console_system;
 mod console_tools;
 mod console_view;
+mod copies;
 mod cover_art;
 mod defaults_page;
 mod desk;

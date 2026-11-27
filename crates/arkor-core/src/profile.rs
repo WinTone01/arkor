@@ -419,6 +419,9 @@ pub struct Global {
     /// Arkor's games are kept in Sunshine's application list (Moonlight shows them).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sunshine: bool,
+    /// Titles (`library::title_key`) the user said are different games, not copies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_copies: Vec<String>,
     /// No look-ups of games' descriptions, screenshots and the like.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_game_info: bool,

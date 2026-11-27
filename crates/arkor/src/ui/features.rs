@@ -432,6 +432,21 @@ pub(super) const FEATURES: &[Feature] = &[
         render: |l, cx| l.render_saves(cx),
     },
     Feature {
+        id: "copies",
+        tab: GameTab::Game,
+        group: "",
+        icon: "copy",
+        name: ("Copies in other stores", "Diğer mağazalardaki kopyalar"),
+        desc: (
+            "The same game from another store, joined into this card.",
+            "Başka bir mağazadan aynı oyun, bu kartta birleştirilmiş.",
+        ),
+        keywords: "copy copies kopya duplicate merge birleştir store mağaza epic gog steam",
+        applies: |l, g| l.has_copies(&g.id),
+        active: None,
+        render: |l, cx| l.render_copies(cx),
+    },
+    Feature {
         id: "shortcuts",
         tab: GameTab::Game,
         group: "",
