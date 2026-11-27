@@ -27,12 +27,14 @@ pub struct Found {
 /// has an emulator for. Blocking: reads every folder, and the headers of files several
 /// systems share.
 pub fn find_in(roots: &[PathBuf]) -> Vec<Found> {
-    let scanned = scan::scan(
-        roots,
-        &scan::ScanCache::default(),
-        &super::dirs::playlists(),
-        &|_| {},
-    );
+    // What files were detected as last time: unchanged ones are not opened again.
+    let cache_file = super::dirs::cache().join("scan.json");
+    let previous: scan::ScanCache = super::read_json(&cache_file);
+    let scanned = scan::scan(roots, &previous, &super::dirs::playlists(), &|_| {});
+    let mut cache = previous;
+    cache.retain(|p, _| !roots.iter().any(|r| p.starts_with(r)));
+    cache.extend(scanned.cache);
+    let _ = super::write_json(&cache_file, &cache);
     let have: Vec<PathBuf> = Library::load()
         .map(|l| l.games.iter().map(|g| g.exe.clone()).collect())
         .unwrap_or_default();
@@ -64,9 +66,14 @@ pub fn system_name(id: &str) -> String {
 
 /// Adds the `found` games not yet in `library` (saving is the caller's); how many.
 pub fn add(library: &mut Library, found: &[Found]) -> usize {
+    add_except(library, found, &[])
+}
+
+/// Like [`add`], leaving out the games at `removed` (taken out of the library by the user).
+pub fn add_except(library: &mut Library, found: &[Found], removed: &[PathBuf]) -> usize {
     let mut added = 0;
     for f in found {
-        if library.games.iter().any(|g| g.exe == f.path) {
+        if library.games.iter().any(|g| g.exe == f.path) || removed.contains(&f.path) {
             continue;
         }
         let id = library.add(new_game(&f.system, &f.title, &f.path));

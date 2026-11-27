@@ -93,9 +93,17 @@ fn roms(args: &[String]) -> anyhow::Result<()> {
         );
     }
     if add {
+        let mut global = arkor_core::Global::load_or_import()?;
         let mut library = Library::load()?;
-        let added = games::add(&mut library, &found);
+        let added = games::add_except(&mut library, &found, &global.emulators.removed);
         library.save()?;
+        // The folders are read again for new games from now on.
+        for f in &folders {
+            if !global.emulators.rom_folders.contains(f) {
+                global.emulators.rom_folders.push(f.clone());
+            }
+        }
+        global.save()?;
         println!("added {added} games");
     } else {
         println!("{} games (--add puts them in the library)", found.len());

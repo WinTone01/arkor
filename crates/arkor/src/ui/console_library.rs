@@ -613,6 +613,7 @@ impl Library {
             }
             Act::RemoveGame(entry) => {
                 self.console.overlay = None;
+                self.emu_note_removed(&entry);
                 self.library.remove(&entry);
                 let r = self.library.save();
                 self.report(r);

@@ -192,10 +192,91 @@ impl Library {
         .detach();
     }
 
-    /// Adds the games in a ROM folder to the library (read in the background).
+    /// A game leaves the library: when a ROM folder Arkor reads holds it, it is remembered,
+    /// so reading the folder again does not bring it back.
+    pub(super) fn emu_note_removed(&mut self, entry: &str) {
+        let Some(g) = self.library.get(entry) else {
+            return;
+        };
+        if matches!(g.kind, GameKind::Emulated { .. })
+            && self
+                .global
+                .emulators
+                .rom_folders
+                .iter()
+                .any(|f| g.exe.starts_with(f))
+            && !self.global.emulators.removed.contains(&g.exe)
+        {
+            self.global.emulators.removed.push(g.exe.clone());
+            let r = self.global.save();
+            self.report(r);
+        }
+    }
+
+    /// Reads the ROM folders again now and then (at start, then every few minutes while
+    /// Arkor runs): new games in them join the library.
+    pub(super) fn emu_watch(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+        let bg = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let folders = this
+                    .update(cx, |this, _| {
+                        (!this.emu.scanning).then(|| this.global.emulators.rom_folders.clone())
+                    })
+                    .ok();
+                let Some(folders) = folders else { break };
+                if let Some(folders) = folders.filter(|f| !f.is_empty()) {
+                    // Folders on a disk that is not there are left alone (their games stay).
+                    let here: Vec<PathBuf> = folders.into_iter().filter(|f| f.is_dir()).collect();
+                    let found = bg.spawn(async move { games::find_in(&here) }).await;
+                    let _ = this.update(cx, |this, cx| {
+                        let removed = this.global.emulators.removed.clone();
+                        let added = games::add_except(&mut this.library, &found, &removed);
+                        if added > 0 {
+                            let r = this.library.save();
+                            this.report(r);
+                            this.reload_games();
+                            this.status = Some(
+                                format!(
+                                    "{added} {}",
+                                    this.tr(
+                                        "new games from your ROM folders",
+                                        "yeni oyun ROM klasörlerinden eklendi"
+                                    )
+                                )
+                                .into(),
+                            );
+                            cx.notify();
+                        }
+                    });
+                }
+                bg.timer(Duration::from_secs(180)).await;
+            }
+        })
+        .detach();
+    }
+
+    /// Stops reading a ROM folder (its games stay in the library).
+    fn emu_forget_folder(&mut self, dir: &PathBuf, cx: &mut Context<Self>) {
+        self.global.emulators.rom_folders.retain(|f| f != dir);
+        let r = self.global.save();
+        self.report(r);
+        cx.notify();
+    }
+
+    /// Adds the games in a ROM folder to the library (read in the background), and keeps
+    /// reading the folder for new ones.
     pub(super) fn emu_add_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
         if self.emu.scanning {
             return;
+        }
+        if !self.global.emulators.rom_folders.contains(&dir) {
+            self.global.emulators.rom_folders.push(dir.clone());
+            let r = self.global.save();
+            self.report(r);
         }
         self.emu.scanning = true;
         self.status = Some(
@@ -517,6 +598,7 @@ impl Library {
                     .flex()
                     .flex_col()
                     .gap_4()
+                    .child(self.render_rom_folders(cx))
                     .child(self.render_emulators(cx))
                     .child(
                         div().flex().child(
@@ -532,6 +614,50 @@ impl Library {
                         ),
                     ),
             )
+    }
+
+    /// The ROM folders Arkor reads, on the Emulators page.
+    fn render_rom_folders(&mut self, cx: &mut Context<Self>) -> Div {
+        let mut card = widgets::section(self.tr("ROM folders", "ROM klasörleri"));
+        card = card.child(widgets::label(self.tr(
+            "Arkor reads these again when it starts and every few minutes: new games join the library by themselves. A game you remove from the library stays out.",
+            "Arkor bunları açılışta ve birkaç dakikada bir yeniden okur: yeni oyunlar kütüphaneye kendiliğinden eklenir. Kütüphaneden kaldırdığın oyun bir daha eklenmez.",
+        )));
+        let folders = self.global.emulators.rom_folders.clone();
+        if folders.is_empty() {
+            card = card.child(widgets::label(self.tr("None yet.", "Henüz yok.")));
+        }
+        for (ix, dir) in folders.into_iter().enumerate() {
+            let (again, forget) = (dir.clone(), dir.clone());
+            card = card.child(widgets::setting_row(
+                dir.display().to_string(),
+                if dir.is_dir() {
+                    ""
+                } else {
+                    self.tr("not there now (its disk?)", "şu an yok (diski takılı mı?)")
+                },
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        style::button(("rom-again", ix), self.tr("Read now", "Şimdi oku"), false)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.emu_add_folder(again.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        style::button(
+                            ("rom-forget", ix),
+                            self.tr("Stop reading", "Okumayı bırak"),
+                            false,
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.emu_forget_folder(&forget, cx)),
+                        ),
+                    ),
+            ));
+        }
+        card
     }
 
     /// The emulators card (on the Emulators page).

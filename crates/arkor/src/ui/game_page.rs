@@ -313,6 +313,7 @@ impl Library {
         } else {
             None
         };
+        self.emu_note_removed(&id.id);
         self.library.remove(&id.id);
         let mut result = self.library.save();
         if result.is_ok()
