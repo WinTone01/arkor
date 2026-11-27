@@ -1661,6 +1661,8 @@ impl Library {
                 self.console_overlay(Overlay::Pick(name, options));
             }
             Act::ModsMove(name, up) => {
+                // Chosen from its menu: the menu goes.
+                self.console.overlay = None;
                 if let Some(link) = self.mods_link_of() {
                     self.mods_do(self.tr("Moving…", "Taşınıyor…"), cx, move |c| {
                         mods::shift(c, &link, &name, up)
@@ -1679,6 +1681,8 @@ impl Library {
                 self.console_overlay(Overlay::Ask(text, yes, Act::ModsRemove(name)));
             }
             Act::ModsRemove(name) => {
+                // The question is answered: it goes.
+                self.console.overlay = None;
                 if let Some(link) = self.mods_link_of() {
                     self.mods_do(self.tr("Removing…", "Kaldırılıyor…"), cx, move |c| {
                         mods::remove(c, &link, &name)

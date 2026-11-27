@@ -2524,6 +2524,8 @@ impl Library {
         self.console.entered = Some(Instant::now());
         self.shops.game = None;
         if on {
+            // The desktop's start-up animation, if it still plays, gives way to the console's.
+            self.intro = None;
             super::console_sound::warm();
             self.start_console_intro();
             self.guard_steam(cx);

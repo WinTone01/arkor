@@ -770,7 +770,10 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
                 })
                 .flatten();
             let has_tray = tray_rx.is_some();
-            let keep_in_tray = has_tray && (global.tray || start_in_tray);
+            // Read when the window closes: the setting may have changed since Arkor started.
+            let keep_in_tray = move || {
+                has_tray && (start_in_tray || Global::load_or_import().is_ok_and(|g| g.tray))
+            };
 
             // Automatic backup, off the UI thread.
             let now = arkor_core::stats::now();
@@ -800,7 +803,7 @@ pub fn run(open: Option<String>, start_in_tray: bool) -> anyhow::Result<()> {
             }
             // Closing the window ends Arkor unless it is set to stay in the tray.
             cx.on_window_closed(move |cx, _| {
-                if !keep_in_tray && cx.windows().is_empty() {
+                if cx.windows().is_empty() && !keep_in_tray() {
                     cx.quit();
                 }
             })
