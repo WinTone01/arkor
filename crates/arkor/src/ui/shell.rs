@@ -86,6 +86,7 @@ pub(super) enum Nav {
     Shops,
     Protons,
     Emulators,
+    Stats,
     Overlay,
     Bench,
     Downloads,
@@ -104,6 +105,7 @@ impl Library {
             (Nav::Shops, Some(Selection::Shops)) => true,
             (Nav::Protons, Some(Selection::Protons)) => true,
             (Nav::Emulators, Some(Selection::Emulators)) => true,
+            (Nav::Stats, Some(Selection::Stats)) => true,
             (Nav::Bench, Some(Selection::Bench)) => true,
             (Nav::Downloads, Some(Selection::Downloads)) => true,
             (Nav::System, Some(Selection::System)) => true,
@@ -120,6 +122,7 @@ impl Library {
             Nav::Shops => Selection::Shops,
             Nav::Protons => Selection::Protons,
             Nav::Emulators => Selection::Emulators,
+            Nav::Stats => Selection::Stats,
             Nav::Bench => Selection::Bench,
             Nav::Downloads => Selection::Downloads,
             Nav::System => Selection::System,
@@ -139,6 +142,7 @@ impl Library {
             Nav::Shops => self.tr("Stores", "Mağazalar"),
             Nav::Protons => self.tr("Proton & Wine", "Proton ve Wine"),
             Nav::Emulators => self.tr("Emulators", "Emülatörler"),
+            Nav::Stats => self.tr("Statistics", "İstatistikler"),
             Nav::Overlay => self.tr("MangoHud overlay", "MangoHud overlay"),
             Nav::Bench => self.tr("Benchmarks", "Benchmark'lar"),
             Nav::Downloads => self.tr("Downloads", "İndirilenler"),
@@ -250,6 +254,7 @@ impl Library {
             .child(self.nav_item(Nav::Protons, "wine", None, cx))
             .child(self.nav_item(Nav::Emulators, "joystick", None, cx))
             .child(self.nav_item(Nav::Overlay, "gauge", None, cx))
+            .child(self.nav_item(Nav::Stats, "chart-column", None, cx))
             .child(self.nav_item(Nav::Bench, "chart-line", None, cx))
             .child(self.nav_item(Nav::Downloads, "hard-drive-download", None, cx));
 
@@ -441,6 +446,7 @@ impl Library {
             Some(Selection::Shops) => (self.nav_title(Nav::Shops), None),
             Some(Selection::Protons) => (self.nav_title(Nav::Protons), None),
             Some(Selection::Emulators) => (self.nav_title(Nav::Emulators), None),
+            Some(Selection::Stats) => (self.nav_title(Nav::Stats), None),
             Some(Selection::Bench) => (self.nav_title(Nav::Bench), None),
             Some(Selection::Downloads) => (self.nav_title(Nav::Downloads), None),
             Some(Selection::System) => (self.nav_title(Nav::System), None),

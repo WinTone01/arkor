@@ -50,6 +50,7 @@ mod shops;
 mod shops_page;
 mod sounds;
 mod splash;
+mod stats_page;
 mod steam_card;
 mod style;
 mod synth;
@@ -96,6 +97,8 @@ enum Selection {
     Protons,
     /// The emulators page.
     Emulators,
+    /// Statistics and the play journal.
+    Stats,
     Shops,
     Game(usize),
 }
@@ -184,6 +187,7 @@ pub struct Library {
     /// What is known about games (description, screenshots…), and whether IGDB is set up.
     info: game_info::InfoUi,
     info_igdb: Option<bool>,
+    stats_ui: stats_page::StatsUi,
     /// Why a game did not start.
     trouble: trouble::TroubleUi,
     /// Store accounts and their games.
@@ -274,6 +278,7 @@ impl Library {
             picked: Vec::new(),
             info: Default::default(),
             info_igdb: None,
+            stats_ui: Default::default(),
             restore_pending: None,
             required: Default::default(),
         };
@@ -505,6 +510,7 @@ impl Library {
                 Selection::Add
             }
             Some("protons") => Selection::Protons,
+            Some("stats" | "statistics") => Selection::Stats,
             Some("emulators") => {
                 self.emu_show_detail(tab);
                 Selection::Emulators
@@ -702,6 +708,7 @@ impl Library {
             Some(Selection::Add) => self.render_add(window, cx),
             Some(Selection::Protons) => self.render_protons(cx),
             Some(Selection::Emulators) => self.render_emulators_page(cx),
+            Some(Selection::Stats) => self.render_stats_page(cx),
             Some(Selection::Grid) => self.render_grid(cx),
             Some(Selection::Bench) => self.render_bench(cx),
             Some(Selection::Downloads) => self.render_downloads(cx),
