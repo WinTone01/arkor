@@ -653,6 +653,7 @@ impl Library {
             | Screen::GameSettings(id)
             | Screen::GameCat(id, _)
             | Screen::Saves(id)
+            | Screen::Mods(id)
             | Screen::Quick(id)
             | Screen::Covers(id)
             | Screen::Trouble(id) => Some(Art::Game(id)),
@@ -1031,6 +1032,7 @@ impl Library {
             let extra = item.as_ref().and_then(|i| self.extra(i)).map(|a| match a {
                 Act::Stop(_) => self.tr("Stop", "Durdur"),
                 Act::CancelDownload(_) => self.tr("Cancel", "İptal et"),
+                Act::ModsMenu(_) => self.tr("More", "Diğer"),
                 _ => self.tr("Play", "Oyna"),
             });
             if let Some(text) = extra {
@@ -1147,6 +1149,10 @@ impl Library {
             Screen::Saves(id) => {
                 let (title, _) = self.spotlight_game(&id)?;
                 (title, vec![self.tr("Saves", "Oyun kayıtları").to_string()])
+            }
+            Screen::Mods(id) => {
+                let (title, _) = self.spotlight_game(&id)?;
+                (title, vec![self.tr("Mods", "Modlar").to_string()])
             }
             Screen::GameCat(id, c) => {
                 let (title, _) = self.spotlight_game(&id)?;

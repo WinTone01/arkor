@@ -82,6 +82,8 @@ pub(super) enum Screen {
     Steam(u32, SteamPage),
     /// A library game's saves.
     Saves(String),
+    /// A library game's mods.
+    Mods(String),
     /// Why a library game did not start.
     Trouble(String),
     /// The quick menu over a running game.
@@ -221,6 +223,23 @@ pub(super) enum Act {
     SavesCopy,
     SavesAskRestore(String),
     SavesRestore(String),
+    /// A game's mods: get Amethyst, read them again, use mods for the game, switch one,
+    /// its menu (X), move it, the question before removing it and its answer, the Nexus
+    /// Mods account, the update check, a FOMOD option picked (step, group, option) and the
+    /// answer to the installer (install or not).
+    ModsGet,
+    ModsReload,
+    ModsLink,
+    ModsToggle(String),
+    ModsMenu(String),
+    ModsMove(String, bool),
+    ModsAskRemove(String),
+    ModsRemove(String),
+    ModsSignIn,
+    ModsSignOut,
+    ModsUpdates,
+    ModsPick(String, String, String),
+    ModsAnswer(bool),
     /// Networks and Bluetooth devices: look for them, and one of them; a screen setting is kept.
     WifiScan,
     WifiNet(String),
@@ -894,6 +913,7 @@ impl Library {
             Screen::SettingsCat(c) => self.app_cat_rows(c),
             Screen::Steam(app, page) => self.steam_page_rows(app, page),
             Screen::Saves(id) => self.saves_rows(&id),
+            Screen::Mods(id) => self.mods_rows(&id),
             Screen::Quick(id) => self.quick_rows(&id),
             Screen::PadTest => self.pad_test_rows(),
             Screen::AddGames => self.add_rows(),
@@ -1454,6 +1474,12 @@ impl Library {
             self.saves_pill()
                 .filter(|_| self.entry().is_some_and(|e| e.id == g.id)),
         );
+        pills.push(Item::pill(
+            Act::Screen(Screen::Mods(g.id.clone())),
+            "puzzle",
+            self.tr("Mods", "Modlar"),
+            false,
+        ));
         if let Some((shop, id)) = &shop {
             pills.push(match self.removing_pill(*shop, id) {
                 Some(pill) => pill,
@@ -2181,6 +2207,11 @@ impl Library {
                     Screen::Game(id.into()),
                     Screen::Saves(id.into()),
                 ],
+                Some(("mods", id)) => vec![
+                    Screen::Library,
+                    Screen::Game(id.into()),
+                    Screen::Mods(id.into()),
+                ],
                 Some(("login", shop)) => {
                     self.shops.on_open = Some(("login".into(), shop.into()));
                     vec![Screen::Stores]
@@ -2208,9 +2239,13 @@ impl Library {
             Screen::Game(id)
             | Screen::GameSettings(id)
             | Screen::Saves(id)
+            | Screen::Mods(id)
             | Screen::Trouble(id) => {
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == id) {
                     self.select(Selection::Game(ix), cx);
+                }
+                if matches!(self.console.screen(), Screen::Mods(_)) {
+                    self.mods_opened(cx);
                 }
                 if matches!(self.console.screen(), Screen::Trouble(_))
                     && let Some(id) = self.selected_id()
@@ -2240,6 +2275,7 @@ impl Library {
             | Screen::GameSettings(e)
             | Screen::GameCat(e, _)
             | Screen::Saves(e)
+            | Screen::Mods(e)
             | Screen::Quick(e)
             | Screen::Covers(e)
             | Screen::Trouble(e) => entry.as_deref() == Some(e.as_str()),
@@ -2549,6 +2585,15 @@ impl Library {
             }
             Screen::AddGames => self.add_opened(cx),
             Screen::Covers(id) => self.covers_opened(id, cx),
+            Screen::Mods(id) => {
+                self.console.focus.remove(&screen);
+                if let Some(ix) = self.games.iter().position(|g| g.id.id == *id)
+                    && self.selected_id().is_none_or(|g| g.id != *id)
+                {
+                    self.select(Selection::Game(ix), cx);
+                }
+                self.mods_opened(cx);
+            }
             Screen::Trouble(id) => {
                 self.console.focus.remove(&screen);
                 if let Some(ix) = self.games.iter().position(|g| g.id.id == *id) {
@@ -2935,6 +2980,7 @@ impl Library {
             {
                 Some(Act::CancelDownload(key.clone()))
             }
+            Act::ModsToggle(name) => Some(Act::ModsMenu(name.clone())),
             _ => None,
         }
     }
@@ -3409,6 +3455,19 @@ impl Library {
             | Act::SavesCopy
             | Act::SavesAskRestore(_)
             | Act::SavesRestore(_) => self.saves_do(act, cx),
+            Act::ModsGet
+            | Act::ModsReload
+            | Act::ModsLink
+            | Act::ModsToggle(_)
+            | Act::ModsMenu(_)
+            | Act::ModsMove(..)
+            | Act::ModsAskRemove(_)
+            | Act::ModsRemove(_)
+            | Act::ModsSignIn
+            | Act::ModsSignOut
+            | Act::ModsUpdates
+            | Act::ModsPick(..)
+            | Act::ModsAnswer(_) => self.mods_act(act, cx),
             Act::SteamMoveAsk(app) => self.steam_move_ask(app, cx),
             Act::SteamMove(app, folder) => self.steam_move(app, folder, cx),
             Act::SteamMoveMenu => self.steam_move_menu(),

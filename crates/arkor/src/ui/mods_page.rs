@@ -12,6 +12,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, PathPromptOptions, div, prelude::*, px};
 use serde_json::{Value, json};
 
+use super::console::{Act, Item, Kind, Overlay, Row, Value as Shown};
 use super::style::{self, pal};
 use super::{Library, widgets};
 
@@ -401,7 +402,9 @@ impl Library {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok((id, _link, archive, installed)) => {
-                        if !this.console.on {
+                        if this.console.on {
+                            this.console_open(super::console::Screen::Mods(id.id.clone()), cx);
+                        } else {
                             this.select_game(&id, cx);
                             this.game_tab = super::features::GameTab::Mods;
                         }
@@ -1008,6 +1011,373 @@ impl Library {
                     .child(group["label"].as_str().unwrap_or(&gname).to_string()),
             )
             .child(opts)
+    }
+}
+
+impl ModsUi {
+    /// An installer's questions, as if an archive had asked them (for tests).
+    #[cfg(test)]
+    pub(super) fn ask(&mut self, choices: Value) {
+        self.asking = Some(Asking {
+            archive: PathBuf::from("/mod.zip"),
+            picked: Choices(choices.clone()).defaults(),
+            choices: Choices(choices),
+        });
+    }
+}
+
+// ---- Console mode ----
+
+impl Library {
+    /// The Mods screen opened: its list is read again.
+    pub(super) fn mods_opened(&mut self, cx: &mut Context<Self>) {
+        self.mods.removing = None;
+        if self.mods_ready() {
+            self.mods_load(cx);
+        }
+    }
+
+    /// The Mods screen of a game.
+    pub(super) fn mods_rows(&self, id: &str) -> Vec<Row> {
+        if self.selected_id().is_none_or(|g| g.id != id) {
+            return Vec::new();
+        }
+        let line = |act, icon, text: &str, value| {
+            Row::new(Kind::Line, vec![Item::line(act, icon, text, value)])
+        };
+        if !self.mods_ready() {
+            let waiting = arkor_launch::downloads::pending("amethyst");
+            return vec![line(
+                Act::ModsGet,
+                "download",
+                self.tr("Get mod support", "Mod desteğini indir"),
+                Shown::Text(if waiting {
+                    self.tr("Downloading…", "İndiriliyor…").to_string()
+                } else {
+                    "Amethyst Mod Manager".to_string()
+                }),
+            )];
+        }
+        if let Some(asking) = &self.mods.asking {
+            return self.mods_question_rows(asking);
+        }
+        let mut rows = Vec::new();
+        if let Some(doing) = self.mods.busy {
+            rows.push(line(Act::ModsReload, "loader", doing, Shown::None));
+        }
+        match &self.mods.known {
+            Known::Nothing | Known::Reading => rows.push(line(
+                Act::ModsReload,
+                "loader",
+                self.tr("Asking Amethyst…", "Amethyst'e soruluyor…"),
+                Shown::None,
+            )),
+            Known::Failed(e) => rows.push(line(
+                Act::ModsReload,
+                "refresh-cw",
+                self.tr("Try again", "Tekrar dene"),
+                Shown::Text(e.clone()),
+            )),
+            Known::Unlinked { fits, place } => match (fits, place) {
+                (Some(fits), Some(_)) => rows.push(line(
+                    Act::ModsLink,
+                    "puzzle",
+                    self.tr("Use mods for this game", "Bu oyunda mod kullan"),
+                    Shown::Text(fits.name.clone()),
+                )),
+                _ => rows.push(line(
+                    Act::ModsReload,
+                    "circle-alert",
+                    self.tr(
+                        "Amethyst does not know this game yet",
+                        "Amethyst bu oyunu henüz tanımıyor",
+                    ),
+                    Shown::None,
+                )),
+            },
+            Known::Linked { mods, domain, .. } => {
+                if domain.is_some() {
+                    let account = self.mods.account.clone().flatten();
+                    let (act, who) = match (&account, self.mods.signing_in) {
+                        (_, true) => (
+                            Act::ModsSignIn,
+                            self.tr("Finish in the browser…", "Tarayıcıda tamamla…")
+                                .to_string(),
+                        ),
+                        (Some(a), _) => (Act::ModsSignOut, a.name.clone()),
+                        (None, _) => (Act::ModsSignIn, self.tr("Sign in", "Giriş yap").to_string()),
+                    };
+                    rows.push(line(act, "globe", "Nexus Mods", Shown::Text(who)));
+                    if account.is_some() {
+                        rows.push(line(
+                            Act::ModsUpdates,
+                            "refresh-cw",
+                            self.tr("Check for updates", "Güncellemeleri denetle"),
+                            Shown::None,
+                        ));
+                    }
+                }
+                if mods.is_empty() {
+                    rows.push(line(
+                        Act::ModsReload,
+                        "info",
+                        self.tr("No mods yet", "Henüz mod yok"),
+                        Shown::Text(
+                            self.tr(
+                                "Install them from Nexus Mods or the desktop",
+                                "Nexus Mods'tan ya da masaüstünden kur",
+                            )
+                            .to_string(),
+                        ),
+                    ));
+                }
+                for (n, m) in mods.iter().enumerate() {
+                    let mut item = Item::line(
+                        Act::ModsToggle(m.name.clone()),
+                        "puzzle",
+                        m.title.clone(),
+                        Shown::Switch(m.enabled),
+                    );
+                    let mut sub: Vec<String> = m.version.iter().cloned().collect();
+                    if m.update {
+                        sub.push(self.tr("update available", "güncelleme var").to_string());
+                    }
+                    item.sub = sub.join(" · ");
+                    let mut row = Row::new(Kind::Line, vec![item]);
+                    if n == 0 {
+                        row.title = Some(format!(
+                            "{} · {}",
+                            self.tr("Highest priority first", "En yüksek öncelik üstte"),
+                            mods.len()
+                        ));
+                    }
+                    rows.push(row);
+                }
+            }
+        }
+        rows
+    }
+
+    /// An installer's questions, a line per option; then install or not.
+    fn mods_question_rows(&self, asking: &Asking) -> Vec<Row> {
+        let mut rows = Vec::new();
+        if asking.choices.installer() == "fomod" {
+            let steps = asking.choices.0["steps"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for step in steps.iter().filter(|s| s["visible_by_default"] != false) {
+                let ix = step["index"].as_str().unwrap_or("0").to_string();
+                for group in step["groups"].as_array().cloned().unwrap_or_default() {
+                    let gname = group["name"].as_str().unwrap_or_default().to_string();
+                    let picked = &asking.picked[&ix][&gname];
+                    for (n, opt) in group["options"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .iter()
+                        .enumerate()
+                    {
+                        let oname = opt["name"].as_str().unwrap_or_default().to_string();
+                        let on = picked
+                            .as_array()
+                            .is_some_and(|a| a.iter().any(|x| x == oname.as_str()));
+                        let mut item = Item::line(
+                            Act::ModsPick(ix.clone(), gname.clone(), oname.clone()),
+                            if on { "circle-check" } else { "circle" },
+                            oname,
+                            Shown::None,
+                        );
+                        item.sub = opt["description"].as_str().unwrap_or_default().to_string();
+                        let mut row = Row::new(Kind::Line, vec![item]);
+                        if n == 0 {
+                            row.title = Some(group["label"].as_str().unwrap_or(&gname).to_string());
+                        }
+                        rows.push(row);
+                    }
+                }
+            }
+        }
+        let name = asking.choices.0["mod"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let mut install = Row::new(
+            Kind::Line,
+            vec![Item::line(
+                Act::ModsAnswer(true),
+                "download",
+                self.tr("Install", "Kur"),
+                Shown::Text(name),
+            )],
+        );
+        if rows.is_empty() {
+            install.title = Some(
+                self.tr(
+                    "Installed the way its author recommends",
+                    "Yazarının önerdiği biçimde kurulur",
+                )
+                .to_string(),
+            );
+        }
+        rows.push(install);
+        rows.push(Row::new(
+            Kind::Line,
+            vec![Item::line(
+                Act::ModsAnswer(false),
+                "x",
+                self.tr("Cancel", "Vazgeç"),
+                Shown::None,
+            )],
+        ));
+        rows
+    }
+
+    /// The question's rows whether Amethyst is there or not (for tests).
+    #[cfg(test)]
+    pub(super) fn mods_rows_asking_for_test(&self) -> Vec<Row> {
+        self.mods
+            .asking
+            .as_ref()
+            .map(|a| self.mods_question_rows(a))
+            .unwrap_or_default()
+    }
+
+    fn mods_link_of(&self) -> Option<Link> {
+        match &self.mods.known {
+            Known::Linked { link, .. } => Some(link.clone()),
+            _ => None,
+        }
+    }
+
+    /// What one of the Mods screen's things does.
+    pub(super) fn mods_act(&mut self, act: Act, cx: &mut Context<Self>) {
+        let running = self.selected_id().is_some_and(|id| self.mods_running(&id));
+        let changes = matches!(
+            act,
+            Act::ModsToggle(_)
+                | Act::ModsMenu(_)
+                | Act::ModsMove(..)
+                | Act::ModsAskRemove(_)
+                | Act::ModsRemove(_)
+                | Act::ModsLink
+                | Act::ModsAnswer(true)
+        );
+        if running && changes {
+            self.status = Some(self.tr("Close the game first.", "Önce oyunu kapat.").into());
+            cx.notify();
+            return;
+        }
+        match act {
+            Act::ModsGet => self.enqueue_download("amethyst", cx),
+            Act::ModsReload => self.mods_opened(cx),
+            Act::ModsLink => {
+                if let Known::Unlinked {
+                    fits: Some(fits),
+                    place: Some(place),
+                } = self.mods.known.clone()
+                {
+                    self.mods_link(fits, place, cx);
+                }
+            }
+            Act::ModsToggle(name) => {
+                let on = match &self.mods.known {
+                    Known::Linked { mods, .. } => {
+                        mods.iter().find(|m| m.name == name).map(|m| m.enabled)
+                    }
+                    _ => None,
+                };
+                if let (Some(on), Some(link)) = (on, self.mods_link_of()) {
+                    self.mods_do(self.tr("Saving…", "Kaydediliyor…"), cx, move |c| {
+                        mods::set_enabled(c, &link, &name, !on)
+                    });
+                }
+            }
+            Act::ModsMenu(name) => {
+                let options = vec![
+                    (
+                        self.tr("Move up", "Yukarı taşı").to_string(),
+                        Act::ModsMove(name.clone(), true),
+                        false,
+                    ),
+                    (
+                        self.tr("Move down", "Aşağı taşı").to_string(),
+                        Act::ModsMove(name.clone(), false),
+                        false,
+                    ),
+                    (
+                        self.tr("Remove", "Kaldır").to_string(),
+                        Act::ModsAskRemove(name.clone()),
+                        false,
+                    ),
+                ];
+                self.console_overlay(Overlay::Pick(name, options));
+            }
+            Act::ModsMove(name, up) => {
+                if let Some(link) = self.mods_link_of() {
+                    self.mods_do(self.tr("Moving…", "Taşınıyor…"), cx, move |c| {
+                        mods::shift(c, &link, &name, up)
+                    });
+                }
+            }
+            Act::ModsAskRemove(name) => {
+                let text = format!(
+                    "{} {name}",
+                    self.tr(
+                        "Remove this mod for good?",
+                        "Bu mod tamamen kaldırılsın mı?"
+                    )
+                );
+                let yes = self.tr("Remove", "Kaldır").to_string();
+                self.console_overlay(Overlay::Ask(text, yes, Act::ModsRemove(name)));
+            }
+            Act::ModsRemove(name) => {
+                if let Some(link) = self.mods_link_of() {
+                    self.mods_do(self.tr("Removing…", "Kaldırılıyor…"), cx, move |c| {
+                        mods::remove(c, &link, &name)
+                    });
+                }
+            }
+            Act::ModsSignIn => {
+                if self.mods.signing_in {
+                    self.mods.signing_in = false;
+                } else {
+                    self.mods_sign_in(cx);
+                }
+            }
+            Act::ModsSignOut => self.mods_sign_out(cx),
+            Act::ModsUpdates => {
+                if let Some(link) = self.mods_link_of() {
+                    self.mods_check_updates(link, cx);
+                }
+            }
+            Act::ModsPick(step, group, option) => {
+                if let Some(a) = self.mods.asking.as_mut() {
+                    let kind = a.choices.0["steps"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|s| s["index"] == step.as_str())
+                        .flat_map(|s| s["groups"].as_array().cloned().unwrap_or_default())
+                        .find(|g| g["name"] == group.as_str())
+                        .and_then(|g| g["type"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| "SelectAny".into());
+                    pick(&mut a.picked, &step, &group, &kind, &option);
+                }
+            }
+            Act::ModsAnswer(true) => {
+                if let (Some(a), Some(link)) = (self.mods.asking.clone(), self.mods_link_of()) {
+                    let answer = match a.choices.installer() {
+                        "fomod" => Answer::Fomod(a.picked),
+                        _ => Answer::Defaults,
+                    };
+                    self.mods_install(link, a.archive, Some(answer), cx);
+                }
+            }
+            Act::ModsAnswer(false) => self.mods.asking = None,
+            _ => {}
+        }
+        cx.notify();
     }
 }
 

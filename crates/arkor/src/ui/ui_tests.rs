@@ -1945,3 +1945,75 @@ fn console_mode_rests_when_nobody_plays() {
         assert!(!l.console.idle.keeps_awake());
     });
 }
+
+#[test]
+fn a_games_mods_from_the_console() {
+    use super::console::{Act, Screen};
+    let _lock = super::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _home = scratch_home();
+    let entry = GameLibrary::load().unwrap().games[0].id.clone();
+    let mut app = gpui_test::TestAppContext::single();
+    app.update(|cx| {
+        gpui::init(cx);
+        text_input::bind_keys(cx);
+        console::bind_keys(cx);
+        shell::bind_keys(cx);
+    });
+    let (view, cx) = app.add_window_view(|_, _| {
+        let mut lib = Library::new();
+        lib.open(Some("console"));
+        lib
+    });
+    cx.run_until_parked();
+    view.update(cx, |l, cx| {
+        l.console_open(Screen::Game(entry.clone()), cx);
+        // The game's screen leads to its mods.
+        assert!(
+            l.game_rows(&entry)
+                .iter()
+                .flat_map(|r| &r.items)
+                .any(|i| i.act == Act::Screen(Screen::Mods(entry.clone())))
+        );
+        l.console_open(Screen::Mods(entry.clone()), cx);
+        assert_eq!(l.console.screen(), Screen::Mods(entry.clone()));
+        // Without Amethyst: the one thing to do is to get it.
+        let acts: Vec<Act> = l
+            .console_rows()
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.act.clone()))
+            .collect();
+        assert_eq!(acts, [Act::ModsGet]);
+    });
+    view.update(cx, |l, cx| {
+        // A FOMOD's question: its options, then install or not.
+        l.mods.ask(serde_json::json!({
+            "installer": "fomod", "mod": "Tex",
+            "defaults": {"0": {"Quality": ["High"]}},
+            "steps": [{"index": "0", "name": "Q", "visible_by_default": true, "groups": [
+                {"name": "Quality", "label": "Quality", "type": "SelectExactlyOne",
+                 "options": [{"name": "Low", "description": "small"}, {"name": "High", "description": "big"}]}
+            ]}]
+        }));
+        // Shown only once Amethyst is there: pretend it is.
+        let rows = l.mods_rows_asking_for_test();
+        let labels: Vec<String> = rows
+            .iter()
+            .flat_map(|r| r.items.iter().map(|i| i.label.clone()))
+            .collect();
+        assert_eq!(labels, ["Low", "High", "Install", "Cancel"]);
+        l.mods_act(
+            Act::ModsPick("0".into(), "Quality".into(), "Low".into()),
+            cx,
+        );
+        let picked = l.mods_rows_asking_for_test();
+        let icon = |n: usize| match &picked[n].items[0].look {
+            super::console::Look::Line { icon, .. } => *icon,
+            _ => unreachable!(),
+        };
+        assert_eq!((icon(0), icon(1)), ("circle-check", "circle"), "Low now");
+        l.mods_act(Act::ModsAnswer(false), cx);
+        assert!(l.mods_rows_asking_for_test().is_empty(), "no question left");
+    });
+}
