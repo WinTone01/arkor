@@ -160,7 +160,7 @@ fn read_lines<T: serde::de::DeserializeOwned>(name: &str) -> Vec<T> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub at: u64,
-    /// The library id of the game, or empty for a note about the day.
+    /// The game (`local:<id>`, as sessions name it), or empty for a note about the day.
     pub game: String,
     pub text: String,
 }

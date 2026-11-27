@@ -482,7 +482,11 @@ impl Library {
                         row = row.child(widgets::chip(("pick-status", ix), label, false).on_click(
                             cx.listener(move |this, _, _, cx| {
                                 for id in &this.picked {
-                                    arkor_core::stats::record_status(id, st);
+                                    let gid = arkor_core::GameId::new(
+                                        arkor_core::Store::Local,
+                                        id.as_str(),
+                                    );
+                                    arkor_core::stats::record_status(&gid.to_string(), st);
                                 }
                                 this.change_picked(move |g| g.status = st, cx)
                             }),

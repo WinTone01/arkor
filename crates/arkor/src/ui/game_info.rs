@@ -92,7 +92,7 @@ impl Library {
     }
 
     fn set_status(&mut self, status: Option<PlayStatus>, cx: &mut Context<Self>) {
-        if let Some(id) = self.entry().map(|e| e.id.clone()) {
+        if let Some(id) = self.entry().map(|e| e.game_id().to_string()) {
             arkor_core::stats::record_status(&id, status);
         }
         self.edit_entry(|g| g.status = status);

@@ -4,6 +4,7 @@
 //! counts in the totals per game only.
 
 use arkor_core::stats::{self, Session, Summary};
+use gpui::prelude::FluentBuilder;
 use gpui::{Context, Div, FontWeight, div, prelude::*, px};
 
 use super::style::{self, pal};
@@ -268,8 +269,40 @@ impl Library {
             ));
         }
 
-        let mut journal = widgets::section(self.tr("Play journal", "Oyun günlüğü"));
-        for (d, games) in stats::journal(&sessions, 30) {
+        let notes = stats::notes();
+        let note_input = self.submit_field(
+            "journal-note",
+            self.tr(
+                "A note about today, then Enter",
+                "Bugün hakkında bir not, sonra Enter",
+            ),
+            cx,
+            |this, text, cx| {
+                let r = stats::add_note("", text);
+                this.report(r);
+                cx.notify();
+            },
+        );
+        let mut journal = widgets::section(self.tr("Play journal", "Oyun günlüğü"))
+            .child(widgets::label(self.tr(
+                "What you played each day, and your notes. Notes can also be written from a running game's page.",
+                "Her gün ne oynadığın ve notların. Not, çalışan bir oyunun sayfasından da yazılabilir.",
+            )))
+            .child(div().max_w(px(520.)).child(note_input));
+        // Days with notes but no play show too.
+        let mut days = stats::journal(&sessions, 30);
+        for n in &notes {
+            let d = stats::local_day(n.at);
+            if !days
+                .iter()
+                .any(|(x, _)| (x.year, x.month, x.day) == (d.year, d.month, d.day))
+            {
+                days.push((d, Vec::new()));
+            }
+        }
+        days.sort_by(|a, b| (b.0.year, b.0.month, b.0.day).cmp(&(a.0.year, a.0.month, a.0.day)));
+        days.truncate(30);
+        for (d, games) in days {
             let day = format!(
                 "{:02}.{:02}.{} {}",
                 d.day,
@@ -281,11 +314,24 @@ impl Library {
                     DAYS_EN[d.weekday as usize]
                 }
             );
-            let text = games
+            let mut text = games
                 .iter()
                 .map(|(g, secs)| format!("{} ({})", self.game_name_of(g), fmt(*secs)))
                 .collect::<Vec<_>>()
                 .join(" · ");
+            for n in notes.iter().filter(|n| {
+                let x = stats::local_day(n.at);
+                (x.year, x.month, x.day) == (d.year, d.month, d.day)
+            }) {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                if n.game.is_empty() {
+                    text.push_str(&format!("✎ {}", n.text));
+                } else {
+                    text.push_str(&format!("✎ {}: {}", self.game_name_of(&n.game), n.text));
+                }
+            }
             journal = journal.child(fact_row(day, text, div()));
         }
 
@@ -296,6 +342,7 @@ impl Library {
             .child(header)
             .child(picker)
             .child(tiles)
+            .children(year.map(|y| self.render_goal(y, &s, cx)))
             .child(widgets::section(self.tr("By month", "Aylara göre")).child(self.bars(&months)))
             .child(
                 div()
@@ -322,8 +369,208 @@ impl Library {
             .child(journal)
     }
 
+    /// The year's goal of games to beat, and the year as a picture to share.
+    fn render_goal(&mut self, year: i32, s: &Summary, cx: &mut Context<Self>) -> Div {
+        let beaten = stats::beaten_in(&stats::status_history(), year);
+        let goal = self.global.beat_goal;
+        let step = |this: &mut Self, d: i32| {
+            this.global.beat_goal = (this.global.beat_goal as i32 + d).clamp(0, 500) as u32;
+            let r = this.global.save();
+            this.report(r);
+        };
+        let mut card = widgets::section(format!(
+            "{} {year}",
+            self.tr("Games beaten in", "Bitirilen oyunlar:")
+        ))
+        .child(widgets::setting_row(
+            self.tr("Goal for the year", "Yılın hedefi"),
+            self.tr(
+                "How many games you want to finish. A game counts when you set it to Beaten.",
+                "Kaç oyun bitirmek istediğin. Bir oyun, durumunu Bitirdim yaptığında sayılır.",
+            ),
+            widgets::stepper_control(
+                if goal == 0 {
+                    self.tr("None", "Yok").to_string()
+                } else {
+                    goal.to_string()
+                },
+                widgets::step_button("goal-", "−").on_click(cx.listener(move |this, _, _, cx| {
+                    step(this, -1);
+                    cx.notify();
+                })),
+                widgets::step_button("goal+", "+").on_click(cx.listener(move |this, _, _, cx| {
+                    step(this, 1);
+                    cx.notify();
+                })),
+            ),
+        ));
+        let n = beaten.len() as u32;
+        let frac = if goal > 0 {
+            (n as f32 / goal as f32).min(1.)
+        } else {
+            0.
+        };
+        card = card.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .text_2xl()
+                        .font_weight(FontWeight::BOLD)
+                        .child(if goal > 0 {
+                            format!("{n} / {goal}")
+                        } else {
+                            n.to_string()
+                        }),
+                )
+                .when(goal > 0, |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            .h(px(10.))
+                            .rounded_full()
+                            .bg(pal::text().opacity(0.08))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .rounded_full()
+                                    .bg(pal::accent())
+                                    .w(gpui::relative(frac)),
+                            ),
+                    )
+                }),
+        );
+        if !beaten.is_empty() {
+            card = card.child(widgets::label(
+                beaten
+                    .iter()
+                    .map(|(g, _)| self.game_name_of(g))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ));
+        }
+        let svg = self.year_card_svg(year, s, n);
+        card.child(
+            div().flex().child(
+                widgets::chip(
+                    "year-card",
+                    self.tr(
+                        "Save the year as a picture to share",
+                        "Yılı paylaşmak için resim olarak kaydet",
+                    ),
+                    false,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    match save_year_card(year, &svg) {
+                        Ok(path) => {
+                            this.status = Some(path.display().to_string().into());
+                            if let Some(dir) = path.parent() {
+                                let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                            }
+                        }
+                        Err(e) => this.status = Some(format!("{e:#}").into()),
+                    }
+                    cx.notify();
+                })),
+            ),
+        )
+    }
+
+    /// The year in numbers, drawn as an SVG card (1080×1350).
+    fn year_card_svg(&self, year: i32, s: &Summary, beaten: u32) -> String {
+        let esc = |t: &str| {
+            t.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+        };
+        let mut games = String::new();
+        for (i, (g, secs)) in s.per_game.iter().take(5).enumerate() {
+            games.push_str(&format!(
+                r##"<text x="90" y="{}" font-size="40" fill="#e9e4ff">{}. {}</text><text x="990" y="{}" font-size="36" fill="#b9a8ff" text-anchor="end">{}</text>"##,
+                760 + i * 80,
+                i + 1,
+                esc(&self.game_name_of(g)),
+                760 + i * 80,
+                esc(&stats::format_duration(*secs))
+            ));
+        }
+        let t = |en: &'static str, tr: &'static str| esc(self.tr(en, tr));
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b1035"/><stop offset="1" stop-color="#4a1fb8"/></linearGradient></defs>
+<rect width="1080" height="1350" fill="url(#g)"/>
+<g font-family="Inter, Noto Sans, sans-serif">
+<text x="90" y="170" font-size="54" fill="#b9a8ff">{your}</text>
+<text x="90" y="290" font-size="130" font-weight="700" fill="#ffffff">{year}</text>
+<text x="90" y="420" font-size="72" font-weight="700" fill="#ffffff">{total}</text>
+<text x="90" y="470" font-size="34" fill="#b9a8ff">{played}</text>
+<text x="560" y="420" font-size="72" font-weight="700" fill="#ffffff">{ngames}</text>
+<text x="560" y="470" font-size="34" fill="#b9a8ff">{games_l}</text>
+<text x="90" y="590" font-size="72" font-weight="700" fill="#ffffff">{beaten}</text>
+<text x="90" y="640" font-size="34" fill="#b9a8ff">{beaten_l}</text>
+<text x="560" y="590" font-size="72" font-weight="700" fill="#ffffff">{days}</text>
+<text x="560" y="640" font-size="34" fill="#b9a8ff">{days_l}</text>
+{games}
+<text x="90" y="1280" font-size="30" fill="#8f7fd0">Arkor</text>
+</g></svg>"##,
+            your = t("Your year in games", "Oyunlarla geçen yılın"),
+            total = esc(&stats::format_duration(s.total)),
+            played = t("played", "oynandı"),
+            ngames = s.per_game.len(),
+            games_l = t("games", "oyun"),
+            beaten_l = t("beaten", "bitirildi"),
+            days = s.days_played,
+            days_l = t("days with play", "oyunlu gün"),
+        )
+    }
+
     /// The history changed (a game ended): read again when the page shows next.
     pub(super) fn stats_forget(&mut self) {
         self.stats_ui.sessions = None;
     }
+}
+
+/// Writes the year card into `~/Pictures/Arkor` (a PNG beside it when a converter is
+/// installed); the file to share.
+fn save_year_card(year: i32, svg: &str) -> anyhow::Result<std::path::PathBuf> {
+    use anyhow::Context as _;
+    let dir = dirs::picture_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
+        .context("no pictures folder")?
+        .join("Arkor");
+    std::fs::create_dir_all(&dir)?;
+    let svg_path = dir.join(format!("Arkor {year}.svg"));
+    std::fs::write(&svg_path, svg)?;
+    let png = dir.join(format!("Arkor {year}.png"));
+    let converted = [
+        (
+            "rsvg-convert",
+            vec![
+                "-o".to_string(),
+                png.display().to_string(),
+                svg_path.display().to_string(),
+            ],
+        ),
+        (
+            "magick",
+            vec![svg_path.display().to_string(), png.display().to_string()],
+        ),
+    ]
+    .into_iter()
+    .any(|(tool, args)| {
+        std::process::Command::new(tool)
+            .args(&args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    });
+    Ok(if converted && png.is_file() {
+        png
+    } else {
+        svg_path
+    })
 }

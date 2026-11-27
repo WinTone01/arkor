@@ -83,7 +83,7 @@ impl Library {
                     limits,
                 ));
         }
-        let id = entry.id.clone();
+        let id = gid.to_string();
         let note = self.submit_field(
             "np-note",
             self.tr(

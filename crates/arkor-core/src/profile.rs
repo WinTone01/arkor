@@ -434,6 +434,9 @@ pub struct Global {
     /// set, so older Arkor versions still read the file).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_save_backups: bool,
+    /// How many games the user wants to beat in a year (0 = no goal).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub beat_goal: u32,
     /// Also a copy every this many minutes while a game runs (0 = only after it ends).
     #[serde(skip_serializing_if = "is_zero")]
     pub save_every_min: u32,
