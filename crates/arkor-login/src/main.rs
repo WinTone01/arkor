@@ -316,6 +316,17 @@ fn run(
     };
     #[cfg(not(target_os = "linux"))]
     let webview = builder.build(&window)?;
+    // No audio or video: neither a login nor a mod page needs them, and WebKit's media
+    // player aborts the whole page when GStreamer's plugins are missing (Nexus Mods did).
+    {
+        use webkit2gtk::{SettingsExt, WebViewExt};
+        let page = wry::WebViewExtUnix::webview(&webview);
+        if let Some(settings) = WebViewExt::settings(&page) {
+            settings.set_enable_media(false);
+            settings.set_enable_webaudio(false);
+            settings.set_enable_media_stream(false);
+        }
+    }
     let webview = std::rc::Rc::new(webview);
 
     // The gamepad's pointer, drawn by the page's script (see `pad.js`).

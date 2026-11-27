@@ -10,3 +10,5 @@ wry = "0.57"
 tao = "0.37"
 gtk = "0.18"
 gilrs = "0.11.2"
+# The same WebKitGTK bindings wry uses, for settings wry does not offer.
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
