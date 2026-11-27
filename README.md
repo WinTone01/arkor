@@ -195,6 +195,15 @@ Bottles' programs, and favourites, categories and play time carried over from He
 Lutris and Faugus · Steam friends online in the sidebar (with Steam control on) · GOG play
 time and achievements on the game page · Epic's overlay per game.
 
+**Settings anyone can find:** a game's settings are grouped by what you want, not by the
+tool that does it: *Smoother & faster* (upscaling, frame generation, input delay, stutters),
+*Picture*, *Performance overlay*, *Compatibility* (Proton, crash fixes, graphics card,
+gamepads). Each area opens on cards that say what its categories are for, and every switch
+says in a sentence what it does. Console mode uses the same areas and explanations. Also:
+MangoHud can report another graphics card, MAKO's GPU headroom and HDR brightness, ReShade's
+menu key, renaming benchmark runs, the newest fakenvapi with OptiScaler, and DLSS-NR's
+ReShade routes and 32-bit package.
+
 <a id="console-mode"></a>
 
 ## <img src="docs/icons/console.svg" width="30" align="top"> Console mode
