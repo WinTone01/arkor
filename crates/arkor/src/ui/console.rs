@@ -897,7 +897,7 @@ impl Library {
     }
 
     /// Library entries by when they were played last, the never played ones left out.
-    fn console_recent(&self) -> Vec<&LibraryGame> {
+    pub(super) fn console_recent(&self) -> Vec<&LibraryGame> {
         let mut games: Vec<(u64, &LibraryGame)> = self
             .library
             .games
@@ -951,7 +951,64 @@ impl Library {
         self.t().percent((share * 100.) as u32)
     }
 
+    /// The glass home: one rail of covers at the top, the focused game large below it with
+    /// its buttons. Only with the "shelves" layout; the other layouts keep their own home.
+    pub(super) fn home_glass(&self) -> bool {
+        self.console.screen() == Screen::Home && self.console_theme().layout == "shelves"
+    }
+
+    /// The games on the glass home's rail: what runs, then what was played last, then the
+    /// rest of the library.
+    pub(super) fn home_rail(&self) -> Vec<&LibraryGame> {
+        let mut recent = self.console_recent();
+        recent.sort_by_key(|g| !self.running.contains_key(&g.game_id().to_string()));
+        let mut rail = recent;
+        for g in self.console_all() {
+            if !rail.iter().any(|r| r.id == g.id) {
+                rail.push(g);
+            }
+        }
+        rail.truncate(40);
+        rail
+    }
+
+    /// The rail's game the home is about: where the rail's focus is, or was left.
+    pub(super) fn home_pick(&self) -> Option<&LibraryGame> {
+        let rail = self.home_rail();
+        let col = self.console.focus().cols.get(&0).copied().unwrap_or(0);
+        rail.get(col.min(rail.len().saturating_sub(1))).copied()
+    }
+
     fn home_rows(&self) -> Vec<Row> {
+        if self.home_glass() {
+            let rail = self.home_rail();
+            if let Some(g) = self.home_pick() {
+                let gid = g.game_id().to_string();
+                let play = if self.running.contains_key(&gid) {
+                    Item::main(Act::Stop(gid), "square", self.tr("Stop", "Durdur"))
+                } else {
+                    Item::main(Act::Play(gid), "play", self.tr("Play", "Oyna"))
+                };
+                return vec![
+                    Row::new(
+                        Kind::Shelf,
+                        rail.iter().map(|g| self.game_item(g)).collect(),
+                    ),
+                    Row::new(
+                        Kind::Pills,
+                        vec![
+                            play,
+                            Item::pill(
+                                Act::Screen(Screen::Game(g.id.clone())),
+                                "layout-grid",
+                                self.tr("Game page", "Oyun sayfası"),
+                                false,
+                            ),
+                        ],
+                    ),
+                ];
+            }
+        }
         let mut rows = Vec::new();
         let mut recent = self.console_recent();
         // What runs comes first.
@@ -1072,12 +1129,19 @@ impl Library {
                 *f == Filter::Recent,
             ),
         ];
-        pills.extend(self.library_pills());
+        // The filters stay together (the categories with them), then sorting and adding:
+        // the order the focus moves in is the order on the screen.
+        let (filters, rest): (Vec<Item>, Vec<Item>) = self
+            .library_pills()
+            .into_iter()
+            .partition(|i| matches!(i.act, Act::Filter(_)));
+        pills.extend(filters);
         for c in self.categories() {
             let filter = Filter::Category(c.clone());
             let on = *f == filter;
             pills.push(Item::pill(Act::Filter(filter), "folder", c, on));
         }
+        pills.extend(rest);
         let games = match f {
             Filter::Recent => self.console_recent(),
             Filter::Hidden => self.library.games.iter().filter(|g| g.hidden).collect(),
@@ -1552,18 +1616,20 @@ impl Library {
                     )],
                 ));
             }
-            for (ix, (key, _, _)) in super::features::QUICK.into_iter().enumerate() {
-                let (label, icon, on) = self.quick_label(key);
-                rows.push(Row::new(
-                    Kind::Line,
-                    vec![Item::line(
-                        Act::Opt(Opt::Quick(ix)),
-                        icon,
-                        label,
-                        Value::Switch(on),
-                    )],
-                ));
-            }
+            // The quick switches: one quiet row of small buttons, lit when on.
+            let quick = super::features::QUICK
+                .into_iter()
+                .enumerate()
+                .map(|(ix, (key, _, _))| {
+                    let (label, icon, on) = self.quick_label(key);
+                    Item::pill(Act::Opt(Opt::Quick(ix)), icon, label, on)
+                })
+                .collect();
+            rows.push(Row::titled(
+                self.tr("Quick settings", "Hızlı ayarlar"),
+                Kind::Pills,
+                quick,
+            ));
         }
         rows
     }
@@ -1993,24 +2059,33 @@ impl Library {
                     self.tr("Leave console mode", "Konsol modundan çık"),
                 ));
                 rows.push(line(
-                    Act::AskPower(Power::Suspend),
-                    "moon",
-                    self.tr("Suspend", "Uyku"),
-                ));
-                rows.push(line(
-                    Act::AskPower(Power::Restart),
-                    "rotate-cw",
-                    self.tr("Restart the computer", "Bilgisayarı yeniden başlat"),
-                ));
-                rows.push(line(
-                    Act::AskPower(Power::Off),
-                    "power",
-                    self.tr("Shut down", "Bilgisayarı kapat"),
-                ));
-                rows.push(line(
                     Act::AskQuit,
                     "log-out",
                     self.tr("Quit Arkor", "Arkor'dan çık"),
+                ));
+                // The computer's power, side by side at the end (each one asks first).
+                rows.push(Row::new(
+                    Kind::Pills,
+                    vec![
+                        Item::pill(
+                            Act::AskPower(Power::Suspend),
+                            "moon",
+                            self.tr("Suspend", "Uyku"),
+                            false,
+                        ),
+                        Item::pill(
+                            Act::AskPower(Power::Restart),
+                            "rotate-cw",
+                            self.tr("Restart", "Yeniden başlat"),
+                            false,
+                        ),
+                        Item::pill(
+                            Act::AskPower(Power::Off),
+                            "power",
+                            self.tr("Shut down", "Kapat"),
+                            false,
+                        ),
+                    ],
                 ));
                 rows
             }

@@ -872,7 +872,7 @@ impl Library {
         }
     }
 
-    fn game_cat_title(&self, c: GameCat) -> (&'static str, &'static str) {
+    pub(super) fn game_cat_title(&self, c: GameCat) -> (&'static str, &'static str) {
         match c {
             GameCat::Smooth => ("zap", self.tr("Smoother & faster", "Daha akıcı ve hızlı")),
             GameCat::Picture => ("palette", self.tr("Picture", "Görüntü")),
@@ -1244,13 +1244,9 @@ impl Library {
         rows
     }
 
-    pub(super) fn game_cat_name(&self, c: GameCat) -> &'static str {
-        self.game_cat_title(c).1
-    }
-
     // ---- Arkor's own settings ----
 
-    fn app_cat_title(&self, c: AppCat) -> (&'static str, &'static str) {
+    pub(super) fn app_cat_title(&self, c: AppCat) -> (&'static str, &'static str) {
         match c {
             AppCat::Arkor => ("sparkles", self.tr("Arkor update", "Arkor güncellemesi")),
             AppCat::General => ("settings", self.tr("General", "Genel")),

@@ -141,15 +141,24 @@ fn console_mode_screens() {
         view.read_with(cx, |l, _| l.selection),
         Some(Selection::Game(_))
     ));
-    // Down to a switch; Enter flips it and it is saved.
-    let target = view.read_with(cx, |l, _| {
+    // Down to the quick switches, along to one; Enter flips it and it is saved.
+    let (target, col) = view.read_with(cx, |l, _| {
         l.console_rows()
             .iter()
-            .position(|r| r.items[0].act == Act::Opt(Opt::Quick(4)))
+            .enumerate()
+            .find_map(|(r, row)| {
+                row.items
+                    .iter()
+                    .position(|i| i.act == Act::Opt(Opt::Quick(4)))
+                    .map(|c| (r, c))
+            })
             .unwrap()
     });
     for _ in 0..target {
         cx.simulate_keystrokes("down");
+    }
+    for _ in 0..col {
+        cx.simulate_keystrokes("right");
     }
     cx.simulate_keystrokes("enter");
     assert!(view.read_with(cx, |l, _| l.profile.no_sleep), "keep awake");

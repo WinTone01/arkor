@@ -287,7 +287,12 @@ impl Library {
             let value = self.opt_value(&o);
             line(Act::Opt(o), icon, label, value)
         };
-        // A list down the panel at the side, as the game stays in view.
+        // The control centre: back to the game first, the two ways out side by side, the
+        // switches and the camera as buttons, the levels as lines that turn left and right.
+        let pill_opt = |o: Opt, icon: &'static str, label: &str| {
+            let on = matches!(self.opt_value(&o), Value::Switch(true));
+            Item::pill(Act::Opt(o), icon, label, on)
+        };
         let mut rows = vec![
             line(
                 Act::QuickBack,
@@ -295,65 +300,76 @@ impl Library {
                 self.tr("Back to the game", "Oyuna dön"),
                 Value::None,
             ),
-            line(
-                Act::QuickHome,
-                "house",
-                self.tr("Go to Arkor", "Arkor'a geç"),
-                Value::None,
-            ),
-            line(
-                Act::Stop(gid),
-                "square",
-                self.tr("Close the game", "Oyunu kapat"),
-                Value::None,
+            Row::new(
+                Kind::Pills,
+                vec![
+                    Item::pill(
+                        Act::QuickHome,
+                        "house",
+                        self.tr("Go to Arkor", "Arkor'a geç"),
+                        false,
+                    ),
+                    Item::pill(
+                        Act::Stop(gid),
+                        "square",
+                        self.tr("Close the game", "Oyunu kapat"),
+                        false,
+                    ),
+                ],
             ),
         ];
-        let mut volume = opt(Opt::Volume, "volume-2", self.tr("Volume", "Ses düzeyi"));
-        volume.title = Some(self.tr("Quick settings", "Hızlı ayarlar").into());
-        rows.push(volume);
-        rows.push(opt(Opt::Muted, "volume-x", self.tr("Mute", "Sessiz")));
         let q = &self.console.quick;
+        let mut toggles = vec![pill_opt(Opt::Muted, "volume-x", self.tr("Mute", "Sessiz"))];
         if q.hud.is_some() {
-            let mut hud = opt(
+            toggles.push(pill_opt(
                 Opt::HudShown,
                 "gauge",
-                self.tr("Performance overlay", "Performans göstergesi"),
-            );
-            hud.title = Some(self.tr("This game, now", "Bu oyun, şimdi").into());
-            rows.push(hud);
-            if !q.gamescope {
-                rows.push(opt(
-                    Opt::FpsLimit,
-                    "timer",
-                    self.tr("Frame limit", "Kare sınırı"),
-                ));
-            }
+                self.tr("Overlay", "Gösterge"),
+            ));
+        }
+        let mut toggles = Row::new(Kind::Pills, toggles);
+        toggles.title = Some(self.tr("Quick settings", "Hızlı ayarlar").into());
+        rows.push(toggles);
+        let mut camera = Vec::new();
+        if quick::can_screenshot() {
+            camera.push(Item::pill(
+                Act::QuickShot,
+                "camera",
+                self.tr("Screenshot", "Ekran görüntüsü"),
+                false,
+            ));
+        }
+        if arkor_launch::clips::recording() {
+            camera.push(Item::pill(
+                Act::QuickClip,
+                "clapperboard",
+                format!(
+                    "{} ({} {})",
+                    self.tr("Clip", "Klip"),
+                    self.global.clips.seconds(),
+                    self.tr("s", "sn")
+                ),
+                false,
+            ));
+        }
+        if !camera.is_empty() {
+            rows.push(Row::new(Kind::Pills, camera));
+        }
+        let mut volume = opt(Opt::Volume, "volume-2", self.tr("Volume", "Ses düzeyi"));
+        volume.title = Some(self.tr("Levels", "Düzeyler").into());
+        rows.push(volume);
+        if q.hud.is_some() && !q.gamescope {
+            rows.push(opt(
+                Opt::FpsLimit,
+                "timer",
+                self.tr("Frame limit", "Kare sınırı"),
+            ));
         }
         if self.sys_has_profiles() {
             rows.push(opt(
                 Opt::PowerProfile,
                 "zap",
                 self.tr("Power profile", "Güç profili"),
-            ));
-        }
-        if arkor_launch::clips::recording() {
-            rows.push(line(
-                Act::QuickClip,
-                "clapperboard",
-                self.tr("Save a clip", "Klip kaydet"),
-                Value::Text(format!(
-                    "{} {}",
-                    self.global.clips.seconds(),
-                    self.tr("s", "sn")
-                )),
-            ));
-        }
-        if quick::can_screenshot() {
-            rows.push(line(
-                Act::QuickShot,
-                "camera",
-                self.tr("Take a screenshot", "Ekran görüntüsü al"),
-                Value::None,
             ));
         }
         rows

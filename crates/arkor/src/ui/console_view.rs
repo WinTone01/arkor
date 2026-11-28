@@ -39,6 +39,8 @@ struct Frame {
     scale: f32,
     /// The theme's corner radius, in points at 1080p.
     corners: f32,
+    /// The glass home: its rail has smaller covers that grow more when focused.
+    rail: bool,
 }
 
 /// Several lines beside each other: the column in a line's id.
@@ -58,7 +60,15 @@ impl Frame {
     }
 
     fn shelf_tile(&self) -> (f32, f32) {
+        if self.rail {
+            return (128. * self.u * self.scale, 192. * self.u * self.scale);
+        }
         (214. * self.u * self.scale, 321. * self.u * self.scale)
+    }
+
+    /// How much bigger a focused cover is.
+    fn grow(&self) -> f32 {
+        if self.rail { 0.25 } else { GROW }
     }
 
     fn row_height(&self, row: &Row, cols: usize) -> f32 {
@@ -69,10 +79,20 @@ impl Frame {
             Kind::Pills => 88. * u,
             Kind::Keys => 78. * u,
             Kind::Line => {
+                // Something downloading is a card: a larger cover and a thicker bar.
+                let card = row.items.iter().any(|i| {
+                    i.progress.is_some() && matches!(i.look, Look::Line { art: Some(_), .. })
+                });
                 let tall = row.items.iter().any(|i| {
                     !i.sub.is_empty() || matches!(i.look, Look::Line { art: Some(_), .. })
                 });
-                if tall { 108. * u } else { 84. * u }
+                if card {
+                    148. * u
+                } else if tall {
+                    108. * u
+                } else {
+                    84. * u
+                }
             }
         };
         body + if row.title.is_some() { 56. * u } else { 0. }
@@ -131,6 +151,7 @@ impl Library {
             still,
             scale: self.console_theme().cover_scale as f32 / 100.,
             corners: self.console_theme().corners as f32,
+            rail: self.home_glass(),
         };
         self.console.cols = f.cols();
         self.console.unsettled = false;
@@ -180,7 +201,18 @@ impl Library {
             return div().absolute().inset_0().child(panel).children(over);
         }
         let spot = self.spotlight(&item, f);
-        let top = if spot.is_some() { 470. * u } else { 150. * u };
+        // The glass home's rail sits right under the top bar; its buttons come under the
+        // large title (see `console_body`).
+        let top = if f.rail {
+            96. * u
+        } else if let Some(t) = self.side_top() {
+            t * u
+        } else if spot.is_some() {
+            470. * u
+        } else {
+            150. * u
+        };
+        let side = self.console_side(&item, f, cx);
         let body = match (self.console.screen(), self.shops_preparing()) {
             (Screen::Stores, Some((done, total))) => div()
                 .absolute()
@@ -248,6 +280,7 @@ impl Library {
                         .inset_0()
                         .top(px(26. * u * (1. - entered)))
                         .children(spot)
+                        .children(side)
                         .child(body),
                 ),
             )
@@ -1176,7 +1209,20 @@ impl Library {
 
     fn spotlight(&self, item: &Option<Item>, f: Frame) -> Option<Div> {
         let u = f.u;
+        // The glass home tells of the rail's game, also while the focus is on its buttons.
+        let mut eyebrow = None;
         let (title, mut meta): (String, Vec<String>) = match self.console.screen() {
+            Screen::Home if f.rail => {
+                let g = self.home_pick()?;
+                if self
+                    .console_recent()
+                    .first()
+                    .is_some_and(|r| r.id == g.id)
+                {
+                    eyebrow = Some(self.tr("CONTINUE PLAYING", "OYNAMAYA DEVAM ET"));
+                }
+                self.spotlight_game(&g.id.clone())?
+            }
             Screen::Home => match item.as_ref().map(|i| &i.act)? {
                 Act::Screen(Screen::Game(id)) => self.spotlight_game(id)?,
                 Act::Screen(Screen::ShopGame(shop, _)) => {
@@ -1185,10 +1231,6 @@ impl Library {
                 _ => ("Arkor".into(), Vec::new()),
             },
             Screen::Game(id) => self.spotlight_game(&id)?,
-            Screen::GameSettings(id) => {
-                let (title, _) = self.spotlight_game(&id)?;
-                (title, vec![self.tr("Settings", "Ayarlar").to_string()])
-            }
             Screen::Trouble(id) => {
                 let (title, _) = self.spotlight_game(&id)?;
                 (
@@ -1219,16 +1261,6 @@ impl Library {
                 let (title, _) = self.spotlight_game(&id)?;
                 (title, vec![self.tr("Mods", "Modlar").to_string()])
             }
-            Screen::GameCat(id, c) => {
-                let (title, _) = self.spotlight_game(&id)?;
-                (
-                    title,
-                    vec![
-                        self.tr("Settings", "Ayarlar").to_string(),
-                        self.game_cat_name(c).to_string(),
-                    ],
-                )
-            }
             Screen::Steam(app, page) => (
                 self.steam_name(app),
                 vec!["Steam".to_string(), self.steam_page_name(page).to_string()],
@@ -1257,13 +1289,20 @@ impl Library {
             div()
                 .absolute()
                 .left(px(f.margin))
-                .top(px(150. * u))
+                .top(px(if f.rail { 380. } else { 150. } * u))
                 .w(px((1180. * u).min(f.width)))
-                .h(px(286. * u))
+                .h(px(if f.rail { 390. } else { 286. } * u))
                 .flex()
                 .flex_col()
                 .justify_end()
                 .gap(px(14. * u))
+                .children(eyebrow.map(|e| {
+                    div()
+                        .text_size(px(16. * u))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(cpal::text_soft())
+                        .child(e)
+                }))
                 .child(
                     div()
                         .text_size(px(if long { 60. } else { 96. } * u))
@@ -1340,7 +1379,11 @@ impl Library {
         let cols = self.console.cols;
         let mut ys = Vec::with_capacity(rows.len());
         let mut y = 12. * u;
-        for r in rows {
+        for (ix, r) in rows.iter().enumerate() {
+            // The glass home: its buttons stand under the large title, not under the rail.
+            if f.rail && ix == 1 {
+                y = y.max(696. * u);
+            }
             ys.push(y);
             y += f.row_height(r, cols);
         }
@@ -1350,6 +1393,7 @@ impl Library {
         // A shelf comes to the top; everything else is kept around the middle.
         let h = f.row_height(&rows[row], cols);
         let target = match rows[row].kind {
+            _ if f.rail => 0.,
             Kind::Shelf => ys[row],
             _ => ys[row] + h / 2. - view_h * 0.46,
         }
@@ -1365,7 +1409,9 @@ impl Library {
             let step = w + 24. * u;
             let col = if ix == row { focus.col() } else { continue };
             let all = r.items.len() as f32 * step;
-            let target = (col as f32 * step - f.width * 0.36).clamp(0., (all - f.width).max(0.));
+            // The glass home keeps the focused cover near the left, where its title is.
+            let lead = if f.rail { 0.08 } else { 0.36 };
+            let target = (col as f32 * step - f.width * lead).clamp(0., (all - f.width).max(0.));
             let at = focus.shelves.entry(ix).or_insert(0.);
             moving |= ease_to(at, target, f.ease);
         }
@@ -1461,6 +1507,8 @@ impl Library {
             Kind::Shelf => {
                 let (w, th) = f.shelf_tile();
                 let step = w + 24. * u;
+                // Covers step back only while the focus is on this shelf.
+                let here = glows.iter().any(|g| *g > 0.01);
                 for (col, item) in row.items.iter().enumerate() {
                     let x = f.margin + col as f32 * step - shelf;
                     if x > f.vw || x + w < 0. {
@@ -1470,7 +1518,7 @@ impl Library {
                         item,
                         (ix, col),
                         (x, top + 10. * u, w, th),
-                        (glows[col], true),
+                        (glows[col], here),
                         f,
                         cx,
                     ));
@@ -1490,6 +1538,12 @@ impl Library {
                     ));
                 }
             }
+            Kind::Pills
+                if ix == 0
+                    && matches!(self.console.screen(), Screen::Library | Screen::Stores) =>
+            {
+                out = out.child(self.console_toolbar(row, ix, top, glows, f, cx));
+            }
             Kind::Pills => {
                 let mut line = div()
                     .absolute()
@@ -1505,11 +1559,17 @@ impl Library {
             }
             Kind::Line => {
                 if let Some(item) = row.items.first() {
-                    let w = (1240. * u).min(f.width);
+                    // Settings in two columns: the categories in a narrow one at the left,
+                    // a category's settings in the wide one at the right.
+                    let (x, w) = match self.side_kind() {
+                        Side::List => (f.margin, 440. * u),
+                        Side::Inside => (f.margin + 500. * u, f.width - 500. * u),
+                        Side::None => (f.margin, (1240. * u).min(f.width)),
+                    };
                     out = out.child(
                         div()
                             .absolute()
-                            .left(px(f.margin))
+                            .left(px(x))
                             .top(px(top))
                             .w(px(w))
                             .h(px(h - top - 12. * u))
@@ -1576,7 +1636,7 @@ impl Library {
         let Look::Cover(art) = &item.look else {
             return div().into_any_element();
         };
-        let k = 1. + GROW * glow;
+        let k = 1. + f.grow() * glow;
         let (bw, bh) = (w * k, h * k);
         let radius = f.corners * u;
         let focus = self.console_focus_color();
@@ -1779,6 +1839,192 @@ impl Library {
             .into_any_element()
     }
 
+    /// The library's and the stores' first row: a search field at the left, the filters
+    /// as one segmented control and the other buttons at the right.
+    fn console_toolbar(
+        &self,
+        row: &Row,
+        ix: usize,
+        top: f32,
+        glows: &[f32],
+        f: Frame,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let u = f.u;
+        let mut search = None;
+        let mut seg = div()
+            .h(px(64. * u))
+            .px(px(6. * u))
+            .flex()
+            .items_center()
+            .gap(px(4. * u))
+            .rounded_full()
+            .bg(cpal::glass_dark())
+            .border_1()
+            .border_color(cpal::glass_line());
+        let mut rest = div().flex().items_center().gap(px(12. * u));
+        for (col, item) in row.items.iter().enumerate() {
+            let glow = glows[col];
+            match item.act {
+                Act::Search | Act::ClearSearch => {
+                    search = Some(self.console_search_field(item, (ix, col), glow, f, cx));
+                }
+                Act::Filter(_) | Act::ShopTab(_) => {
+                    seg = seg.child(self.console_chip(item, (ix, col), glow, f, cx));
+                }
+                _ => {
+                    rest = rest.child(self.console_pill(item, ("pill", ix, col), glow, f, cx));
+                }
+            }
+        }
+        div()
+            .absolute()
+            .left(px(f.margin))
+            .top(px(top + 8. * u))
+            .w(px(f.width))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(24. * u))
+            .child(div().flex_none().children(search))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12. * u))
+                    .child(seg)
+                    .child(rest),
+            )
+    }
+
+    /// The search field of a toolbar (it opens the on-screen keyboard).
+    fn console_search_field(
+        &self,
+        item: &Item,
+        (row, col): (usize, usize),
+        glow: f32,
+        f: Frame,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let u = f.u;
+        let focused = glow > 0.5;
+        let query = self.console.query.trim().to_string();
+        let placeholder = match self.console.screen() {
+            Screen::Stores => self.tr("Search the stores", "Mağazalarda ara"),
+            _ => self.tr("Search the library", "Kütüphanede ara"),
+        };
+        let (fg, soft) = if focused {
+            (cpal::on_focus(), cpal::on_focus().opacity(0.6))
+        } else {
+            (cpal::text(), cpal::muted())
+        };
+        let act = item.act.clone();
+        div()
+            .id(("console-search", row * 1000 + col))
+            .w(px(480. * u))
+            .h(px(64. * u))
+            .pl(px(22. * u))
+            .pr(px(14. * u))
+            .flex()
+            .items_center()
+            .gap(px(14. * u))
+            .rounded_full()
+            .cursor_pointer()
+            .map(|d| {
+                if focused {
+                    d.bg(cpal::focus())
+                } else {
+                    d.bg(cpal::glass_dark())
+                        .border_1()
+                        .border_color(cpal::glass_line())
+                }
+            })
+            .child(style::icon("search", 22. * u, soft))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(21. * u))
+                    .text_color(if query.is_empty() { soft } else { fg })
+                    .child(if query.is_empty() {
+                        placeholder.to_string()
+                    } else {
+                        query
+                    }),
+            )
+            .child(if matches!(item.act, Act::ClearSearch) {
+                style::icon("x", 20. * u, soft).into_any_element()
+            } else {
+                self.console_glyph(if self.console.pad { "Y" } else { "Ctrl F" }, f)
+                    .into_any_element()
+            })
+            .on_click(cx.listener(move |this, _, w, cx| {
+                this.console_click(false, (row, col), act.clone(), w, cx)
+            }))
+            .into_any_element()
+    }
+
+    /// A choice in a segmented control: the chosen one is bright glass, the focused one white.
+    fn console_chip(
+        &self,
+        item: &Item,
+        (row, col): (usize, usize),
+        glow: f32,
+        f: Frame,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let u = f.u;
+        let focused = glow > 0.5;
+        let (icon, on) = match &item.look {
+            Look::Pill { icon, on, .. } => (*icon, *on),
+            _ => ("circle", false),
+        };
+        let color = if focused {
+            cpal::on_focus()
+        } else if on {
+            cpal::text()
+        } else {
+            cpal::text_soft()
+        };
+        let act = item.act.clone();
+        div()
+            .id(("console-chip", row * 1000 + col))
+            .h(px(52. * u))
+            .px(px(20. * u))
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(10. * u))
+            .rounded_full()
+            .cursor_pointer()
+            .text_size(px(20. * u))
+            .font_weight(if on || focused {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::MEDIUM
+            })
+            .text_color(color)
+            .map(|d| {
+                if focused {
+                    d.bg(cpal::focus())
+                } else if on {
+                    d.bg(cpal::glass_hi())
+                } else {
+                    d.hover(|h| h.bg(cpal::glass()))
+                }
+            })
+            // The stores show their marks; the library's filters are words only.
+            .when(icon.starts_with("store-"), |d| {
+                d.child(style::icon(icon, 20. * u, color))
+            })
+            .child(item.label.clone())
+            .on_click(cx.listener(move |this, _, w, cx| {
+                this.console_click(false, (row, col), act.clone(), w, cx)
+            }))
+            .into_any_element()
+    }
+
     fn console_line(
         &mut self,
         item: &Item,
@@ -1811,13 +2057,16 @@ impl Library {
             }
             *at
         });
+        let card = bar.is_some();
         let picture = art.as_ref().map(|a| {
             let (w, h) = match a {
                 Art::File(_, true) => (136. * u, 76. * u),
                 Art::File(_, false) => (72. * u, 72. * u),
+                // A download's card shows its cover larger (2:3, as covers are).
+                _ if card => (80. * u, 120. * u),
                 _ => (60. * u, 80. * u),
             };
-            self.console_art(a, "", (w, h, 8. * u), cx)
+            self.console_art(a, "", (w, h, 10. * u), cx)
         });
         let value = match value {
             Value::None => None,
@@ -1943,10 +2192,11 @@ impl Library {
             .children(bar.map(|p| {
                 div()
                     .absolute()
-                    .left(px(24. * u))
+                    // A card's bar runs beside its cover, not over it.
+                    .left(px(if card { 126. } else { 24. } * u))
                     .right(px(24. * u))
-                    .bottom(px(6. * u))
-                    .h(px(5. * u))
+                    .bottom(px(if card { 18. } else { 6. } * u))
+                    .h(px(if card { 8. } else { 5. } * u))
                     .rounded_full()
                     .bg(if focused {
                         pal::bg().opacity(0.12)
@@ -2228,6 +2478,17 @@ impl Library {
                     continue;
                 }
                 let glow = if r == row { 1. } else { 0. };
+                // A row of buttons (the menu's power) among the lines.
+                let content = if line.kind == Kind::Pills {
+                    let mut pills = div().flex().items_center().gap(px(12. * u));
+                    for (c, item) in line.items.iter().enumerate() {
+                        let glow = if r == row && c == col { 1. } else { 0. };
+                        pills = pills.child(self.console_pill(item, ("over-pill", r, c), glow, f, cx));
+                    }
+                    pills.into_any_element()
+                } else {
+                    self.console_line(&line.items[0], ("over-line", r), glow, f, cx)
+                };
                 list = list.child(
                     div()
                         .absolute()
@@ -2235,7 +2496,7 @@ impl Library {
                         .right_0()
                         .top(px(y))
                         .h(px(line_h - 10. * u))
-                        .child(self.console_line(&line.items[0], ("over-line", r), glow, f, cx)),
+                        .child(content),
                 );
             }
             body = body.child(list);
@@ -2378,6 +2639,15 @@ impl Library {
             None => typed,
         };
         let empty = typed.is_empty();
+        // Searching the library: how many games match, as it is typed.
+        let found = (!secret && !empty && self.console.screen() == Screen::Library).then(|| {
+            let q = typed.to_lowercase();
+            self.library
+                .games
+                .iter()
+                .filter(|g| !g.hidden && g.name.to_lowercase().contains(&q))
+                .count()
+        });
         div()
             .mb(px(110. * u))
             .p(px(28. * u))
@@ -2414,7 +2684,14 @@ impl Library {
                     } else {
                         div().child(typed)
                     })
-                    .child(div().w(px(3. * u)).h(px(30. * u)).bg(pal::accent_light())),
+                    .child(div().w(px(3. * u)).h(px(30. * u)).bg(pal::accent_light()))
+                    .children(found.map(|n| {
+                        div()
+                            .ml_auto()
+                            .text_size(px(18. * u))
+                            .text_color(cpal::muted())
+                            .child(format!("{n} {}", self.tr("found", "sonuç")))
+                    })),
             )
             .child(keys)
     }
@@ -2642,6 +2919,279 @@ mod tests {
             "without motion it is there at once"
         );
         assert_eq!(at, 0.);
+    }
+}
+
+/// How a settings screen is laid out in two columns.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    None,
+    /// The categories themselves, at the left; the focused one's settings shown at the right.
+    List,
+    /// One category's settings at the right; the categories, still, at the left.
+    Inside,
+}
+
+impl Library {
+    fn side_kind(&self) -> Side {
+        match self.console.screen() {
+            Screen::Settings | Screen::GameSettings(_) => Side::List,
+            Screen::SettingsCat(_) | Screen::GameCat(..) => Side::Inside,
+            _ => Side::None,
+        }
+    }
+
+    /// Where the rows of a two-column settings screen begin (at 1080p).
+    fn side_top(&self) -> Option<f32> {
+        match self.console.screen() {
+            Screen::Settings => Some(150.),
+            Screen::SettingsCat(_) | Screen::GameSettings(_) => Some(240.),
+            Screen::GameCat(..) => Some(310.),
+            _ => None,
+        }
+    }
+
+    /// A settings line as a quiet preview (no focus, no clicks).
+    fn side_peek_line(&self, i: &Item, last: bool, u: f32) -> Div {
+        let (icon, value) = match &i.look {
+            Look::Line { icon, value, .. } => (*icon, value.clone()),
+            _ => ("circle", Value::None),
+        };
+        let value: Option<AnyElement> = match value {
+            Value::None => None,
+            Value::Text(t) | Value::Choice(t) => Some(
+                div()
+                    .max_w(px(420. * u))
+                    .truncate()
+                    .text_size(px(20. * u))
+                    .text_color(cpal::text_soft())
+                    .child(t)
+                    .into_any_element(),
+            ),
+            Value::Switch(on) => Some(
+                div()
+                    .w(px(52. * u))
+                    .h(px(30. * u))
+                    .p(px(3. * u))
+                    .rounded_full()
+                    .flex()
+                    .when(on, |d| d.justify_end())
+                    .bg(if on { pal::accent() } else { cpal::glass_hi() })
+                    .child(div().size(px(24. * u)).rounded_full().bg(gpui::white()))
+                    .into_any_element(),
+            ),
+        };
+        div()
+            .h(px(72. * u))
+            .px(px(28. * u))
+            .flex()
+            .items_center()
+            .gap(px(18. * u))
+            .when(!last, |d| d.border_b_1().border_color(cpal::glass_line()))
+            .child(style::icon(icon, 22. * u, cpal::text_soft()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(22. * u))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(i.label.clone()),
+            )
+            .children(value)
+    }
+
+    /// The still parts of a two-column settings screen: its header, the categories at the
+    /// left (inside one), or a look at the focused category (on the list).
+    fn console_side(
+        &mut self,
+        item: &Option<Item>,
+        f: Frame,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let u = f.u;
+        let side = self.side_kind();
+        if side == Side::None {
+            return None;
+        }
+        let screen = self.console.screen();
+        let game = match &screen {
+            Screen::GameSettings(id) | Screen::GameCat(id, _) => Some(id.clone()),
+            _ => None,
+        };
+        let mut out = div().absolute().inset_0();
+        // A game's settings: its cover, its name and what this is.
+        if let Some(id) = &game {
+            let name = self
+                .library
+                .get(id)
+                .map(|g| g.name.to_uppercase())
+                .unwrap_or_default();
+            let art = self.console_art(
+                &Art::Game(id.clone()),
+                "",
+                (48. * u, 72. * u, 8. * u),
+                cx,
+            );
+            out = out.child(
+                div()
+                    .absolute()
+                    .left(px(f.margin))
+                    .top(px(124. * u))
+                    .flex()
+                    .items_center()
+                    .gap(px(18. * u))
+                    .child(art)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(15. * u))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(cpal::muted())
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(34. * u))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(self.tr("Game settings", "Oyun ayarları")),
+                            ),
+                    ),
+            );
+        }
+        let right = f.margin + 500. * u;
+        let right_w = f.width - 500. * u;
+        let head_top = if game.is_some() { 228. } else { 140. } * u;
+        let head_size = if game.is_some() { 40. } else { 48. } * u;
+        match side {
+            Side::Inside => {
+                // The categories, the open one lit.
+                let (cats, title) = match &screen {
+                    Screen::SettingsCat(c) => {
+                        (self.setting_rows(), self.app_cat_title(*c).1.to_string())
+                    }
+                    Screen::GameCat(id, c) => (
+                        self.game_setting_rows(id),
+                        self.game_cat_title(*c).1.to_string(),
+                    ),
+                    _ => (Vec::new(), String::new()),
+                };
+                let open = Act::Screen(screen.clone());
+                let mut rail = div()
+                    .w(px(440. * u))
+                    .p(px(14. * u))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4. * u))
+                    .rounded(px(32. * u))
+                    .bg(cpal::glass())
+                    .border_1()
+                    .border_color(cpal::glass_line());
+                for r in cats.iter().take(15) {
+                    let Some(i) = r.items.first() else { continue };
+                    let icon = match &i.look {
+                        Look::Line { icon, .. } => *icon,
+                        _ => "circle",
+                    };
+                    let on = i.act == open;
+                    rail = rail.child(
+                        div()
+                            .h(px(52. * u))
+                            .px(px(18. * u))
+                            .flex()
+                            .items_center()
+                            .gap(px(16. * u))
+                            .rounded(px(18. * u))
+                            .text_size(px(21. * u))
+                            .font_weight(if on {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::MEDIUM
+                            })
+                            .text_color(if on { cpal::text() } else { cpal::text_soft() })
+                            .when(on, |d| d.bg(cpal::glass_hi()))
+                            .child(style::icon(
+                                icon,
+                                22. * u,
+                                if on { cpal::text() } else { cpal::muted() },
+                            ))
+                            .child(div().truncate().child(i.label.clone())),
+                    );
+                }
+                let rail_top = if game.is_some() { 232. } else { 150. } * u;
+                out = out
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(f.margin))
+                            .top(px(rail_top))
+                            .child(rail),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(right))
+                            .top(px(head_top))
+                            .w(px(right_w))
+                            .truncate()
+                            .text_size(px(head_size))
+                            .font_weight(FontWeight::BOLD)
+                            .child(title),
+                    );
+            }
+            Side::List => {
+                // A look at the focused category's settings.
+                let peek = match item.as_ref().map(|i| &i.act) {
+                    Some(Act::Screen(Screen::SettingsCat(c))) => {
+                        Some((self.app_cat_title(*c).1.to_string(), self.app_cat_rows(*c)))
+                    }
+                    Some(Act::Screen(Screen::GameCat(_, c))) => Some((
+                        self.game_cat_title(*c).1.to_string(),
+                        self.game_cat_rows(*c),
+                    )),
+                    _ => None,
+                };
+                if let Some((title, rows)) = peek {
+                    let lines: Vec<&Item> =
+                        rows.iter().filter_map(|r| r.items.first()).take(7).collect();
+                    let n = lines.len();
+                    let mut group = div()
+                        .w(px(right_w))
+                        .flex()
+                        .flex_col()
+                        .rounded(px(28. * u))
+                        .bg(cpal::glass())
+                        .border_1()
+                        .border_color(cpal::glass_line())
+                        .overflow_hidden();
+                    for (k, i) in lines.into_iter().enumerate() {
+                        group = group.child(self.side_peek_line(i, k + 1 == n, u));
+                    }
+                    out = out.child(
+                        div()
+                            .absolute()
+                            .left(px(right))
+                            .top(px(head_top))
+                            .flex()
+                            .flex_col()
+                            .gap(px(24. * u))
+                            .opacity(0.85)
+                            .child(
+                                div()
+                                    .text_size(px(head_size))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(title),
+                            )
+                            .when(n > 0, |d| d.child(group)),
+                    );
+                }
+            }
+            Side::None => {}
+        }
+        Some(out)
     }
 }
 
