@@ -12,7 +12,7 @@ use gpui::{
 
 use super::console::{Act, Art, Item, Kind, Look, Nav, Overlay, Row, Screen, Value};
 use super::cover_art::{self, Size};
-use super::style::{self, pal};
+use super::style::{self, cpal, pal};
 use super::{Library, downloads_page, gamepad};
 use arkor_launch::shops::Shop;
 
@@ -227,6 +227,7 @@ impl Library {
             .inset_0()
             .overflow_hidden()
             .text_size(px(22. * u))
+            .text_color(cpal::text())
             .on_scroll(cx.listener(|this, e: &gpui::ScrollEvent, w, cx| {
                 let dy = f32::from(e.delta.pixel_delta(px(40.)).y);
                 // Touchpads send many small steps.
@@ -275,6 +276,8 @@ impl Library {
         let pad = 44. * u;
         let pf = Frame {
             vw: w,
+            // The sheet floats 40 units clear of the top and the bottom.
+            vh: f.vh - 80. * u,
             margin: pad,
             width: w - pad * 2.,
             ..f
@@ -394,8 +397,8 @@ impl Library {
             .text_size(px(19. * u))
             .bg(linear_gradient(
                 180.,
-                linear_color_stop(pal::bg().opacity(0.), 0.),
-                linear_color_stop(pal::bg().opacity(0.9), 0.45),
+                linear_color_stop(cpal::bg().opacity(0.), 0.),
+                linear_color_stop(cpal::bg().opacity(0.6), 0.6),
             ))
             .child(keys);
         let slide = if f.still {
@@ -410,7 +413,8 @@ impl Library {
             .absolute()
             .inset_0()
             .text_size(px(22. * u))
-            .bg(pal::bg())
+            .text_color(cpal::text())
+            .bg(cpal::bg())
             .children(art.map(|p| {
                 div()
                     .absolute()
@@ -428,22 +432,24 @@ impl Library {
                 cx.listener(|this, _, w, cx| this.quick_back(w, cx)),
             )
             .child(
+                // A floating sheet of smoked glass, clear of the screen's edges.
                 div()
                     .id("quick-panel")
                     .occlude()
                     .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(px(-slide))
+                    .top(px(40. * u))
+                    .bottom(px(40. * u))
+                    .left(px(40. * u - slide))
                     .w(px(w))
                     .opacity(entered.max(0.02))
                     .overflow_hidden()
-                    .bg(pal::bg().opacity(0.8))
-                    .border_r_1()
-                    .border_color(pal::border())
+                    .rounded(px(40. * u))
+                    .bg(cpal::glass_dark())
+                    .border_1()
+                    .border_color(cpal::glass_line())
                     .shadow(vec![BoxShadow {
                         color: gpui::black().opacity(0.45),
-                        offset: point(px(0.), px(0.)),
+                        offset: point(px(0.), px(20. * u)),
                         blur_radius: px(60. * u),
                         spread_radius: px(0.),
                         inset: false,
@@ -719,11 +725,12 @@ impl Library {
         } else {
             since(self.console.behind_at, FADE_TIME)
         };
-        let strength = if spotlight { 1. } else { 0.45 };
+        let strength = if spotlight { 1. } else { 0.5 };
         let picture = |b: &super::console::Behind, opacity: f32| {
+            // The game's picture fills the screen; the scrims below keep the writing readable.
             let (h, o) = match b.size {
-                Size::Blur => (f.vh, 0.5),
-                _ => (f.vh * 0.74, 0.85),
+                Size::Blur => (f.vh, 0.55),
+                _ => (f.vh, 1.),
             };
             // No wide picture: the cover stands at the right like a poster, its colours
             // softly filling the room around it.
@@ -769,7 +776,7 @@ impl Library {
                 .opacity((opacity * o * strength).max(0.001))
                 .child(cover_art::backdrop(b.path.clone(), b.size, 0.).size_full())
         };
-        let mut out = div().absolute().inset_0().bg(pal::bg());
+        let mut out = div().absolute().inset_0().bg(cpal::bg());
         if self.console.behind.is_none() {
             out = out.child(super::backdrop::glow(
                 0.78,
@@ -788,43 +795,37 @@ impl Library {
         if let Some(b) = &self.console.behind {
             out = out.child(picture(b, t));
         }
-        // A wide picture ends in the background, not at an edge.
-        let wide = [&self.console.behind, &self.console.behind_before]
-            .into_iter()
-            .flatten()
-            .any(|b| b.size == Size::Wide);
-        if wide {
-            out = out.child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(px(f.vh * 0.24))
-                    .h(px(f.vh * 0.5 + 2.))
-                    .bg(linear_gradient(
-                        180.,
-                        linear_color_stop(pal::bg().opacity(0.), 0.),
-                        linear_color_stop(pal::bg(), 1.),
-                    )),
-            );
-        }
-        // Text stays readable: darker to the left and at the top.
+        // Text stays readable: darker to the left, at the top and towards the bottom.
+        let room = cpal::bg();
         out.child(div().absolute().inset_0().bg(linear_gradient(
             90.,
-            linear_color_stop(pal::bg().opacity(0.82), 0.),
-            linear_color_stop(pal::bg().opacity(0.), 0.75),
+            linear_color_stop(room.opacity(0.88), 0.),
+            linear_color_stop(room.opacity(0.), 0.62),
         )))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .h(px(f.vh * 0.48))
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(room.opacity(0.), 0.),
+                    linear_color_stop(room.opacity(0.95), 1.),
+                )),
+        )
         .child(
             div()
                 .absolute()
                 .top_0()
                 .left_0()
                 .right_0()
-                .h(px(170. * f.u))
+                .h(px(240. * f.u))
                 .bg(linear_gradient(
                     180.,
-                    linear_color_stop(pal::bg().opacity(0.75), 0.),
-                    linear_color_stop(pal::bg().opacity(0.), 1.),
+                    linear_color_stop(room.opacity(0.6), 0.),
+                    linear_color_stop(room.opacity(0.), 1.),
                 )),
         )
     }
@@ -839,7 +840,8 @@ impl Library {
     fn console_top(&self, f: Frame, cx: &mut Context<Self>) -> Div {
         let u = f.u;
         let tab = self.console.tab();
-        let mut tabs = div().flex().items_center().gap(px(10. * u));
+        // The tabs are words; the chosen one is white with a short line under it.
+        let mut tabs = div().flex().items_start().gap(px(36. * u));
         for (ix, screen) in Screen::TABS.into_iter().enumerate() {
             let label = match screen {
                 Screen::Home => self.tr("Home", "Ana sayfa"),
@@ -852,34 +854,68 @@ impl Library {
             tabs = tabs.child(
                 div()
                     .id(("console-tab", ix))
-                    .px(px(20. * u))
-                    .py(px(10. * u))
-                    .rounded_full()
-                    .text_size(px(25. * u))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6. * u))
+                    .text_size(px(28. * u))
                     .font_weight(if on {
                         FontWeight::SEMIBOLD
                     } else {
                         FontWeight::MEDIUM
                     })
                     .cursor_pointer()
-                    .when(on, |d| d.bg(pal::text()).text_color(pal::bg()))
-                    .when(!on, |d| {
-                        d.text_color(pal::text_soft())
-                            .hover(|h| h.bg(pal::text().opacity(0.1)))
-                    })
+                    .text_color(if on { cpal::text() } else { cpal::muted() })
+                    .when(!on, |d| d.hover(|h| h.text_color(cpal::text_soft())))
                     .child(label)
+                    .child(
+                        div()
+                            .w(px(28. * u))
+                            .h(px(3. * u))
+                            .rounded_full()
+                            .bg(if on {
+                                cpal::text()
+                            } else {
+                                gpui::transparent_black()
+                            }),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.shops.game = None;
                         this.console_open(screen.clone(), cx)
                     })),
             );
         }
+        // A round glass button.
+        let round = |id: &'static str, icon: &'static str| {
+            div()
+                .id(id)
+                .size(px(52. * u))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(cpal::glass())
+                .border_1()
+                .border_color(cpal::glass_line())
+                .cursor_pointer()
+                .hover(|h| h.bg(cpal::glass_hi()))
+                .child(style::icon(icon, 22. * u, cpal::text()))
+        };
         let mut right = div()
             .flex()
             .items_center()
-            .gap(px(26. * u))
+            .gap(px(18. * u))
             .text_size(px(23. * u))
-            .text_color(pal::text_soft());
+            .text_color(cpal::text_soft())
+            .child(round("console-find", "search").on_click(cx.listener(|this, _, w, cx| {
+                this.console.pad = false;
+                this.nav(Nav::Search, w, cx)
+            })))
+            .child(
+                round("console-settings", "settings").on_click(cx.listener(|this, _, _, cx| {
+                    this.shops.game = None;
+                    this.console_open(Screen::Settings, cx)
+                })),
+            );
         // A newer Arkor.
         if let Some(r) = &self.app_update.available
             && !self.app_update.installing
@@ -923,21 +959,28 @@ impl Library {
             let color = if percent < 20 && !charging {
                 pal::warning()
             } else {
-                pal::text_soft()
+                cpal::text_soft()
             };
             right = right.child(
                 div()
+                    .h(px(52. * u))
+                    .px(px(18. * u))
                     .flex()
                     .items_center()
-                    .gap(px(8. * u))
+                    .gap(px(12. * u))
+                    .rounded_full()
+                    .bg(cpal::glass())
+                    .border_1()
+                    .border_color(cpal::glass_line())
                     .child(style::icon("gamepad-2", 22. * u, color))
-                    .child(style::icon(icon, 24. * u, color)),
+                    .child(style::icon(icon, 22. * u, color)),
             );
         }
         right = right.child(
             div()
-                .text_color(pal::text())
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(28. * u))
+                .text_color(cpal::text())
+                .font_weight(FontWeight::SEMIBOLD)
                 .child(clock()),
         );
         let hint = |pad: &'static str, key: &'static str| {
@@ -955,7 +998,7 @@ impl Library {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(22. * u))
+                    .gap(px(20. * u))
                     .child(
                         // The start-up animation brings it.
                         div()
@@ -979,13 +1022,14 @@ impl Library {
             .flex()
             .items_center()
             .justify_center()
+            // Like the pad's own buttons: a dark disc (or key) with a white sign.
             .rounded(px(if text.chars().count() == 1 { 16. } else { 9. } * u))
+            .bg(gpui::black().opacity(0.85))
             .border_1()
-            .border_color(pal::text().opacity(0.35))
-            .bg(pal::bg().opacity(0.5))
+            .border_color(cpal::glass_line())
             .text_size(px(17. * u))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(pal::text_soft())
+            .font_weight(FontWeight::BOLD)
+            .text_color(cpal::text())
             .child(if self.console.pad {
                 self.pad_kind().glyph(text)
             } else {
@@ -1075,7 +1119,17 @@ impl Library {
                 Nav::Menu,
             ));
         }
-        let mut right = div().flex().items_center().gap(px(30. * u));
+        // The hints sit in a smoked-glass capsule at the bottom right.
+        let mut right = div()
+            .h(px(56. * u))
+            .px(px(24. * u))
+            .flex()
+            .items_center()
+            .gap(px(28. * u))
+            .rounded_full()
+            .bg(cpal::glass_dark())
+            .border_1()
+            .border_color(cpal::glass_line());
         for (ix, (glyph, text, nav)) in hints.into_iter().enumerate() {
             right = right.child(
                 div()
@@ -1085,7 +1139,7 @@ impl Library {
                     .gap(px(10. * u))
                     .cursor_pointer()
                     .child(self.console_glyph(glyph, f))
-                    .child(div().text_color(pal::text_soft()).child(text))
+                    .child(div().text_color(cpal::text_soft()).child(text))
                     .on_click(cx.listener(move |this, _, w, cx| this.nav(nav, w, cx))),
             );
         }
@@ -1096,21 +1150,23 @@ impl Library {
             .right_0()
             .h(px(78. * u))
             .px(px(f.margin))
+            .pb(px(14. * u))
             .flex()
             .items_center()
             .justify_between()
             .gap(px(40. * u))
             .text_size(px(20. * u))
+            .font_weight(FontWeight::MEDIUM)
             .bg(linear_gradient(
                 180.,
-                linear_color_stop(pal::bg().opacity(0.), 0.),
-                linear_color_stop(pal::bg().opacity(0.95), 0.45),
+                linear_color_stop(cpal::bg().opacity(0.), 0.),
+                linear_color_stop(cpal::bg().opacity(0.85), 0.6),
             ))
             .child(
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_color(pal::muted())
+                    .text_color(cpal::muted())
                     .children(self.status.clone()),
             )
             .child(right.flex_none())
@@ -1210,9 +1266,10 @@ impl Library {
                 .gap(px(14. * u))
                 .child(
                     div()
-                        .text_size(px(if long { 54. } else { 72. } * u))
-                        .line_height(relative(1.24))
+                        .text_size(px(if long { 60. } else { 96. } * u))
+                        .line_height(relative(1.1))
                         .font_weight(FontWeight::BOLD)
+                        .text_color(cpal::text())
                         .line_clamp(2)
                         .child(title),
                 )
@@ -1221,8 +1278,9 @@ impl Library {
                         .flex()
                         .items_center()
                         .gap(px(14. * u))
-                        .text_size(px(24. * u))
-                        .text_color(pal::text_soft())
+                        .text_size(px(22. * u))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cpal::text_soft())
                         .child(meta.join("  ·  ")),
                 ),
         )
@@ -1412,7 +1470,7 @@ impl Library {
                         item,
                         (ix, col),
                         (x, top + 10. * u, w, th),
-                        glows[col],
+                        (glows[col], true),
                         f,
                         cx,
                     ));
@@ -1426,7 +1484,7 @@ impl Library {
                         item,
                         (ix, col),
                         (x, top + 10. * u, w, w * 1.5),
-                        glows[col],
+                        (glows[col], false),
                         f,
                         cx,
                     ));
@@ -1510,7 +1568,7 @@ impl Library {
         item: &Item,
         (row, col): (usize, usize),
         (x, y, w, h): (f32, f32, f32, f32),
-        glow: f32,
+        (glow, shelf): (f32, bool),
         f: Frame,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1522,6 +1580,9 @@ impl Library {
         let (bw, bh) = (w * k, h * k);
         let radius = f.corners * u;
         let focus = self.console_focus_color();
+        // On a shelf the covers without the focus step back, so the focused one stands out
+        // among colourful art.
+        let dim = if shelf { 1. - glow } else { 0. };
         let picture = self.console_art(art, &item.label, (bw, bh, radius), cx);
         let act = item.act.clone();
         div()
@@ -1537,33 +1598,45 @@ impl Library {
                     .w(px(bw))
                     .h(px(bh))
                     .rounded(px(radius))
+                    // The focus is a white ring with a soft white light around it.
                     .when(glow > 0.01, |d| {
                         d.shadow(vec![
                             BoxShadow {
-                                color: focus.opacity(0.95 * glow),
+                                color: focus.opacity(glow),
                                 offset: point(px(0.), px(0.)),
                                 blur_radius: px(0.),
-                                spread_radius: px(4. * u),
+                                spread_radius: px(3. * u),
                                 inset: false,
                             },
                             BoxShadow {
-                                color: focus.opacity(0.45 * glow),
+                                color: focus.opacity(0.22 * glow),
                                 offset: point(px(0.), px(0.)),
-                                blur_radius: px(44. * u),
-                                spread_radius: px(2. * u),
+                                blur_radius: px(36. * u),
+                                spread_radius: px(3. * u),
                                 inset: false,
                             },
                         ])
                     })
                     .child(picture)
+                    .when(dim > 0.01, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .rounded(px(radius))
+                                .bg(cpal::dim().opacity(dim)),
+                        )
+                    })
                     .children(item.mark.map(|icon| {
                         div()
                             .absolute()
                             .top(px(10. * u))
                             .left(px(10. * u))
-                            .size(px(34. * u))
+                            .size(px(36. * u))
                             .rounded_full()
-                            .bg(pal::bg().opacity(0.85))
+                            .bg(cpal::glass_dark())
+                            .border_1()
+                            .border_color(cpal::glass_line())
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1587,20 +1660,24 @@ impl Library {
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(21. * u))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(if glow > 0.5 {
-                                pal::text()
+                            .text_size(px(20. * u))
+                            .font_weight(if glow > 0.5 {
+                                FontWeight::SEMIBOLD
                             } else {
-                                pal::text_soft()
+                                FontWeight::MEDIUM
+                            })
+                            .text_color(if glow > 0.5 {
+                                cpal::text()
+                            } else {
+                                cpal::text_soft()
                             })
                             .child(item.label.clone()),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(17. * u))
-                            .text_color(pal::muted())
+                            .text_size(px(16. * u))
+                            .text_color(cpal::muted())
                             .child(item.sub.clone()),
                     ),
             )
@@ -1645,47 +1722,49 @@ impl Library {
         };
         let focused = glow > 0.5;
         let color = if focused {
-            pal::bg()
-        } else if main {
-            pal::on_accent()
-        } else if on {
-            pal::accent_light()
+            cpal::on_focus()
         } else {
-            pal::text_soft()
+            cpal::text()
         };
         let act = item.act.clone();
         let over = id.0.starts_with("over");
         div()
             .id((id.0, id.1 * 1000 + id.2))
             .flex_none()
-            .h(px(60. * u))
-            .px(px(if main { 38. } else { 26. } * u))
+            .h(px(64. * u))
+            .px(px(if main { 48. } else { 28. } * u))
             .flex()
             .items_center()
             .gap(px(12. * u))
             .rounded_full()
-            .text_size(px(23. * u))
+            .text_size(px(22. * u))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(color)
             .cursor_pointer()
             .border_1()
-            .border_color(if focused || main {
+            .border_color(if focused {
                 gpui::transparent_black()
             } else if on {
-                pal::accent().opacity(0.7)
+                pal::accent()
             } else {
-                pal::text().opacity(0.14)
+                cpal::glass_line()
             })
             .map(|d| {
                 if focused {
-                    d.bg(pal::text())
-                } else if main {
-                    d.bg(style::accent_gradient())
+                    // White, with a soft light: the one thing on the screen that is white.
+                    d.bg(cpal::focus()).shadow(vec![BoxShadow {
+                        color: cpal::focus().opacity(0.25),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(40. * u),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
                 } else if on {
-                    d.bg(pal::bg().blend(pal::accent().opacity(0.2)).opacity(0.9))
+                    d.bg(pal::accent().opacity(0.35))
+                } else if main {
+                    d.bg(cpal::glass_hi())
                 } else {
-                    d.bg(pal::bg().opacity(0.6))
-                        .hover(|h| h.bg(pal::text().opacity(0.18)))
+                    d.bg(cpal::glass()).hover(|h| h.bg(cpal::glass_hi()))
                 }
             })
             .child(if icon == "loader-circle" {
@@ -1714,9 +1793,9 @@ impl Library {
         };
         let focused = glow > 0.5;
         let (fg, soft) = if focused {
-            (pal::bg(), pal::bg().opacity(0.65))
+            (cpal::on_focus(), cpal::on_focus().opacity(0.65))
         } else {
-            (pal::text(), pal::muted())
+            (cpal::text(), cpal::muted())
         };
         // Bars glide to where they are, however rarely that is known.
         let bar = item.progress.map(|p| {
@@ -1772,8 +1851,8 @@ impl Library {
             Value::Switch(on) => Some(
                 div()
                     .flex_none()
-                    .w(px(64. * u))
-                    .h(px(36. * u))
+                    .w(px(68. * u))
+                    .h(px(40. * u))
                     .p(px(4. * u))
                     .rounded_full()
                     .flex()
@@ -1781,11 +1860,23 @@ impl Library {
                     .bg(if *on {
                         pal::accent()
                     } else if focused {
-                        pal::bg().opacity(0.25)
+                        cpal::on_focus().opacity(0.2)
                     } else {
-                        pal::text().opacity(0.2)
+                        cpal::glass_hi()
                     })
-                    .child(div().size(px(28. * u)).rounded_full().bg(gpui::white()))
+                    .child(
+                        div()
+                            .size(px(32. * u))
+                            .rounded_full()
+                            .bg(gpui::white())
+                            .shadow(vec![BoxShadow {
+                                color: gpui::black().opacity(0.25),
+                                offset: point(px(0.), px(2. * u)),
+                                blur_radius: px(6. * u),
+                                spread_radius: px(0.),
+                                inset: false,
+                            }]),
+                    )
                     .into_any_element(),
             ),
         };
@@ -1800,17 +1891,23 @@ impl Library {
             .flex()
             .items_center()
             .gap(px(22. * u))
-            .rounded(px((f.corners + 4.) * u))
+            .rounded(px((f.corners + 8.) * u))
             .overflow_hidden()
             .cursor_pointer()
             .map(|d| {
                 if focused {
-                    d.bg(pal::text())
+                    d.bg(cpal::focus()).shadow(vec![BoxShadow {
+                        color: cpal::focus().opacity(0.18),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(36. * u),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
                 } else {
-                    d.bg(pal::bg().opacity(0.6))
+                    d.bg(cpal::glass())
                         .border_1()
-                        .border_color(pal::text().opacity(0.1))
-                        .hover(|h| h.bg(pal::text().opacity(0.12)))
+                        .border_color(cpal::glass_line())
+                        .hover(|h| h.bg(cpal::glass_hi()))
                 }
             })
             .child(match picture {
@@ -1890,8 +1987,8 @@ impl Library {
                 back.items_end()
                     .bg(linear_gradient(
                         180.,
-                        linear_color_stop(pal::bg().opacity(0.1), 0.2),
-                        linear_color_stop(pal::bg().opacity(0.9), 0.8),
+                        linear_color_stop(cpal::bg().opacity(0.35), 0.),
+                        linear_color_stop(cpal::bg().opacity(0.85), 0.8),
                     ))
                     .child(self.console_keyboard(&rows, (row, col), f, cx))
                     .into_any_element(),
@@ -2145,7 +2242,7 @@ impl Library {
         }
         Some(
             back.items_center()
-                .bg(gpui::black().opacity(0.62))
+                .bg(cpal::bg().opacity(0.62))
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
@@ -2160,10 +2257,17 @@ impl Library {
                         .flex()
                         .flex_col()
                         .gap(px(26. * u))
-                        .rounded(px(28. * u))
-                        .bg(pal::bg())
+                        .rounded(px(40. * u))
+                        .bg(cpal::glass_dark())
                         .border_1()
-                        .border_color(pal::border_strong())
+                        .border_color(cpal::glass_line())
+                        .shadow(vec![BoxShadow {
+                            color: gpui::black().opacity(0.5),
+                            offset: point(px(0.), px(30. * u)),
+                            blur_radius: px(80. * u),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             div()
@@ -2190,8 +2294,9 @@ impl Library {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_size(px(30. * u))
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(34. * u))
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(cpal::text())
                                         .child(title),
                                 ),
                         )
@@ -2224,19 +2329,28 @@ impl Library {
                         .id(("console-key", r * 100 + c))
                         .w(px((66. * wide + 10. * (wide - 1.)) * u))
                         .h(px(62. * u))
-                        .rounded(px(12. * u))
+                        .rounded(px(16. * u))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(px(25. * u))
+                        .text_size(px(24. * u))
                         .font_weight(FontWeight::MEDIUM)
                         .cursor_pointer()
                         .map(|d| {
                             if focused {
-                                d.bg(pal::text()).text_color(pal::bg())
+                                d.bg(cpal::focus()).text_color(cpal::on_focus()).shadow(vec![
+                                    BoxShadow {
+                                        color: cpal::focus().opacity(0.25),
+                                        offset: point(px(0.), px(0.)),
+                                        blur_radius: px(24. * u),
+                                        spread_radius: px(0.),
+                                        inset: false,
+                                    },
+                                ])
                             } else {
-                                d.bg(pal::text().opacity(0.1))
-                                    .hover(|h| h.bg(pal::text().opacity(0.2)))
+                                d.bg(cpal::glass())
+                                    .text_color(cpal::text())
+                                    .hover(|h| h.bg(cpal::glass_hi()))
                             }
                         })
                         .child(item.label.clone())
@@ -2265,24 +2379,24 @@ impl Library {
         };
         let empty = typed.is_empty();
         div()
-            .mb(px(104. * u))
-            .p(px(30. * u))
+            .mb(px(110. * u))
+            .p(px(28. * u))
             .flex()
             .flex_col()
-            .gap(px(22. * u))
-            .rounded(px(28. * u))
-            .bg(pal::bg().opacity(0.96))
+            .gap(px(20. * u))
+            .rounded(px(36. * u))
+            .bg(cpal::glass_dark())
             .border_1()
-            .border_color(pal::border_strong())
+            .border_color(cpal::glass_line())
             .child(
                 div()
                     .h(px(64. * u))
-                    .px(px(24. * u))
+                    .px(px(22. * u))
                     .flex()
                     .items_center()
-                    .gap(px(16. * u))
-                    .rounded(px(16. * u))
-                    .bg(pal::text().opacity(0.08))
+                    .gap(px(14. * u))
+                    .rounded(px(20. * u))
+                    .bg(cpal::glass())
                     .text_size(px(27. * u))
                     .child(style::icon(
                         if secret { "lock" } else { "search" },
@@ -2541,7 +2655,8 @@ impl Library {
     pub(super) fn console_focus_color(&self) -> gpui::Hsla {
         match self.console_theme().focus {
             Some(c) => gpui::rgb(c).into(),
-            None => pal::accent(),
+            // The glass look: what has the focus is white unless the theme names a colour.
+            None => cpal::focus(),
         }
     }
 }

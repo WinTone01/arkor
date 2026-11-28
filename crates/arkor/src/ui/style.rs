@@ -11,6 +11,56 @@ use gpui::{
     linear_gradient, px, rgb, svg,
 };
 
+/// Console mode's "glass" palette: translucent white surfaces over the game's own picture,
+/// a white focus and the accent only for what is switched on. Always dark: the console
+/// stands on the game's art, whatever the desktop theme is.
+pub mod cpal {
+    use gpui::{Hsla, rgb};
+
+    fn white(a: f32) -> Hsla {
+        gpui::white().opacity(a)
+    }
+    /// The room behind everything.
+    pub fn bg() -> Hsla {
+        rgb(0x06070b).into()
+    }
+    /// A glass surface, and a brighter one (buttons, the chosen segment).
+    pub fn glass() -> Hsla {
+        white(0.08)
+    }
+    pub fn glass_hi() -> Hsla {
+        white(0.16)
+    }
+    /// The hairline at a glass surface's edge.
+    pub fn glass_line() -> Hsla {
+        white(0.18)
+    }
+    /// Smoked glass: sheets over the screen, the hint bar.
+    pub fn glass_dark() -> Hsla {
+        Hsla::from(rgb(0x0b0c12)).opacity(0.72)
+    }
+    /// What has the focus is white, its writing dark.
+    pub fn focus() -> Hsla {
+        gpui::white()
+    }
+    pub fn on_focus() -> Hsla {
+        rgb(0x0b0c10).into()
+    }
+    pub fn text() -> Hsla {
+        gpui::white()
+    }
+    pub fn text_soft() -> Hsla {
+        white(0.74)
+    }
+    pub fn muted() -> Hsla {
+        white(0.52)
+    }
+    /// Laid over the covers that do not have the focus.
+    pub fn dim() -> Hsla {
+        Hsla::from(rgb(0x050509)).opacity(0.42)
+    }
+}
+
 /// Colours. Atomics, so the theme can change without threading state through every view.
 pub mod pal {
     use super::Glass;
